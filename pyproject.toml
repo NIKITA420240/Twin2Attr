@@ -15,6 +15,9 @@ dependencies = [
     "numpy>=1.26",
     "pandas>=2.2",
     "pyarrow>=16",
+    "pint>=0.24",
+    "polars>=1.0",
+    "pymorphy3>=2.0",
     "scikit-learn>=1.5",
     "sentence-transformers>=3",
     "torch>=2.2",
@@ -26,9 +29,6 @@ dependencies = [
 notebooks = [
     "ipykernel>=6.29",
     "jupyterlab>=4.2",
-    "pint>=0.24",
-    "polars>=1.0",
-    "pymorphy3>=2.0",
 ]
 
 [tool.uv.build-backend]

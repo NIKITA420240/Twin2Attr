@@ -1,0 +1,84 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+import polars as pl
+
+from match import normalize_attributes
+
+
+class NormalizeAttributesTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_directory = tempfile.TemporaryDirectory()
+        self.synonyms_path = Path(self.temp_directory.name) / "synonyms.parquet"
+        pl.DataFrame(
+            {
+                "replacer": ["ширина"],
+                "synonyms": [["ширина", "ширь"]],
+            }
+        ).write_parquet(self.synonyms_path)
+
+    def tearDown(self) -> None:
+        self.temp_directory.cleanup()
+
+    def test_normalizes_units_and_preserves_original_column(self) -> None:
+        raw = json.dumps(
+            {
+                "Ширина, см": "10 см",
+                "Артикул": "ABC-10 мм",
+            },
+            ensure_ascii=False,
+        )
+        source = pl.DataFrame({"id": [1], "attributes": [raw]})
+
+        result = normalize_attributes(source, self.synonyms_path)
+        normalized = json.loads(result["normalized_attributes"][0])
+
+        self.assertEqual(result["attributes"][0], raw)
+        self.assertEqual(normalized["ширина, мм"], "100")
+        self.assertEqual(normalized["артикул"], "ABC-10 мм")
+
+    def test_splits_multidimensional_attribute(self) -> None:
+        raw = json.dumps({"Размер упаковки, см": "10 x 20 x 30"}, ensure_ascii=False)
+
+        result = normalize_attributes(
+            pl.DataFrame({"attributes": [raw]}),
+            self.synonyms_path,
+        )
+        normalized = json.loads(result["normalized_attributes"][0])
+
+        self.assertEqual(normalized["длина упаковки, мм"], "100")
+        self.assertEqual(normalized["ширина упаковки, мм"], "200")
+        self.assertEqual(normalized["высота упаковки, мм"], "300")
+
+    def test_loads_synonyms_from_parquet(self) -> None:
+        raw = json.dumps({"Ширь товара": "10"}, ensure_ascii=False)
+
+        result = normalize_attributes(
+            pl.DataFrame({"attributes": [raw]}),
+            self.synonyms_path,
+        )
+        normalized = json.loads(result["normalized_attributes"][0])
+
+        self.assertEqual(normalized, {"ширина товара": "10"})
+
+    def test_supports_custom_columns_and_nulls(self) -> None:
+        frame = pl.DataFrame({"raw": [None, "not-json"]})
+
+        result = normalize_attributes(
+            frame,
+            self.synonyms_path,
+            source_column="raw",
+            output_column="clean",
+        )
+
+        self.assertEqual(result["clean"].to_list(), [None, "not-json"])
+
+    def test_requires_polars_dataframe(self) -> None:
+        with self.assertRaises(TypeError):
+            normalize_attributes([], self.synonyms_path)  # type: ignore[arg-type]
+
+
+if __name__ == "__main__":
+    unittest.main()

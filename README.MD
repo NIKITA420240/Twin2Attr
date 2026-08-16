@@ -23,6 +23,24 @@ uv run python run.py \
 
 Короткие формы: `-i` для товаров, `-m` для пар и `-o` для результата.
 
+## Нормализация атрибутов
+
+Публичная функция принимает и возвращает `polars.DataFrame`. По умолчанию она
+читает JSON из столбца `attributes` и добавляет столбец
+`normalized_attributes`, не изменяя исходный DataFrame:
+
+```python
+import polars as pl
+
+from match import normalize_attributes
+
+items = pl.read_parquet("items.parquet")
+normalized_items = normalize_attributes(items, "data/synonyms_df.parquet")
+```
+
+Имена столбцов можно изменить через параметры `source_column` и
+`output_column`.
+
 ## Сборка
 
 ```bash

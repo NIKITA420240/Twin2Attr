@@ -1882,7 +1882,11 @@ dependencies = [
     { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pint", version = "0.24.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pint", version = "0.25.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "polars" },
     { name = "pyarrow" },
+    { name = "pymorphy3" },
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sentence-transformers" },
@@ -1895,10 +1899,6 @@ dependencies = [
 notebooks = [
     { name = "ipykernel" },
     { name = "jupyterlab" },
-    { name = "pint", version = "0.24.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pint", version = "0.25.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "polars" },
-    { name = "pymorphy3" },
 ]
 
 [package.metadata]
@@ -1910,10 +1910,10 @@ requires-dist = [
     { name = "loguru", specifier = ">=0.7" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pandas", specifier = ">=2.2" },
-    { name = "pint", marker = "extra == 'notebooks'", specifier = ">=0.24" },
-    { name = "polars", marker = "extra == 'notebooks'", specifier = ">=1.0" },
+    { name = "pint", specifier = ">=0.24" },
+    { name = "polars", specifier = ">=1.0" },
     { name = "pyarrow", specifier = ">=16" },
-    { name = "pymorphy3", marker = "extra == 'notebooks'", specifier = ">=2.0" },
+    { name = "pymorphy3", specifier = ">=2.0" },
     { name = "scikit-learn", specifier = ">=1.5" },
     { name = "sentence-transformers", specifier = ">=3" },
     { name = "torch", specifier = ">=2.2" },
