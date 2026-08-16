@@ -1,33 +1,53 @@
-from pathlib import Path
+import argparse
 
-import hydra
 from loguru import logger
-from omegaconf import DictConfig
 
 from match.paths import resolve_project_path
 from match.utils import predict_pipeline
 
+CLASSIFIER_PATH = "baseline_logreg_l12.joblib"
+MODEL_CE_PATH = "models/cross-encoder-ms-marco-MiniLM-L12-v2"
 
-def _resolve_path(value: str) -> Path:
-    return resolve_project_path(value)
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Match product-card pairs")
+    parser.add_argument(
+        "--items_path",
+        "--items-path",
+        "-i",
+        dest="items_path",
+        required=True,
+        help="Path to the product data file",
+    )
+    parser.add_argument(
+        "--matches_path",
+        "--matches-path",
+        "-m",
+        dest="matches_path",
+        required=True,
+        help="Path to the prepared product-pair file",
+    )
+    parser.add_argument(
+        "--output-path",
+        "--output_path",
+        "-o",
+        dest="output_path",
+        required=True,
+        help="Path where predictions will be saved",
+    )
+    return parser.parse_args()
 
 
-@hydra.main(version_base=None, config_path="configs", config_name="config")
-def main(cfg: DictConfig) -> None:
-    items_path = _resolve_path(cfg.items_path)
-    matches_path = _resolve_path(cfg.matches_path)
-    output_path = _resolve_path(cfg.output_path)
-
+def main() -> None:
+    args = _parse_args()
     logger.info("Starting product matching")
     predict_pipeline(
-        data_path=items_path,
-        match_path=matches_path,
-        model_path=_resolve_path(cfg.model_path),
-        logreg_path=_resolve_path(cfg.classifier_path),
-        output_csv_path=output_path,
-        device=cfg.device,
-        batch_size=cfg.batch_size,
-        backend=cfg.backend,
+        data_path=resolve_project_path(args.items_path),
+        match_path=resolve_project_path(args.matches_path),
+        model_path=resolve_project_path(MODEL_CE_PATH),
+        logreg_path=resolve_project_path(CLASSIFIER_PATH),
+        output_csv_path=resolve_project_path(args.output_path),
+        batch_size=512,
     )
 
 
