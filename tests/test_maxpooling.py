@@ -66,6 +66,7 @@ class MaxPoolingPipelineTests(unittest.TestCase):
         )
 
         self.assertEqual(model.vector_size, 4)
+        self.assertTrue(np.isfinite(model.best_validation_pr_auc))
         self.assertEqual(embeddings.shape, (2, 8))
         self.assertEqual(embeddings.dtype, np.float32)
         self.assertTrue(np.isfinite(embeddings).all())

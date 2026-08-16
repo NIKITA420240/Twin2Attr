@@ -16,7 +16,7 @@ import polars as pl
 import torch
 from gensim.models import FastText
 from loguru import logger
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.model_selection import GroupShuffleSplit
 from sklearn.preprocessing import StandardScaler
 from torch import nn
@@ -68,6 +68,7 @@ class MaxPoolingModel:
     _classifier: PairMLP
     vector_size: int
     best_validation_auc: float
+    best_validation_pr_auc: float
 
 
 def _read_parquet(path: str | Path, required: set[str], label: str) -> pl.DataFrame:
@@ -314,7 +315,7 @@ def _evaluate_classifier(
     loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
-) -> tuple[float, float]:
+) -> tuple[float, float, float]:
     classifier.eval()
     total_loss = 0.0
     targets: list[np.ndarray] = []
@@ -330,8 +331,10 @@ def _evaluate_classifier(
 
     target_values = np.concatenate(targets)
     probability_values = np.concatenate(probabilities)
-    return total_loss / len(loader.dataset), float(
-        roc_auc_score(target_values, probability_values)
+    return (
+        total_loss / len(loader.dataset),
+        float(roc_auc_score(target_values, probability_values)),
+        float(average_precision_score(target_values, probability_values)),
     )
 
 
@@ -349,7 +352,7 @@ def _train_classifier(
     learning_rate: float,
     weight_decay: float,
     device: str | torch.device | None,
-) -> tuple[StandardScaler, PairMLP, float]:
+) -> tuple[StandardScaler, PairMLP, float, float]:
     if len(features) < 4:
         raise ValueError("at least four matched pairs are required for training")
     classes, counts = np.unique(targets, return_counts=True)
@@ -432,6 +435,7 @@ def _train_classifier(
     )
 
     best_auc = -np.inf
+    best_pr_auc = -np.inf
     best_state: dict[str, torch.Tensor] | None = None
     epochs_without_improvement = 0
     for epoch in range(1, epochs + 1):
@@ -448,20 +452,21 @@ def _train_classifier(
             total_train_loss += loss.item() * features_batch.size(0)
             trained_samples += features_batch.size(0)
 
-        validation_loss, validation_auc = _evaluate_classifier(
-            classifier, validation_loader, criterion, target_device
-        )
+        validation_loss, validation_auc, validation_pr_auc = _evaluate_classifier(classifier, validation_loader, criterion, target_device)
         scheduler.step(validation_auc)
         logger.info(
-            "Classifier epoch {}/{}: train_loss={:.4f}, val_loss={:.4f}, val_auc={:.4f}",
+            "Classifier epoch {}/{}: train_loss={:.4f}, val_loss={:.4f}, "
+            "val_roc_auc={:.4f}, val_pr_auc={:.4f}",
             epoch,
             epochs,
             total_train_loss / trained_samples,
             validation_loss,
             validation_auc,
+            validation_pr_auc,
         )
         if validation_auc > best_auc:
             best_auc = validation_auc
+            best_pr_auc = validation_pr_auc
             best_state = copy.deepcopy(classifier.state_dict())
             epochs_without_improvement = 0
         else:
@@ -473,7 +478,7 @@ def _train_classifier(
     if best_state is None:
         raise RuntimeError("classifier training did not produce a valid state")
     classifier.load_state_dict(best_state)
-    return scaler, classifier.cpu(), float(best_auc)
+    return scaler, classifier.cpu(), float(best_auc), float(best_pr_auc)
 
 
 def train_maxpooling_model(
@@ -525,7 +530,7 @@ def train_maxpooling_model(
     del corpus
     pair_features = _encode_loaded_pairs(items, matches, fasttext)
     targets = matches.get_column("target").to_numpy()
-    scaler, classifier, best_auc = _train_classifier(
+    scaler, classifier, best_auc, best_pr_auc = _train_classifier(
         pair_features,
         targets,
         _pair_groups(matches),
@@ -540,10 +545,12 @@ def train_maxpooling_model(
         device=device,
     )
     logger.info(
-        "Finished max-pooling model training: items={}, pairs={}, best_val_auc={:.4f}, elapsed_seconds={:.3f}",
+        "Finished max-pooling model training: items={}, pairs={}, "
+        "best_val_roc_auc={:.4f}, best_val_pr_auc={:.4f}, elapsed_seconds={:.3f}",
         items.height,
         matches.height,
         best_auc,
+        best_pr_auc,
         perf_counter() - started_at,
     )
     return MaxPoolingModel(
@@ -552,6 +559,7 @@ def train_maxpooling_model(
         _classifier=classifier,
         vector_size=vector_size,
         best_validation_auc=best_auc,
+        best_validation_pr_auc=best_pr_auc,
     )
 
 
