@@ -1,0 +1,6 @@
+path:
+  cards:  data/items_human.parquet
+  labels: data/matches.parquet
+  synonyms:  data/synonyms_df.parquet
+  stats:  data/untouched_stats.parquet
+  output: data/items_human_normalized.parquet
