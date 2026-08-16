@@ -35,7 +35,11 @@ import polars as pl
 from match import normalize_attributes
 
 items = pl.read_parquet("items.parquet")
-normalized_items = normalize_attributes(items, "data/synonyms_df.parquet")
+normalized_items = normalize_attributes(
+    items,
+    "data/synonyms_df.parquet",
+    "data/untouched_stats.parquet",
+)
 ```
 
 Имена столбцов можно изменить через параметры `source_column` и

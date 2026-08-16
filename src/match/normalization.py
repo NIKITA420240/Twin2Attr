@@ -84,12 +84,10 @@ _EXPLICIT_ALIASES = "|".join(
     map(re.escape, sorted(_ALIAS_TO_UNIT, key=len, reverse=True))
 )
 _EXPLICIT_COMMA_PATTERN = re.compile(
-    rf",\s*({_EXPLICIT_ALIASES})(?=$|\s)",
-    re.IGNORECASE,
+    rf",\s*({_EXPLICIT_ALIASES})(?=$|\s)", re.IGNORECASE
 )
 _EXPLICIT_BRACKET_PATTERN = re.compile(
-    rf"\(\s*({_EXPLICIT_ALIASES})\s*\)",
-    re.IGNORECASE,
+    rf"\(\s*({_EXPLICIT_ALIASES})\s*\)", re.IGNORECASE
 )
 _STANDARD_KEYWORD_PATTERNS = [
     (
@@ -118,10 +116,7 @@ def _get_morphology() -> pymorphy3.MorphAnalyzer:
 
 
 def _contains_keyword(text: str, keyword: str) -> bool:
-    return (
-        re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", text, re.IGNORECASE)
-        is not None
-    )
+    return re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", text, re.IGNORECASE) is not None
 
 
 def _clean_key_unit(key: str, canonical_unit: str) -> str:
@@ -245,11 +240,7 @@ def _normalize_physical_attributes(attributes: Mapping[Any, Any]) -> dict[str, s
 
 
 def _dimension_suffix(key: str) -> str | None:
-    match = re.search(
-        r"(?<!\w)размер(?:ы)?\s+([а-яёa-z0-9_-]+)",
-        key,
-        re.IGNORECASE,
-    )
+    match = re.search(r"(?<!\w)размер(?:ы)?\s+([а-яёa-z0-9_-]+)", key, re.IGNORECASE)
     return match.group(1).lower() if match else None
 
 
@@ -281,8 +272,7 @@ def _normalize_multidimensional_attributes(
                 continue
             attribute = f"{name} {suffix}" if suffix else name
             new_key, new_value = _standardize_physical_unit_pair(
-                f"{attribute}, {unit}",
-                dimension,
+                f"{attribute}, {unit}", dimension
             )
             result[new_key] = new_value
     return result
@@ -345,26 +335,39 @@ def _normalize_attribute_name(
     )
 
 
-def _normalize_synonym_attributes(
-    attributes: Mapping[Any, Any],
+def _load_attribute_name_map(
+    path: str | Path,
     replacements: Mapping[str, str],
     cache: dict[str, str],
 ) -> dict[str, str]:
-    result = {}
-    for attribute, value in attributes.items():
-        normalized_attribute = _normalize_attribute_name(
+    unique_attributes = pl.read_parquet(path)
+    if "attribute" not in unique_attributes.columns:
+        raise ValueError("Unique-attributes file is missing column: 'attribute'")
+
+    return {
+        str(attribute): _normalize_attribute_name(
             str(attribute),
             replacements,
             cache,
         )
+        for attribute in unique_attributes["attribute"].drop_nulls()
+    }
+
+
+def _normalize_synonym_attributes(
+    attributes: Mapping[Any, Any],
+    attribute_name_map: Mapping[str, str],
+) -> dict[str, str]:
+    result = {}
+    for attribute, value in attributes.items():
+        normalized_attribute = attribute_name_map.get(str(attribute), str(attribute))
         result.setdefault(normalized_attribute, str(value))
     return result
 
 
 def _normalize_attribute_json(
     raw: Any,
-    replacements: Mapping[str, str],
-    cache: dict[str, str],
+    attribute_name_map: Mapping[str, str],
 ) -> str | None:
     if raw is None:
         return None
@@ -377,13 +380,14 @@ def _normalize_attribute_json(
         return str(original)
     attributes = _normalize_multidimensional_attributes(attributes)
     attributes = _normalize_physical_attributes(attributes)
-    attributes = _normalize_synonym_attributes(attributes, replacements, cache)
+    attributes = _normalize_synonym_attributes(attributes, attribute_name_map)
     return json.dumps(attributes, ensure_ascii=False)
 
 
 def normalize_attributes(
     frame: pl.DataFrame,
     synonyms_path: str | Path,
+    unique_attributes_path: str | Path,
     *,
     source_column: str = "attributes",
     output_column: str = "normalized_attributes",
@@ -392,8 +396,9 @@ def normalize_attributes(
 
     The source column may contain JSON objects encoded as strings.
     ``synonyms_path`` must point to a parquet file with ``replacer`` and
-    list-valued ``synonyms`` columns. The input frame is not mutated; the
-    normalized JSON is written to ``output_column``.
+    list-valued ``synonyms`` columns. ``unique_attributes_path`` must point to
+    a parquet file with an ``attribute`` column. The input frame is not
+    mutated; the normalized JSON is written to ``output_column``.
     """
     if not isinstance(frame, pl.DataFrame):
         raise TypeError("frame must be a polars.DataFrame")
@@ -402,14 +407,11 @@ def normalize_attributes(
 
     replacements = _load_synonym_replacements(synonyms_path)
     synonym_cache: dict[str, str] = {}
+    attribute_name_map = _load_attribute_name_map(unique_attributes_path, replacements, synonym_cache)
     return frame.with_columns(
         pl.col(source_column)
         .map_elements(
-            lambda raw: _normalize_attribute_json(
-                raw,
-                replacements,
-                synonym_cache,
-            ),
+            lambda raw: _normalize_attribute_json(raw, attribute_name_map),
             return_dtype=pl.String,
             skip_nulls=False,
         )
