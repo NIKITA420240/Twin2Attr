@@ -399,9 +399,7 @@ def _initialize_normalization_worker(attribute_name_map: Mapping[str, str]) -> N
 def _normalize_chunk(raw_values: list[Any]) -> list[str | None]:
     if _WORKER_ATTRIBUTE_NAME_MAP is None:
         raise RuntimeError("Normalization worker was not initialized")
-    return [
-        _normalize_attribute_json(raw, _WORKER_ATTRIBUTE_NAME_MAP) for raw in raw_values
-    ]
+    return [_normalize_attribute_json(raw, _WORKER_ATTRIBUTE_NAME_MAP) for raw in raw_values]
 
 
 def _iter_chunks(series: pl.Series, chunk_size: int):
@@ -431,11 +429,7 @@ def normalize_attributes(
         logger.error("Expected polars.DataFrame, received {}", type(frame).__name__)
         raise TypeError("frame must be a polars.DataFrame")
     if source_column not in frame.columns:
-        logger.error(
-            "Source column {!r} is missing; available columns: {}",
-            source_column,
-            frame.columns,
-        )
+        logger.error("Source column {!r} is missing; available columns: {}", source_column, frame.columns)
         raise ValueError(f"Missing source column: {source_column!r}")
     if n_jobs < 1:
         raise ValueError("n_jobs must be at least 1")
@@ -443,21 +437,12 @@ def normalize_attributes(
         raise ValueError("chunk_size must be at least 1")
 
     started_at = perf_counter()
-    logger.info(
-        "Starting attribute normalization: rows={}, source_column={!r}, output_column={!r}",
-        frame.height,
-        source_column,
-        output_column,
-    )
+    logger.info("Starting attribute normalization: rows={}, source_column={!r}, output_column={!r}", frame.height, source_column, output_column)
 
     try:
         replacements = _load_synonym_replacements(synonyms_path)
         synonym_cache: dict[str, str] = {}
-        attribute_name_map = _load_attribute_name_map(
-            unique_attributes_path,
-            replacements,
-            synonym_cache,
-        )
+        attribute_name_map = _load_attribute_name_map(unique_attributes_path, replacements, synonym_cache)
     except (OSError, pl.exceptions.PolarsError, ValueError):
         logger.exception(
             "Failed to load normalization metadata: synonyms_path={!s}, "
@@ -467,11 +452,7 @@ def normalize_attributes(
         )
         raise
 
-    logger.info(
-        "Loaded normalization metadata: synonym_replacements={}, unique_attributes={}",
-        len(replacements),
-        len(attribute_name_map),
-    )
+    logger.info("Loaded normalization metadata: synonym_replacements={}, unique_attributes={}", len(replacements), len(attribute_name_map))
 
     if n_jobs == 1 or frame.height <= chunk_size:
         logger.info("Using sequential normalization")
@@ -486,33 +467,15 @@ def normalize_attributes(
         )
     else:
         chunk_count = math.ceil(frame.height / chunk_size)
-        logger.info(
-            "Using process-based normalization: n_jobs={}, chunk_size={}, chunks={}",
-            n_jobs,
-            chunk_size,
-            chunk_count,
-        )
+        logger.info("Using process-based normalization: n_jobs={}, chunk_size={}, chunks={}", n_jobs, chunk_size, chunk_count)
         normalized_chunks = Parallel(
             n_jobs=n_jobs,
             backend="loky",
             pre_dispatch=n_jobs,
             initializer=_initialize_normalization_worker,
             initargs=(attribute_name_map,),
-        )(
-            delayed(_normalize_chunk)(chunk)
-            for chunk in _iter_chunks(frame.get_column(source_column), chunk_size)
-        )
-        normalized_values = [
-            value
-            for normalized_chunk in normalized_chunks
-            for value in normalized_chunk
-        ]
-        result = frame.with_columns(
-            pl.Series(output_column, normalized_values, dtype=pl.String)
-        )
-    logger.info(
-        "Finished attribute normalization: rows={}, elapsed_seconds={:.3f}",
-        result.height,
-        perf_counter() - started_at,
-    )
+        )(delayed(_normalize_chunk)(chunk) for chunk in _iter_chunks(frame.get_column(source_column), chunk_size))
+        normalized_values = [value for normalized_chunk in normalized_chunks for value in normalized_chunk]
+        result = frame.with_columns(pl.Series(output_column, normalized_values, dtype=pl.String))
+    logger.info("Finished attribute normalization: rows={}, elapsed_seconds={:.3f}", result.height, perf_counter() - started_at)
     return result
