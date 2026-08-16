@@ -1,0 +1,4 @@
+path:
+    items_human_path:   data/items_human_normalized.parquet
+    matches_human_path: data/matches.parquet
+    items_human_normalized_path:   data/items_human_normalized.parquet

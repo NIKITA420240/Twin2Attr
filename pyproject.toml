@@ -1,0 +1,36 @@
+[build-system]
+requires = ["uv_build>=0.12.0,<0.13"]
+build-backend = "uv_build"
+
+[project]
+name = "ozon-match"
+version = "0.1.0"
+description = "Product-card matching experiments"
+readme = { file = "README.MD", content-type = "text/markdown" }
+requires-python = ">=3.10"
+dependencies = [
+    "hydra-core>=1.3,<2",
+    "joblib>=1.4",
+    "loguru>=0.7",
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "pyarrow>=16",
+    "scikit-learn>=1.5",
+    "sentence-transformers>=3",
+    "torch>=2.2",
+    "tqdm>=4.66",
+    "transformers>=4.44",
+]
+
+[project.optional-dependencies]
+notebooks = [
+    "ipykernel>=6.29",
+    "jupyterlab>=4.2",
+    "pint>=0.24",
+    "polars>=1.0",
+    "pymorphy3>=2.0",
+]
+
+[tool.uv.build-backend]
+module-name = "match"
+module-root = "src"
