@@ -12,25 +12,16 @@ uv sync --extra notebooks
 
 ## Запуск
 
-Значения по умолчанию находятся в `configs/config.yaml`:
-
-```bash
-uv run python run.py
-```
-
-Любой параметр можно переопределить через Hydra в формате `ключ=значение`:
+Решение принимает обязательные именованные аргументы:
 
 ```bash
 uv run python run.py \
-  items_path=data/items.parquet \
-  matches_path=data/matches.parquet \
-  output_path=predictions.csv \
-  classifier_path=baseline_logreg_l12.joblib \
-  model_path=models/cross-encoder-ms-marco-MiniLM-L12-v2
+  --items_path data/items.parquet \
+  --matches_path data/matches.parquet \
+  --output-path submit.csv
 ```
 
-Префикс `--` используется для собственных флагов Hydra, поэтому параметры
-приложения передаются без него.
+Короткие формы: `-i` для товаров, `-m` для пар и `-o` для результата.
 
 ## Сборка
 
