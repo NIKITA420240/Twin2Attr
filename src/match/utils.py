@@ -357,9 +357,7 @@ def _extract_embeddings_opt_v2(
 
 # a pipeline woirth a 1000 words instead of jupyter baseline
 # not that useful within competition evaluation as there will be no target
-def train_pipeline(
-    data_path, match_path, model_path, output_model_path, device=None, batch_size=32
-):
+def train_pipeline(data_path, match_path, model_path, output_model_path, device=None, batch_size=32):
 
     logger.info("Starting training pipeline")
     logger.info("[1/6] Loading and processing items data")
@@ -418,14 +416,10 @@ def predict_pipeline(
     pairs, pair_ids, _ = _build_pairs(match_df, data_df)
 
     logger.info("[3/6] Loading cross-encoder")
-    ce_model = _load_cross_encoder_opt(
-        model_path, device=device, backend=backend, use_compile=False
-    )
+    ce_model = _load_cross_encoder_opt(model_path, device=device, backend=backend, use_compile=False)
 
     logger.info("[4/6] Extracting embeddings with V2")
-    embeddings = _extract_embeddings_opt_v2(
-        ce_model, pairs, batch_size=batch_size, warmup=True
-    )
+    embeddings = _extract_embeddings_opt_v2(ce_model, pairs, batch_size=batch_size, warmup=True)
 
     logger.info("[5/6] Loading saved classifier from {}", logreg_path)
     clf_pipeline = joblib.load(logreg_path)

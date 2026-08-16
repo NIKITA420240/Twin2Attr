@@ -1,0 +1,7 @@
+dataset:
+    items_human:   data/items_human.parquet
+    matches_human: data/matches.parquet
+    items_human_normalized:   data/items_human_normalized.parquet
+    synonyms:  data/synonyms_df.parquet
+    unique_attributes: data/untouched_stats.parquet
+    fasttext_model_path: data/ft_vectors.kv

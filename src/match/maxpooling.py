@@ -111,10 +111,7 @@ def _parse_attributes(raw: Any) -> dict[str, str]:
             raise ValueError("attributes must contain a JSON object") from error
     if not isinstance(parsed, dict):
         raise ValueError("attributes must contain a JSON object")
-    return {
-        _normalize_text(key): _normalize_text(value)
-        for key, value in parsed.items()
-    }
+    return {_normalize_text(key): _normalize_text(value) for key, value in parsed.items()}
 
 
 def _attributes_to_tokens(attributes: Mapping[str, str]) -> list[str]:
@@ -198,13 +195,8 @@ def _pool_card(raw_attributes: Any, model: FastText) -> CardEmbedding:
         empty = np.zeros(model.vector_size, dtype=np.float32)
         return empty.copy(), empty.copy(), empty.copy(), empty.copy()
 
-    keys = np.asarray(
-        [_unit_embedding(key, model) for key in attributes], dtype=np.float32
-    )
-    values = np.asarray(
-        [_unit_embedding(value, model) for value in attributes.values()],
-        dtype=np.float32,
-    )
+    keys = np.asarray([_unit_embedding(key, model) for key in attributes], dtype=np.float32)
+    values = np.asarray([_unit_embedding(value, model) for value in attributes.values()], dtype=np.float32)
     return (
         keys.min(axis=0),
         keys.max(axis=0),
@@ -278,9 +270,7 @@ def _build_card_cache(
     missing_ids = required_ids - available_ids
     if missing_ids:
         sample = sorted(map(str, missing_ids))[:10]
-        raise ValueError(
-            f"match parquet references {len(missing_ids)} unknown item ids: {sample}"
-        )
+        raise ValueError(f"match parquet references {len(missing_ids)} unknown item ids: {sample}")
 
     selected = items.filter(pl.col("id").is_in(list(required_ids)))
     return {
@@ -367,9 +357,7 @@ def _train_classifier(
     split = next(
         (
             (train_indices, validation_indices)
-            for train_indices, validation_indices in splitter.split(
-                features, targets, groups
-            )
+            for train_indices, validation_indices in splitter.split(features, targets, groups)
             if len(np.unique(targets[train_indices])) == 2
             and len(np.unique(targets[validation_indices])) == 2
         ),
@@ -396,9 +384,7 @@ def _train_classifier(
     target_device = _resolve_device(device)
     classifier = PairMLP(features.shape[1], dropout=dropout).to(target_device)
 
-    train_dataset = TensorDataset(
-        torch.from_numpy(train_x), torch.from_numpy(train_y.astype(np.float32))
-    )
+    train_dataset = TensorDataset(torch.from_numpy(train_x), torch.from_numpy(train_y.astype(np.float32)))
     validation_dataset = TensorDataset(
         torch.from_numpy(validation_x),
         torch.from_numpy(validation_y.astype(np.float32)),
@@ -422,17 +408,9 @@ def _train_classifier(
 
     positive_count = max(int(np.sum(train_y == 1)), 1)
     negative_count = int(np.sum(train_y == 0))
-    criterion = nn.BCEWithLogitsLoss(
-        pos_weight=torch.tensor(
-            [negative_count / positive_count], dtype=torch.float32, device=target_device
-        )
-    )
-    optimizer = torch.optim.AdamW(
-        classifier.parameters(), lr=learning_rate, weight_decay=weight_decay
-    )
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="max", factor=0.5, patience=3
-    )
+    criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([negative_count / positive_count], dtype=torch.float32, device=target_device))
+    optimizer = torch.optim.AdamW(classifier.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=3)
 
     best_auc = -np.inf
     best_pr_auc = -np.inf
@@ -578,9 +556,7 @@ def encode_attribute_pairs(
         raise TypeError("model must be returned by train_maxpooling_model")
     started_at = perf_counter()
     items = _load_items(data_path)
-    matches = _read_parquet(
-        match_path, _INFERENCE_MATCH_COLUMNS, "inference matches"
-    )
+    matches = _read_parquet(match_path, _INFERENCE_MATCH_COLUMNS, "inference matches")
     result = _encode_loaded_pairs(items, matches, model._fasttext)
     logger.info(
         "Encoded max-pooling pair embeddings: pairs={}, dimensions={}, elapsed_seconds={:.3f}",
