@@ -17,7 +17,7 @@ import torch
 from gensim.models import FastText
 from loguru import logger
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GroupShuffleSplit
 from sklearn.preprocessing import StandardScaler
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -258,6 +258,16 @@ def _required_item_ids(matches: pl.DataFrame) -> set[Any]:
     return set(matches.get_column("id1")) | set(matches.get_column("id2"))
 
 
+def _pair_groups(matches: pl.DataFrame) -> np.ndarray:
+    """Assign the same group to duplicate and reversed item pairs."""
+    group_by_pair: dict[frozenset[Any], int] = {}
+    groups = np.empty(matches.height, dtype=np.int64)
+    for index, (id1, id2) in enumerate(matches.select("id1", "id2").iter_rows()):
+        pair = frozenset((id1, id2))
+        groups[index] = group_by_pair.setdefault(pair, len(group_by_pair))
+    return groups
+
+
 def _build_card_cache(
     items: pl.DataFrame,
     required_ids: set[Any],
@@ -328,6 +338,7 @@ def _evaluate_classifier(
 def _train_classifier(
     features: np.ndarray,
     targets: np.ndarray,
+    groups: np.ndarray,
     *,
     validation_fraction: float,
     random_state: int,
@@ -345,13 +356,33 @@ def _train_classifier(
     if set(classes.tolist()) != {0, 1} or counts.min() < 2:
         raise ValueError("target must contain at least two examples of both classes")
 
-    train_x, validation_x, train_y, validation_y = train_test_split(
-        features,
-        targets,
+    splitter = GroupShuffleSplit(
+        n_splits=32,
         test_size=validation_fraction,
         random_state=random_state,
-        stratify=targets,
     )
+    split = next(
+        (
+            (train_indices, validation_indices)
+            for train_indices, validation_indices in splitter.split(
+                features, targets, groups
+            )
+            if len(np.unique(targets[train_indices])) == 2
+            and len(np.unique(targets[validation_indices])) == 2
+        ),
+        None,
+    )
+    if split is None:
+        raise ValueError(
+            "validation split cannot contain both target classes without "
+            "leaking duplicate or reversed pairs; add more distinct pairs or "
+            "increase validation_fraction"
+        )
+    train_indices, validation_indices = split
+    train_x = features[train_indices]
+    validation_x = features[validation_indices]
+    train_y = targets[train_indices]
+    validation_y = targets[validation_indices]
     scaler = StandardScaler()
     train_x = scaler.fit_transform(train_x).astype(np.float32)
     validation_x = scaler.transform(validation_x).astype(np.float32)
@@ -491,11 +522,13 @@ def train_maxpooling_model(
         epochs=fasttext_epochs,
         random_state=random_state,
     )
+    del corpus
     pair_features = _encode_loaded_pairs(items, matches, fasttext)
     targets = matches.get_column("target").to_numpy()
     scaler, classifier, best_auc = _train_classifier(
         pair_features,
         targets,
+        _pair_groups(matches),
         validation_fraction=validation_fraction,
         random_state=random_state,
         batch_size=batch_size,
