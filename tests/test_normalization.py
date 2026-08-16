@@ -51,6 +51,7 @@ class NormalizeAttributesTests(unittest.TestCase):
             source,
             self.synonyms_path,
             self.unique_attributes_path,
+            n_jobs=1,
         )
         normalized = json.loads(result["normalized_attributes"][0])
 
@@ -65,6 +66,7 @@ class NormalizeAttributesTests(unittest.TestCase):
             pl.DataFrame({"attributes": [raw]}),
             self.synonyms_path,
             self.unique_attributes_path,
+            n_jobs=1,
         )
         normalized = json.loads(result["normalized_attributes"][0])
 
@@ -79,6 +81,7 @@ class NormalizeAttributesTests(unittest.TestCase):
             pl.DataFrame({"attributes": [raw]}),
             self.synonyms_path,
             self.unique_attributes_path,
+            n_jobs=1,
         )
         normalized = json.loads(result["normalized_attributes"][0])
 
@@ -93,6 +96,7 @@ class NormalizeAttributesTests(unittest.TestCase):
             self.unique_attributes_path,
             source_column="raw",
             output_column="clean",
+            n_jobs=1,
         )
 
         self.assertEqual(result["clean"].to_list(), [None, "not-json"])
@@ -103,7 +107,34 @@ class NormalizeAttributesTests(unittest.TestCase):
                 [],
                 self.synonyms_path,
                 self.unique_attributes_path,
+                n_jobs=1,
             )
+
+    def test_parallel_output_matches_sequential_output(self) -> None:
+        raw_values = [
+            json.dumps({"Ширина, см": str(value)}, ensure_ascii=False)
+            for value in range(1, 7)
+        ]
+        frame = pl.DataFrame({"attributes": raw_values})
+
+        sequential = normalize_attributes(
+            frame,
+            self.synonyms_path,
+            self.unique_attributes_path,
+            n_jobs=1,
+        )
+        parallel = normalize_attributes(
+            frame,
+            self.synonyms_path,
+            self.unique_attributes_path,
+            n_jobs=2,
+            chunk_size=2,
+        )
+
+        self.assertEqual(
+            parallel["normalized_attributes"].to_list(),
+            sequential["normalized_attributes"].to_list(),
+        )
 
 
 if __name__ == "__main__":

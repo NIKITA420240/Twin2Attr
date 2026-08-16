@@ -13,6 +13,7 @@ from typing import Any
 
 import polars as pl
 import pymorphy3
+from joblib import Parallel, delayed
 from loguru import logger
 from pint import UnitRegistry
 from pint.errors import PintError
@@ -101,6 +102,7 @@ _STANDARD_KEYWORD_PATTERNS = [
 
 _UREG: UnitRegistry | None = None
 _MORPH: pymorphy3.MorphAnalyzer | None = None
+_WORKER_ATTRIBUTE_NAME_MAP: Mapping[str, str] | None = None
 
 
 def _get_unit_registry() -> UnitRegistry:
@@ -389,6 +391,24 @@ def _normalize_attribute_json(
     return json.dumps(attributes, ensure_ascii=False)
 
 
+def _initialize_normalization_worker(attribute_name_map: Mapping[str, str]) -> None:
+    global _WORKER_ATTRIBUTE_NAME_MAP
+    _WORKER_ATTRIBUTE_NAME_MAP = attribute_name_map
+
+
+def _normalize_chunk(raw_values: list[Any]) -> list[str | None]:
+    if _WORKER_ATTRIBUTE_NAME_MAP is None:
+        raise RuntimeError("Normalization worker was not initialized")
+    return [
+        _normalize_attribute_json(raw, _WORKER_ATTRIBUTE_NAME_MAP) for raw in raw_values
+    ]
+
+
+def _iter_chunks(series: pl.Series, chunk_size: int):
+    for offset in range(0, len(series), chunk_size):
+        yield series.slice(offset, chunk_size).to_list()
+
+
 def normalize_attributes(
     frame: pl.DataFrame,
     synonyms_path: str | Path,
@@ -396,6 +416,8 @@ def normalize_attributes(
     *,
     source_column: str = "attributes",
     output_column: str = "normalized_attributes",
+    n_jobs: int = 4,
+    chunk_size: int = 5_000,
 ) -> pl.DataFrame:
     """Return a Polars frame with normalized product attributes.
 
@@ -415,6 +437,10 @@ def normalize_attributes(
             frame.columns,
         )
         raise ValueError(f"Missing source column: {source_column!r}")
+    if n_jobs < 1:
+        raise ValueError("n_jobs must be at least 1")
+    if chunk_size < 1:
+        raise ValueError("chunk_size must be at least 1")
 
     started_at = perf_counter()
     logger.info(
@@ -447,15 +473,43 @@ def normalize_attributes(
         len(attribute_name_map),
     )
 
-    result = frame.with_columns(
-        pl.col(source_column)
-        .map_elements(
-            lambda raw: _normalize_attribute_json(raw, attribute_name_map),
-            return_dtype=pl.String,
-            skip_nulls=False,
+    if n_jobs == 1 or frame.height <= chunk_size:
+        logger.info("Using sequential normalization")
+        result = frame.with_columns(
+            pl.col(source_column)
+            .map_elements(
+                lambda raw: _normalize_attribute_json(raw, attribute_name_map),
+                return_dtype=pl.String,
+                skip_nulls=False,
+            )
+            .alias(output_column)
         )
-        .alias(output_column)
-    )
+    else:
+        chunk_count = math.ceil(frame.height / chunk_size)
+        logger.info(
+            "Using process-based normalization: n_jobs={}, chunk_size={}, chunks={}",
+            n_jobs,
+            chunk_size,
+            chunk_count,
+        )
+        normalized_chunks = Parallel(
+            n_jobs=n_jobs,
+            backend="loky",
+            pre_dispatch=n_jobs,
+            initializer=_initialize_normalization_worker,
+            initargs=(attribute_name_map,),
+        )(
+            delayed(_normalize_chunk)(chunk)
+            for chunk in _iter_chunks(frame.get_column(source_column), chunk_size)
+        )
+        normalized_values = [
+            value
+            for normalized_chunk in normalized_chunks
+            for value in normalized_chunk
+        ]
+        result = frame.with_columns(
+            pl.Series(output_column, normalized_values, dtype=pl.String)
+        )
     logger.info(
         "Finished attribute normalization: rows={}, elapsed_seconds={:.3f}",
         result.height,

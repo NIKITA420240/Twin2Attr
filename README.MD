@@ -39,11 +39,15 @@ normalized_items = normalize_attributes(
     items,
     "data/synonyms_df.parquet",
     "data/untouched_stats.parquet",
+    n_jobs=4,
+    chunk_size=5_000,
 )
 ```
 
 Имена столбцов можно изменить через параметры `source_column` и
-`output_column`.
+`output_column`. По умолчанию нормализация выполняется в четырёх отдельных
+процессах с чанками по 5000 строк, как в notebook. `n_jobs=1` отключает
+multiprocessing; если оперативной памяти мало, используйте `n_jobs=2`.
 
 ## Сборка
 
