@@ -23,6 +23,8 @@ dependencies = [
     "torch>=2.2",
     "tqdm>=4.66",
     "transformers>=4.44",
+    "orjson>=3.12.0",
+    "gensim>=4.4.0",
 ]
 
 [project.optional-dependencies]
