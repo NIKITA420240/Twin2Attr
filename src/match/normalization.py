@@ -8,10 +8,12 @@ import re
 from collections.abc import Mapping
 from functools import cache
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import polars as pl
 import pymorphy3
+from loguru import logger
 from pint import UnitRegistry
 from pint.errors import PintError
 
@@ -116,7 +118,10 @@ def _get_morphology() -> pymorphy3.MorphAnalyzer:
 
 
 def _contains_keyword(text: str, keyword: str) -> bool:
-    return re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", text, re.IGNORECASE) is not None
+    return (
+        re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", text, re.IGNORECASE)
+        is not None
+    )
 
 
 def _clean_key_unit(key: str, canonical_unit: str) -> str:
@@ -401,14 +406,48 @@ def normalize_attributes(
     mutated; the normalized JSON is written to ``output_column``.
     """
     if not isinstance(frame, pl.DataFrame):
+        logger.error("Expected polars.DataFrame, received {}", type(frame).__name__)
         raise TypeError("frame must be a polars.DataFrame")
     if source_column not in frame.columns:
+        logger.error(
+            "Source column {!r} is missing; available columns: {}",
+            source_column,
+            frame.columns,
+        )
         raise ValueError(f"Missing source column: {source_column!r}")
 
-    replacements = _load_synonym_replacements(synonyms_path)
-    synonym_cache: dict[str, str] = {}
-    attribute_name_map = _load_attribute_name_map(unique_attributes_path, replacements, synonym_cache)
-    return frame.with_columns(
+    started_at = perf_counter()
+    logger.info(
+        "Starting attribute normalization: rows={}, source_column={!r}, output_column={!r}",
+        frame.height,
+        source_column,
+        output_column,
+    )
+
+    try:
+        replacements = _load_synonym_replacements(synonyms_path)
+        synonym_cache: dict[str, str] = {}
+        attribute_name_map = _load_attribute_name_map(
+            unique_attributes_path,
+            replacements,
+            synonym_cache,
+        )
+    except (OSError, pl.exceptions.PolarsError, ValueError):
+        logger.exception(
+            "Failed to load normalization metadata: synonyms_path={!s}, "
+            "unique_attributes_path={!s}",
+            synonyms_path,
+            unique_attributes_path,
+        )
+        raise
+
+    logger.info(
+        "Loaded normalization metadata: synonym_replacements={}, unique_attributes={}",
+        len(replacements),
+        len(attribute_name_map),
+    )
+
+    result = frame.with_columns(
         pl.col(source_column)
         .map_elements(
             lambda raw: _normalize_attribute_json(raw, attribute_name_map),
@@ -417,3 +456,9 @@ def normalize_attributes(
         )
         .alias(output_column)
     )
+    logger.info(
+        "Finished attribute normalization: rows={}, elapsed_seconds={:.3f}",
+        result.height,
+        perf_counter() - started_at,
+    )
+    return result
