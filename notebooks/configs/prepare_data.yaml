@@ -2,3 +2,5 @@ path:
     items_human_path:   data/items_human_normalized.parquet
     matches_human_path: data/matches.parquet
     items_human_normalized_path:   data/items_human_normalized.parquet
+    synonyms:  data/synonyms_df.parquet
+    unique_attributes: data/untouched_stats.parquet
