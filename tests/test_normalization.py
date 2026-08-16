@@ -12,12 +12,27 @@ class NormalizeAttributesTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_directory = tempfile.TemporaryDirectory()
         self.synonyms_path = Path(self.temp_directory.name) / "synonyms.parquet"
+        self.unique_attributes_path = (
+            Path(self.temp_directory.name) / "unique_attributes.parquet"
+        )
         pl.DataFrame(
             {
                 "replacer": ["ширина"],
                 "synonyms": [["ширина", "ширь"]],
             }
         ).write_parquet(self.synonyms_path)
+        pl.DataFrame(
+            {
+                "attribute": [
+                    "Ширина, мм",
+                    "Артикул",
+                    "длина упаковки, мм",
+                    "ширина упаковки, мм",
+                    "высота упаковки, мм",
+                    "Ширь товара",
+                ]
+            }
+        ).write_parquet(self.unique_attributes_path)
 
     def tearDown(self) -> None:
         self.temp_directory.cleanup()
@@ -32,7 +47,11 @@ class NormalizeAttributesTests(unittest.TestCase):
         )
         source = pl.DataFrame({"id": [1], "attributes": [raw]})
 
-        result = normalize_attributes(source, self.synonyms_path)
+        result = normalize_attributes(
+            source,
+            self.synonyms_path,
+            self.unique_attributes_path,
+        )
         normalized = json.loads(result["normalized_attributes"][0])
 
         self.assertEqual(result["attributes"][0], raw)
@@ -45,6 +64,7 @@ class NormalizeAttributesTests(unittest.TestCase):
         result = normalize_attributes(
             pl.DataFrame({"attributes": [raw]}),
             self.synonyms_path,
+            self.unique_attributes_path,
         )
         normalized = json.loads(result["normalized_attributes"][0])
 
@@ -58,6 +78,7 @@ class NormalizeAttributesTests(unittest.TestCase):
         result = normalize_attributes(
             pl.DataFrame({"attributes": [raw]}),
             self.synonyms_path,
+            self.unique_attributes_path,
         )
         normalized = json.loads(result["normalized_attributes"][0])
 
@@ -69,6 +90,7 @@ class NormalizeAttributesTests(unittest.TestCase):
         result = normalize_attributes(
             frame,
             self.synonyms_path,
+            self.unique_attributes_path,
             source_column="raw",
             output_column="clean",
         )
@@ -77,7 +99,11 @@ class NormalizeAttributesTests(unittest.TestCase):
 
     def test_requires_polars_dataframe(self) -> None:
         with self.assertRaises(TypeError):
-            normalize_attributes([], self.synonyms_path)  # type: ignore[arg-type]
+            normalize_attributes(  # type: ignore[arg-type]
+                [],
+                self.synonyms_path,
+                self.unique_attributes_path,
+            )
 
 
 if __name__ == "__main__":
