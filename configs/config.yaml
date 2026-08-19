@@ -1,5 +1,6 @@
 classifier_path: baseline_logreg_l12.joblib
 model_path: models/cross-encoder-ms-marco-MiniLM-L12-v2
+fasttext_path: models/fasttext_model.model
 items_path: data/items_human_normalized.parquet
 matches_path: data/matches.parquet
 output_path: predictions.csv

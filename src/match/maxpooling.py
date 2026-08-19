@@ -1,567 +1,270 @@
-"""Train and apply the FastText/max-pooling pair pipeline."""
+"""Для получения maxpooling эмбедингов нужно вызвать функцию get_maxpooling_embeddings"""
 
 from __future__ import annotations
+from paths import resolve_project_path
 
-import copy
-import re
-from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
-from time import perf_counter
-from typing import Any
+from typing import List
 
 import numpy as np
-import orjson
 import polars as pl
-import torch
+
+import re
+import orjson
+import yaml
+
 from gensim.models import FastText
+
 from loguru import logger
-from sklearn.metrics import average_precision_score, roc_auc_score
-from sklearn.model_selection import GroupShuffleSplit
-from sklearn.preprocessing import StandardScaler
-from torch import nn
-from torch.utils.data import DataLoader, TensorDataset
+from tqdm import tqdm
 
-__all__ = ["encode_attribute_pairs", "train_maxpooling_model"]
+_NON_ALNUM_RE = re.compile(r'[^а-яёa-z0-9]+')
+_SPACE_RE = re.compile(r'\s+')
 
+# в тексте оставляем только руссике/английские буквы и цифры
+# удаляем лишние пробелы
+def normalize_text(text):
+    text = str(text).lower()
+    text = _NON_ALNUM_RE.sub(' ', text)
+    return _SPACE_RE.sub(' ', text).strip()
 
-_ITEM_COLUMNS = {"id", "name", "attributes", "category"}
-_TRAIN_MATCH_COLUMNS = {"id1", "id2", "target"}
-_INFERENCE_MATCH_COLUMNS = {"id1", "id2"}
-_NON_ALNUM_PATTERN = re.compile(r"[^а-яёa-z0-9]+")
-_SPACE_PATTERN = re.compile(r"\s+")
-
-CardEmbedding = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
-
-
-class PairMLP(nn.Module):
-    """Binary classifier from the original max-pooling notebook."""
-
-    def __init__(self, input_dim: int, dropout: float = 0.2) -> None:
-        super().__init__()
-        self.network = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(256, 128),
-            nn.BatchNorm1d(128),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(128, 64),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(64, 1),
-        )
-
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        return self.network(inputs).squeeze(1)
-
-
-@dataclass(slots=True)
-class MaxPoolingModel:
-    """Fitted pipeline state kept behind the two public functions."""
-
-    _fasttext: FastText
-    _scaler: StandardScaler
-    _classifier: PairMLP
-    vector_size: int
-    best_validation_auc: float
-    best_validation_pr_auc: float
-
-
-def _read_parquet(path: str | Path, required: set[str], label: str) -> pl.DataFrame:
-    try:
-        frame = pl.read_parquet(path)
-    except (OSError, pl.exceptions.PolarsError):
-        logger.exception("Failed to read {} parquet: {!s}", label, path)
-        raise
-
-    missing = required - set(frame.columns)
-    if missing:
-        raise ValueError(f"{label} parquet is missing columns: {sorted(missing)}")
-    return frame
-
-
-def _load_items(path: str | Path) -> pl.DataFrame:
-    items = _read_parquet(path, _ITEM_COLUMNS, "items")
-    if items.get_column("id").null_count():
-        raise ValueError("items parquet contains null ids")
-    duplicate_count = items.height - items.get_column("id").n_unique()
-    if duplicate_count:
-        raise ValueError(f"items parquet contains {duplicate_count} duplicate ids")
-    return items
-
-
-def _normalize_text(text: Any) -> str:
-    normalized = _NON_ALNUM_PATTERN.sub(" ", str(text).lower())
-    return _SPACE_PATTERN.sub(" ", normalized).strip()
-
-
-def _parse_attributes(raw: Any) -> dict[str, str]:
-    if raw is None:
+# просто из json в dict
+def parse_attributes(attrs):
+    if attrs is None:
         return {}
-    if isinstance(raw, Mapping):
-        parsed = dict(raw)
-    else:
-        try:
-            parsed = orjson.loads(raw)
-        except (orjson.JSONDecodeError, TypeError) as error:
-            raise ValueError("attributes must contain a JSON object") from error
-    if not isinstance(parsed, dict):
-        raise ValueError("attributes must contain a JSON object")
-    return {_normalize_text(key): _normalize_text(value) for key, value in parsed.items()}
+    attrs = orjson.loads(attrs)
+    return attrs
 
+def prepare_attributes(attrs):
+    attrs = parse_attributes(attrs)
+    return {normalize_text(key): normalize_text(val) for key, val in attrs.items()}
 
-def _attributes_to_tokens(attributes: Mapping[str, str]) -> list[str]:
-    tokens: list[str] = []
-    for key, value in attributes.items():
+# словарь атрибутов товара -> в список слов для обучения
+def attributes_to_tokens(attrs):
+    tokens = []
+    
+    for key, val in attrs.items():
         tokens.extend(key.split())
-        tokens.extend(value.split())
+        tokens.extend(val.split())
+    
     return tokens
 
-
-def _build_corpus(items: pl.DataFrame) -> list[list[str]]:
+# создание корпуса слов для обучения FastText
+def build_corpus(df):
     corpus = []
-    for raw in items.get_column("attributes"):
-        tokens = _attributes_to_tokens(_parse_attributes(raw))
+
+    for raw_attrs in tqdm(df['attributes'].drop_nulls(), desc='Building corpus'):
+        attrs = prepare_attributes(raw_attrs)
+        tokens = attributes_to_tokens(attrs)
+            
         if tokens:
             corpus.append(tokens)
-    if not corpus:
-        raise ValueError("cannot train FastText on an empty attribute corpus")
     return corpus
 
 
-def _train_fasttext(
-    corpus: list[list[str]],
-    *,
-    vector_size: int,
-    window: int,
-    min_count: int,
-    workers: int,
-    epochs: int,
-    random_state: int,
-) -> FastText:
-    logger.info(
-        "Training internal FastText: documents={}, vector_size={}, epochs={}, workers={}",
-        len(corpus),
-        vector_size,
-        epochs,
-        workers,
-    )
-    model = FastText(
-        vector_size=vector_size,
-        window=window,
-        min_count=min_count,
-        workers=workers,
+def train_fasttext(corpus: List[List], VECTOR_SIZE = 256) -> FastText:
+    
+    ft_model = FastText(
+        vector_size=VECTOR_SIZE,
+        window=5,
+        min_count=2,
+        workers=8,
         sg=1,
         min_n=2,
         max_n=5,
-        epochs=epochs,
-        seed=random_state,
+        epochs=10
     )
-    model.build_vocab(corpus_iterable=corpus)
-    model.train(corpus, total_examples=len(corpus), epochs=epochs)
-    return model
 
+    ft_model.build_vocab(corpus_iterable=corpus)
+    ft_model.train(corpus, total_examples=len(corpus), epochs=ft_model.epochs)
 
-def _text_embedding(text: str, model: FastText) -> np.ndarray:
-    tokens = text.split()
-    if not tokens:
+    return ft_model
+
+# получение эмбединга текста = сумма эмбедингов слов / кол-во токенов
+def text_embedding(text, model):
+
+    # если текст пустой, то возвращаем вектор из 0
+    if not text:
         return np.zeros(model.vector_size, dtype=np.float32)
 
+    tokens = text.split()
+
+    # итоговый вектор = сумма векторов всех токенов / количество токенов
     embedding = np.zeros(model.vector_size, dtype=np.float32)
+
     for token in tokens:
-        index = model.wv.key_to_index.get(token)
-        if index is None:
+        idx = model.wv.key_to_index.get(token)
+        if idx is None:
             embedding += model.wv.get_vector(token)
         else:
-            embedding += model.wv.vectors[index]
-    return embedding * np.float32(1.0 / len(tokens))
+            embedding += model.wv.vectors[idx]
+    return embedding * np.float32(1.0/len(tokens))
 
+# получаем минимум и максимум по каждому эмбедингу ключа и значения 
+# для подсчета maxpooling
+def get_atribute_min_max(attrs, model):
+    # возвращаем кортеж: название атрибута, 
+    keys, vals, names = [], [], []
 
-def _unit_embedding(text: str, model: FastText) -> np.ndarray:
-    embedding = _text_embedding(text, model)
-    norm = np.linalg.norm(embedding)
-    if norm > 0:
-        embedding /= norm
-    return embedding
+    for key, val in attrs.items():
+        # считаем эмбединги
+        key_emb = text_embedding(key, model)
+        val_emb = text_embedding(val, model)
 
+        # нормализуем эмбединги
+        key_norm = np.linalg.norm(key_emb)
+        val_norm = np.linalg.norm(val_emb)
 
-def _pool_card(raw_attributes: Any, model: FastText) -> CardEmbedding:
-    attributes = _parse_attributes(raw_attributes)
-    if not attributes:
-        empty = np.zeros(model.vector_size, dtype=np.float32)
-        return empty.copy(), empty.copy(), empty.copy(), empty.copy()
+        if key_norm > 0:
+            key_emb = key_emb / key_norm
+        if val_norm > 0:
+            val_emb = val_emb / val_norm
 
-    keys = np.asarray([_unit_embedding(key, model) for key in attributes], dtype=np.float32)
-    values = np.asarray([_unit_embedding(value, model) for value in attributes.values()], dtype=np.float32)
-    return (
-        keys.min(axis=0),
-        keys.max(axis=0),
-        values.min(axis=0),
-        values.max(axis=0),
-    )
+        keys.append(key_emb)
+        vals.append(val_emb)
+        
+        names.append(key)
+    
+    if not keys:
+        empty = np.zeros(model.vector_size)
+        return (names, empty, empty, empty, empty)
+        
+    keys = np.asarray(keys)
+    vals = np.asarray(vals)
 
+    max_keys = keys.max(axis=0)
+    max_vals = vals.max(axis=0)
+    min_keys = keys.min(axis=0)
+    min_vals = vals.min(axis=0)
+    
+    return (names, min_keys, max_keys, min_vals, max_vals)
 
-def _max_pairwise_product(
-    out: np.ndarray,
-    a_min: np.ndarray,
-    a_max: np.ndarray,
-    b_min: np.ndarray,
-    b_max: np.ndarray,
-    temporary: np.ndarray,
-) -> None:
+def max_pairwise_product(out, a_min, a_max, b_min, b_max, tmp):
     np.multiply(a_min, b_min, out=out)
-    np.multiply(a_min, b_max, out=temporary)
-    np.maximum(out, temporary, out=out)
-    np.multiply(a_max, b_min, out=temporary)
-    np.maximum(out, temporary, out=out)
-    np.multiply(a_max, b_max, out=temporary)
-    np.maximum(out, temporary, out=out)
+    np.multiply(a_min, b_max, out=tmp)
+    np.maximum(out, tmp, out=out)
+    np.multiply(a_max, b_min, out=tmp)
+    np.maximum(out, tmp, out=out)
+    np.multiply(a_max, b_max, out=tmp)
+    np.maximum(out, tmp, out=out)
 
 
-def _pair_embedding(
-    out: np.ndarray,
-    card1: CardEmbedding,
-    card2: CardEmbedding,
-    temporary: np.ndarray,
-) -> None:
-    dimension = len(card1[0])
-    _max_pairwise_product(
-        out[:dimension],
-        card1[0],
-        card1[1],
-        card2[0],
-        card2[1],
-        temporary[:dimension],
-    )
-    _max_pairwise_product(
-        out[dimension:],
-        card1[2],
-        card1[3],
-        card2[2],
-        card2[3],
-        temporary[dimension:],
-    )
+# подготовливаем таблицу matches
+# для каждой пары id в строке находим атрибуты
+def prepare_matches(matches: pl.DataFrame, items_path: str):
 
+    # извлекаем только нужные id
+    needed_ids = pl.concat([matches.select(pl.col('id1').alias('id')),
+                                matches.select(pl.col('id2').alias('id'))]).unique()
 
-def _required_item_ids(matches: pl.DataFrame) -> set[Any]:
-    return set(matches.get_column("id1")) | set(matches.get_column("id2"))
+    if Path(items_path).exists():
+        # сканируем items.parquet
+        items_lazy = pl.scan_parquet(items_path).select(['id', 'attributes'])
+    else:
+        logger.error("Items path doesn't exist: ", {items_path})
+        raise FileNotFoundError(f"Items file not found: {items_path}")
 
+    # находим нужные товары 
+    needed_items = items_lazy.join(needed_ids.lazy(), on='id', how='semi').collect()
+    items_for_join = needed_items.select(['id', 'attributes'])
 
-def _pair_groups(matches: pl.DataFrame) -> np.ndarray:
-    """Assign the same group to duplicate and reversed item pairs."""
-    group_by_pair: dict[frozenset[Any], int] = {}
-    groups = np.empty(matches.height, dtype=np.int64)
-    for index, (id1, id2) in enumerate(matches.select("id1", "id2").iter_rows()):
-        pair = frozenset((id1, id2))
-        groups[index] = group_by_pair.setdefault(pair, len(group_by_pair))
-    return groups
+    # join товаров из items с matches по id
+    matches = matches.join(items_for_join.rename(
+        {'id': 'id1', 'attributes': 'attributes1'}), on='id1', how='left')
+    
+    matches = matches.join(items_for_join.rename(
+        {'id': 'id2', 'attributes': 'attributes2'}), on='id2', how='left')
 
+    return matches
 
-def _build_card_cache(
-    items: pl.DataFrame,
-    required_ids: set[Any],
-    model: FastText,
-) -> dict[Any, CardEmbedding]:
-    available_ids = set(items.get_column("id"))
-    missing_ids = required_ids - available_ids
-    if missing_ids:
-        sample = sorted(map(str, missing_ids))[:10]
-        raise ValueError(f"match parquet references {len(missing_ids)} unknown item ids: {sample}")
+# получение модели fasttext
+def get_fasttext(use_pretrained_fasttext):
+    config_path = resolve_project_path('configs/config.yaml')
+    with open(config_path) as file:
+        params = yaml.safe_load(file)
+        fasttext_path = resolve_project_path(params['fasttext_path'])
+        items_path = resolve_project_path(params['items_path'])
 
-    selected = items.filter(pl.col("id").is_in(list(required_ids)))
-    return {
-        item_id: _pool_card(raw_attributes, model)
-        for item_id, raw_attributes in selected.select("id", "attributes").iter_rows()
-    }
-
-
-def _encode_loaded_pairs(
-    items: pl.DataFrame,
-    matches: pl.DataFrame,
-    model: FastText,
-) -> np.ndarray:
-    feature_size = 2 * model.vector_size
-    embeddings = np.empty((matches.height, feature_size), dtype=np.float32)
-    temporary = np.empty(feature_size, dtype=np.float32)
-    cache = _build_card_cache(items, _required_item_ids(matches), model)
-
-    for index, (id1, id2) in enumerate(matches.select("id1", "id2").iter_rows()):
-        _pair_embedding(embeddings[index], cache[id1], cache[id2], temporary)
-    return embeddings
-
-
-def _resolve_device(device: str | torch.device | None) -> torch.device:
-    if device is not None:
-        return torch.device(device)
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def _evaluate_classifier(
-    classifier: PairMLP,
-    loader: DataLoader,
-    criterion: nn.Module,
-    device: torch.device,
-) -> tuple[float, float, float]:
-    classifier.eval()
-    total_loss = 0.0
-    targets: list[np.ndarray] = []
-    probabilities: list[np.ndarray] = []
-    with torch.no_grad():
-        for features, labels in loader:
-            features = features.to(device, non_blocking=True)
-            labels = labels.to(device, non_blocking=True)
-            logits = classifier(features)
-            total_loss += criterion(logits, labels).item() * features.size(0)
-            targets.append(labels.cpu().numpy())
-            probabilities.append(torch.sigmoid(logits).cpu().numpy())
-
-    target_values = np.concatenate(targets)
-    probability_values = np.concatenate(probabilities)
-    return (
-        total_loss / len(loader.dataset),
-        float(roc_auc_score(target_values, probability_values)),
-        float(average_precision_score(target_values, probability_values)),
-    )
-
-
-def _train_classifier(
-    features: np.ndarray,
-    targets: np.ndarray,
-    groups: np.ndarray,
-    *,
-    validation_fraction: float,
-    random_state: int,
-    batch_size: int,
-    epochs: int,
-    patience: int,
-    dropout: float,
-    learning_rate: float,
-    weight_decay: float,
-    device: str | torch.device | None,
-) -> tuple[StandardScaler, PairMLP, float, float]:
-    if len(features) < 4:
-        raise ValueError("at least four matched pairs are required for training")
-    classes, counts = np.unique(targets, return_counts=True)
-    if set(classes.tolist()) != {0, 1} or counts.min() < 2:
-        raise ValueError("target must contain at least two examples of both classes")
-
-    splitter = GroupShuffleSplit(
-        n_splits=32,
-        test_size=validation_fraction,
-        random_state=random_state,
-    )
-    split = next(
-        (
-            (train_indices, validation_indices)
-            for train_indices, validation_indices in splitter.split(features, targets, groups)
-            if len(np.unique(targets[train_indices])) == 2
-            and len(np.unique(targets[validation_indices])) == 2
-        ),
-        None,
-    )
-    if split is None:
-        raise ValueError(
-            "validation split cannot contain both target classes without "
-            "leaking duplicate or reversed pairs; add more distinct pairs or "
-            "increase validation_fraction"
-        )
-    train_indices, validation_indices = split
-    train_x = features[train_indices]
-    validation_x = features[validation_indices]
-    train_y = targets[train_indices]
-    validation_y = targets[validation_indices]
-    scaler = StandardScaler()
-    train_x = scaler.fit_transform(train_x).astype(np.float32)
-    validation_x = scaler.transform(validation_x).astype(np.float32)
-
-    torch.manual_seed(random_state)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(random_state)
-    target_device = _resolve_device(device)
-    classifier = PairMLP(features.shape[1], dropout=dropout).to(target_device)
-
-    train_dataset = TensorDataset(torch.from_numpy(train_x), torch.from_numpy(train_y.astype(np.float32)))
-    validation_dataset = TensorDataset(
-        torch.from_numpy(validation_x),
-        torch.from_numpy(validation_y.astype(np.float32)),
-    )
-    effective_batch_size = min(batch_size, len(train_dataset))
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=effective_batch_size,
-        shuffle=True,
-        num_workers=0,
-        pin_memory=target_device.type == "cuda",
-        drop_last=len(train_dataset) % effective_batch_size == 1,
-    )
-    validation_loader = DataLoader(
-        validation_dataset,
-        batch_size=min(batch_size, len(validation_dataset)),
-        shuffle=False,
-        num_workers=0,
-        pin_memory=target_device.type == "cuda",
-    )
-
-    positive_count = max(int(np.sum(train_y == 1)), 1)
-    negative_count = int(np.sum(train_y == 0))
-    criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([negative_count / positive_count], dtype=torch.float32, device=target_device))
-    optimizer = torch.optim.AdamW(classifier.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=3)
-
-    best_auc = -np.inf
-    best_pr_auc = -np.inf
-    best_state: dict[str, torch.Tensor] | None = None
-    epochs_without_improvement = 0
-    for epoch in range(1, epochs + 1):
-        classifier.train()
-        total_train_loss = 0.0
-        trained_samples = 0
-        for features_batch, targets_batch in train_loader:
-            features_batch = features_batch.to(target_device, non_blocking=True)
-            targets_batch = targets_batch.to(target_device, non_blocking=True)
-            optimizer.zero_grad()
-            loss = criterion(classifier(features_batch), targets_batch)
-            loss.backward()
-            optimizer.step()
-            total_train_loss += loss.item() * features_batch.size(0)
-            trained_samples += features_batch.size(0)
-
-        validation_loss, validation_auc, validation_pr_auc = _evaluate_classifier(classifier, validation_loader, criterion, target_device)
-        scheduler.step(validation_auc)
-        logger.info(
-            "Classifier epoch {}/{}: train_loss={:.4f}, val_loss={:.4f}, "
-            "val_roc_auc={:.4f}, val_pr_auc={:.4f}",
-            epoch,
-            epochs,
-            total_train_loss / trained_samples,
-            validation_loss,
-            validation_auc,
-            validation_pr_auc,
-        )
-        if validation_auc > best_auc:
-            best_auc = validation_auc
-            best_pr_auc = validation_pr_auc
-            best_state = copy.deepcopy(classifier.state_dict())
-            epochs_without_improvement = 0
+        # если модели нет по указанному пути или нужно ее обучить
+        if not Path(fasttext_path).exists() or not use_pretrained_fasttext:
+            logger.info("Start training FastText model")
+            df = pl.read_parquet(items_path)
+            corpus = build_corpus(df)
+            ft_model = train_fasttext(corpus)
+            logger.info("Finished training FastText model")
+        # иначе подгружаем готовую модель
         else:
-            epochs_without_improvement += 1
-            if epochs_without_improvement >= patience:
-                logger.info("Classifier early stopping at epoch {}", epoch)
-                break
+            logger.info("Load pretrained FastText model")
+            ft_model = FastText.load(str(fasttext_path))
+        return ft_model
 
-    if best_state is None:
-        raise RuntimeError("classifier training did not produce a valid state")
-    classifier.load_state_dict(best_state)
-    return scaler, classifier.cpu(), float(best_auc), float(best_pr_auc)
+def calculate_embedding(attrs1, attrs2, ft_model, feature_dim):
+    # получаем min, max по каждому эмбедингу атрибутов
+    _, min_keys_1, max_keys_1, min_vals_1, max_vals_1 = get_atribute_min_max(attrs1, ft_model)
+    _, min_keys_2, max_keys_2, min_vals_2, max_vals_2 = get_atribute_min_max(attrs2, ft_model)
+    
+    d = len(min_keys_1)
 
+    # считаем maxpooling
+    out = np.zeros(feature_dim, dtype=np.float32)
+    tmp = np.zeros(feature_dim, dtype=np.float32)
 
-def train_maxpooling_model(
-    data_path: str | Path,
-    match_path: str | Path,
-    *,
-    vector_size: int = 256,
-    window: int = 5,
-    min_count: int = 2,
-    workers: int = 8,
-    fasttext_epochs: int = 10,
-    classifier_epochs: int = 50,
-    batch_size: int = 512,
-    validation_fraction: float = 0.2,
-    patience: int = 7,
-    dropout: float = 0.2,
-    learning_rate: float = 1e-3,
-    weight_decay: float = 1e-4,
-    random_state: int = 42,
-    device: str | torch.device | None = None,
-) -> MaxPoolingModel:
-    """Train the internal FastText encoder and MLP classifier from parquet files.
+    max_pairwise_product(out[:d], min_keys_1, max_keys_1, min_keys_2, max_keys_2, tmp[:d])
+    max_pairwise_product(out[d:], min_vals_1, max_vals_1, min_vals_2, max_vals_2, tmp[d:])
 
-    ``data_path`` must contain ``id``, ``name``, ``attributes`` and ``category``.
-    ``match_path`` must contain ``id1``, ``id2`` and binary ``target`` columns.
-    """
-    if vector_size < 1 or window < 1 or min_count < 1 or workers < 1:
-        raise ValueError("FastText numeric parameters must be positive")
-    if fasttext_epochs < 1 or classifier_epochs < 1 or batch_size < 2:
-        raise ValueError("epoch counts must be positive and batch_size at least two")
-    if not 0 < validation_fraction < 1:
-        raise ValueError("validation_fraction must be between zero and one")
-    if patience < 1:
-        raise ValueError("patience must be positive")
-
-    started_at = perf_counter()
-    items = _load_items(data_path)
-    matches = _read_parquet(match_path, _TRAIN_MATCH_COLUMNS, "training matches")
-    corpus = _build_corpus(items)
-    fasttext = _train_fasttext(
-        corpus,
-        vector_size=vector_size,
-        window=window,
-        min_count=min_count,
-        workers=workers,
-        epochs=fasttext_epochs,
-        random_state=random_state,
-    )
-    del corpus
-    pair_features = _encode_loaded_pairs(items, matches, fasttext)
-    targets = matches.get_column("target").to_numpy()
-    scaler, classifier, best_auc, best_pr_auc = _train_classifier(
-        pair_features,
-        targets,
-        _pair_groups(matches),
-        validation_fraction=validation_fraction,
-        random_state=random_state,
-        batch_size=batch_size,
-        epochs=classifier_epochs,
-        patience=patience,
-        dropout=dropout,
-        learning_rate=learning_rate,
-        weight_decay=weight_decay,
-        device=device,
-    )
-    logger.info(
-        "Finished max-pooling model training: items={}, pairs={}, "
-        "best_val_roc_auc={:.4f}, best_val_pr_auc={:.4f}, elapsed_seconds={:.3f}",
-        items.height,
-        matches.height,
-        best_auc,
-        best_pr_auc,
-        perf_counter() - started_at,
-    )
-    return MaxPoolingModel(
-        _fasttext=fasttext,
-        _scaler=scaler,
-        _classifier=classifier,
-        vector_size=vector_size,
-        best_validation_auc=best_auc,
-        best_validation_pr_auc=best_pr_auc,
-    )
+    return np.asarray(out, dtype=np.float32)
 
 
-def encode_attribute_pairs(
-    data_path: str | Path,
-    match_path: str | Path,
-    model: MaxPoolingModel,
-) -> np.ndarray:
-    """Return raw max-pooling embeddings for pairs in ``match_path``.
+# эта функция получает на вход относительный путь к файлу matches.parquet и items.parquet
+# также можно указать, нужно ли заново обучать fasttext (+указать новый размер эмбединга) 
+# или же взять готовые веса
+# функция вернет матрицу, каждая строка которой - это эмбединг пары карточек из matches
+# размерность эмбединга - 2 * размерность эмбединга fasttext (по дефолту 256)
+def get_maxpooling_embeddings(matches_path: str, items_path: str, use_pretrained_fasttext=True, vector_size=256):
+    logger.info('Start obtaining embeddings via maxpooling')
+    # список готовых эмбедингов для каждой пары карточек товаров
+    embeddings = []
+    
+    matches_path = resolve_project_path(matches_path)
+    items_path = resolve_project_path(items_path)
 
-    Rows remain in parquet order. Only ``id1`` and ``id2`` are required in the
-    pair file; ``target`` is deliberately ignored when present. The result has
-    shape ``(pair_count, 2 * model.vector_size)`` and dtype ``float32``.
-    """
-    if not isinstance(model, MaxPoolingModel):
-        raise TypeError("model must be returned by train_maxpooling_model")
-    started_at = perf_counter()
-    items = _load_items(data_path)
-    matches = _read_parquet(match_path, _INFERENCE_MATCH_COLUMNS, "inference matches")
-    result = _encode_loaded_pairs(items, matches, model._fasttext)
-    logger.info(
-        "Encoded max-pooling pair embeddings: pairs={}, dimensions={}, elapsed_seconds={:.3f}",
-        matches.height,
-        result.shape[1],
-        perf_counter() - started_at,
-    )
-    return result
+    if Path(matches_path).exists():
+        matches = pl.read_parquet(matches_path)
+    else:
+        logger.error("Matches path doesn't exist: {}", matches_path)
+        raise FileNotFoundError(f"Matches file not found: {items_path}")
+
+    # для каждой пары карточек ищем их атрибуты
+    logger.info("Start preparing matches dataset")
+    matches = prepare_matches(matches, items_path)
+    logger.info("Finished preparing matches dataset")
+
+    # подгружаем (или обучаем) FastText
+    ft_model = get_fasttext(use_pretrained_fasttext)
+
+    # атрибуты карточек
+    raw_attrs1 = matches['attributes1']
+    raw_attrs2 = matches['attributes2']
+
+
+    # итоговая размерность эмбединга
+    feature_dim = 2 * ft_model.vector_size
+
+    logger.info("Start calculate maxpooling embeddings")
+    try:
+        for raw_attr1, raw_attr2 in tqdm(zip(raw_attrs1, raw_attrs2), desc='Calculating embeddings'):
+            # обработка атрибутов
+            attr1 = prepare_attributes(raw_attr1)
+            attr2 = prepare_attributes(raw_attr2)
+        
+            embedding = calculate_embedding(attr1, attr2, ft_model, feature_dim)
+            embeddings.append(embedding)
+    except Exception:
+        logger.error("Something went wrong!")
+    
+
+    logger.info("Maxpooling embedding calculations completed successfully!")
+    return np.asarray(embeddings)
+
+
+
