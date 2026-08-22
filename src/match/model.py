@@ -1,8 +1,8 @@
-"""End-to-end transformer training for product-card matching.
+"""Transformer training and inference for prepared product-card pairs.
 
-The module deliberately accepts already prepared text pairs. Reading parquet
-files, joining product ids and formatting product text belong to the data
-pipeline, while this module owns tokenization, optimization and inference.
+Reading parquet files and structuring cards belong to ``prepare_data``;
+field serialization, token budgets and collation belong to ``pair_encoding``.
+This module owns model optimization, evaluation, persistence and inference.
 
 Geometrically, a cross-encoder maps a pair of cards to one point ``h`` in a
 learned representation space. The classification head learns a separating
@@ -19,19 +19,21 @@ Here ``x`` denotes different products and ``o`` denotes matching products.
 
 from __future__ import annotations
 
-import importlib.util
 import inspect
 import json
-import math
+import optuna
 from dataclasses import asdict, dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Sequence
+
+from loguru import logger
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 from sklearn.metrics import average_precision_score
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from transformers import (
     AutoModelForSequenceClassification,
     AutoTokenizer,
@@ -43,21 +45,27 @@ from transformers import (
     TrainingArguments,
 )
 
+from .pair_encoding import (
+    DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
+    PairEncodingCollator,
+    PreparedPairDataset,
+    add_pair_special_tokens,
+    infer_pair_max_length,
+)
+from .prepare_data import PreparedPair
+
 __all__ = [
-    "PairDataCollator",
     "ResolvedTrainingConfig",
     "SequenceClassifierConfig",
-    "SequencePairDataset",
     "TrainingResult",
     "compute_class_weights",
+    "compute_macro_pr_auc",
     "compute_pr_auc",
-    "infer_max_length",
+    "encode_pair_cls",
     "load_trained_classifier",
     "predict_match_probabilities",
     "train_sequence_classifier",
 ]
-
-TextPair = tuple[str, str]
 
 
 @dataclass(frozen=True)
@@ -72,23 +80,22 @@ class SequenceClassifierConfig:
         Maximum number of final-training epochs. Early stopping may finish the
         run sooner.
     hpo_trials:
-        Number of Optuna trials used to maximize validation PR-AUC. A value of
-        one disables the search and uses conservative defaults.
+        Number of Optuna trials used to maximize validation macro PR-AUC. A
+        value of one disables the search and uses conservative defaults.
     seed:
         Random seed shared by sampling, training and hyperparameter search.
-
-    Notes
-    -----
-    Sequence length and the largest feasible training batch are inferred
-    automatically. Learning rate and weight decay are selected by Optuna when
-    ``hpo_trials > 1``. Warmup and gradient clipping are internal stability
-    policy rather than public hyperparameters.
+    use_field_tokens:
+        Whether pair encoding uses the added ``[KEY]`` and ``[VAL]`` tokens.
+    max_attribute_value_tokens:
+        Per-attribute value limit. ``None`` disables individual truncation.
     """
 
     model_path: str
     max_epochs: int = 5
     hpo_trials: int = 10
     seed: int = 42
+    use_field_tokens: bool = True
+    max_attribute_value_tokens: int | None = DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS
 
     def __post_init__(self) -> None:
         if not self.model_path.strip():
@@ -97,6 +104,8 @@ class SequenceClassifierConfig:
             raise ValueError("max_epochs must be positive")
         if self.hpo_trials < 1:
             raise ValueError("hpo_trials must be positive")
+        if self.max_attribute_value_tokens is not None and self.max_attribute_value_tokens < 1:
+            raise ValueError("max_attribute_value_tokens must be positive or None")
 
 
 @dataclass(frozen=True)
@@ -109,6 +118,8 @@ class ResolvedTrainingConfig:
     gradient_accumulation_steps: int
     learning_rate: float
     weight_decay: float
+    use_field_tokens: bool
+    max_attribute_value_tokens: int | None
     warmup_ratio: float = 0.06
     gradient_clip_norm: float = 1.0
 
@@ -118,70 +129,9 @@ class TrainingResult:
     """Summary of a completed fine-tuning run."""
 
     model_dir: Path
-    validation_pr_auc: float
+    validation_macro_pr_auc: float
     best_hyperparameters: dict[str, float]
     resolved_config: ResolvedTrainingConfig
-
-
-class SequencePairDataset(Dataset):
-    """Dataset of text pairs and optional binary match labels.
-
-    Parameters
-    ----------
-    text_pairs:
-        Pairs in ``(first_card_text, second_card_text)`` order.
-    labels:
-        Optional labels where 0 means different products and 1 means a match.
-
-    Examples
-    --------
-    >>> pairs = [("black office chair", "черное офисное кресло")]
-    >>> dataset = SequencePairDataset(pairs, labels=[1])
-    >>> dataset[0]["label"]
-    1
-    """
-
-    def __init__(self, text_pairs: Sequence[TextPair], labels: Sequence[int] | None = None) -> None:
-        self._pairs = [(str(left), str(right)) for left, right in text_pairs]
-        self._labels = None if labels is None else [int(label) for label in labels]
-
-        if not self._pairs:
-            raise ValueError("text_pairs must not be empty")
-        if self._labels is not None and len(self._pairs) != len(self._labels):
-            raise ValueError("text_pairs and labels must have equal lengths")
-        if self._labels is not None and not set(self._labels).issubset({0, 1}):
-            raise ValueError("labels must contain only 0 and 1")
-
-    def __len__(self) -> int:
-        return len(self._pairs)
-
-    def __getitem__(self, index: int) -> dict[str, Any]:
-        left, right = self._pairs[index]
-        item: dict[str, Any] = {"text1": left, "text2": right}
-        if self._labels is not None:
-            item["label"] = self._labels[index]
-        return item
-
-
-class PairDataCollator:
-    """Dynamically tokenize and pad a batch of text pairs."""
-
-    def __init__(self, tokenizer: PreTrainedTokenizerBase, max_length: int) -> None:
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-
-    def __call__(self, items: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
-        batch = self.tokenizer(
-            text=[item["text1"] for item in items],
-            text_pair=[item["text2"] for item in items],
-            padding=True,
-            truncation=True,
-            max_length=self.max_length,
-            return_tensors="pt",
-        )
-        if "label" in items[0]:
-            batch["labels"] = torch.tensor([item["label"] for item in items], dtype=torch.long)
-        return batch
 
 
 class WeightedSequenceTrainer(Trainer):
@@ -204,53 +154,6 @@ class WeightedSequenceTrainer(Trainer):
         outputs = model(**inputs)
         loss = F.cross_entropy(outputs.logits, labels, weight=self.class_weights.to(outputs.logits.device))
         return (loss, outputs) if return_outputs else loss
-
-
-def infer_max_length(
-    tokenizer: PreTrainedTokenizerBase,
-    text_pairs: Sequence[TextPair],
-    *,
-    quantile: float = 0.95,
-    sample_size: int = 10_000,
-    hard_cap: int = 512,
-) -> int:
-    """Infer a token limit covering most pairs without wasting computation.
-
-    The selected length is the requested empirical quantile, rounded up to a
-    multiple of eight and capped by both the tokenizer limit and ``hard_cap``.
-
-    Examples
-    --------
-    If 95% of sampled pairs contain at most 233 tokens, the result is 240.
-    """
-    if not text_pairs:
-        raise ValueError("text_pairs must not be empty")
-    if not 0.0 < quantile <= 1.0:
-        raise ValueError("quantile must be in (0, 1]")
-    if sample_size < 1 or hard_cap < 8:
-        raise ValueError("sample_size must be positive and hard_cap at least 8")
-
-    if len(text_pairs) > sample_size:
-        indices = np.linspace(0, len(text_pairs) - 1, sample_size, dtype=int)
-        sample = [text_pairs[index] for index in indices]
-    else:
-        sample = text_pairs
-
-    encoded = tokenizer(
-        text=[str(pair[0]) for pair in sample],
-        text_pair=[str(pair[1]) for pair in sample],
-        add_special_tokens=True,
-        padding=False,
-        truncation=False,
-    )
-    lengths = np.fromiter((len(token_ids) for token_ids in encoded["input_ids"]), dtype=np.int32)
-    selected = int(np.quantile(lengths, quantile, method="higher"))
-    selected = max(8, int(math.ceil(selected / 8) * 8))
-
-    model_limit = getattr(tokenizer, "model_max_length", hard_cap)
-    if not isinstance(model_limit, int) or model_limit <= 0 or model_limit > 100_000:
-        model_limit = hard_cap
-    return min(selected, model_limit, hard_cap)
 
 
 def compute_class_weights(labels: Sequence[int]) -> torch.Tensor:
@@ -287,6 +190,36 @@ def compute_pr_auc(eval_prediction: EvalPrediction | tuple[Any, Any]) -> dict[st
     probabilities = exponentiated[:, 1] / exponentiated.sum(axis=1)
     return {"pr_auc": float(average_precision_score(labels, probabilities))}
 
+def compute_macro_pr_auc(
+    eval_prediction: EvalPrediction | tuple[Any, Any],
+    categories: Sequence[str],
+) -> dict[str, float]:
+    if isinstance(eval_prediction, EvalPrediction):
+        logits = eval_prediction.predictions
+        labels = eval_prediction.label_ids
+    else:
+        logits, labels = eval_prediction
+
+    if isinstance(logits, tuple):
+        logits = logits[0]
+
+    logits = np.asarray(logits, dtype=np.float64)
+    labels = np.asarray(labels, dtype=np.int64)
+    categories = np.asarray(categories)
+
+    shifted = logits - logits.max(axis=1, keepdims=True)
+    exponentiated = np.exp(shifted)
+    probabilities = exponentiated[:, 1] / exponentiated.sum(axis=1)
+
+    category_scores = [
+        average_precision_score(
+            labels[categories == category],
+            probabilities[categories == category],
+        )
+        for category in np.unique(categories)
+    ]
+
+    return {"macro_pr_auc": float(np.mean(category_scores))}
 
 def _resolve_device() -> torch.device:
     if torch.cuda.is_available():
@@ -296,16 +229,24 @@ def _resolve_device() -> torch.device:
     return torch.device("cpu")
 
 
-def _model_init(model_path: str):
+def _model_init(
+    model_path: str,
+    tokenizer: PreTrainedTokenizerBase,
+    *,
+    use_field_tokens: bool,
+):
     def initialize_model(trial: Any | None = None) -> PreTrainedModel:
         del trial
-        return AutoModelForSequenceClassification.from_pretrained(
+        model = AutoModelForSequenceClassification.from_pretrained(
             model_path,
             num_labels=2,
             id2label={0: "different", 1: "match"},
             label2id={"different": 0, "match": 1},
             ignore_mismatched_sizes=True,
         )
+        if use_field_tokens:
+            add_pair_special_tokens(tokenizer, model)
+        return model
 
     return initialize_model
 
@@ -329,9 +270,11 @@ def _training_arguments(
         "max_grad_norm": 1.0,
         "eval_strategy": "epoch",
         "save_strategy": "epoch",
-        "logging_strategy": "epoch",
+        "logging_strategy": "steps",
+        "logging_steps": 100,
+        "logging_first_step": True,
         "load_best_model_at_end": True,
-        "metric_for_best_model": "pr_auc",
+        "metric_for_best_model": "macro_pr_auc",
         "greater_is_better": True,
         "save_total_limit": 1,
         "remove_unused_columns": False,
@@ -375,52 +318,95 @@ def _hp_space(trial: Any) -> dict[str, float]:
 def _validate_validation_labels(labels: Sequence[int]) -> None:
     unique_labels = set(int(label) for label in labels)
     if unique_labels != {0, 1}:
-        raise ValueError(
-            "validation labels must contain both classes for meaningful PR-AUC"
-        )
+        raise ValueError("validation labels must contain both classes for meaningful PR-AUC")
+
+
+def _labels_from_pairs(
+    pairs: Sequence[PreparedPair],
+    *,
+    split_name: str,
+) -> list[int]:
+    if not pairs:
+        raise ValueError(f"{split_name}_pairs must not be empty")
+
+    labels: list[int] = []
+    for pair in pairs:
+        if pair.label not in (0, 1):
+            raise ValueError(f"{split_name}_pairs must all have binary labels")
+        labels.append(int(pair.label))
+    return labels
 
 
 def train_sequence_classifier(
-    train_pairs: Sequence[TextPair],
-    train_labels: Sequence[int],
-    validation_pairs: Sequence[TextPair],
-    validation_labels: Sequence[int],
+    train_pairs: Sequence[PreparedPair],
+    validation_pairs: Sequence[PreparedPair],
     config: SequenceClassifierConfig,
     *,
     output_dir: str | Path,
 ) -> TrainingResult:
-    """Fine-tune a cross-encoder and select the best model by PR-AUC.
+    """Fine-tune a cross-encoder and select the best model by macro PR-AUC.
 
-    Only the checkpoint and compute budget are user-controlled. Input length is
-    inferred from the training distribution, the largest feasible batch is
-    found by ``Trainer``, and Optuna selects learning rate and weight decay.
+    Labels and validation categories are read directly from ``PreparedPair``.
+    Input length is inferred from structured training pairs, the largest
+    feasible batch is found by ``Trainer``, and Optuna selects learning rate
+    and weight decay.
 
     Train and validation pairs must be split before this call. In product
     matching, group-aware splitting by product id is preferred so the same
     product cannot leak across the two subsets.
     """
-    if len(train_pairs) != len(train_labels):
-        raise ValueError("train_pairs and train_labels must have equal lengths")
-    if len(validation_pairs) != len(validation_labels):
-        raise ValueError("validation_pairs and validation_labels must have equal lengths")
+    train_labels = _labels_from_pairs(train_pairs, split_name="train")
+    validation_labels = _labels_from_pairs(validation_pairs, split_name="validation")
+    validation_categories = [pair.category for pair in validation_pairs]
+
+    logger.info("Training sequence classifier")
+    logger.info("Training pairs: {}", len(train_pairs))
+    logger.info("Validation pairs: {}", len(validation_pairs))
     _validate_validation_labels(validation_labels)
+
+    train_counts = np.bincount(np.asarray(train_labels, dtype=np.int64), minlength=2)
+    logger.info(
+        "Training labels: different={}, match={}",
+        int(train_counts[0]),
+        int(train_counts[1]),
+    )
+
     class_weights = compute_class_weights(train_labels)
+    logger.info("Class weights [different, match]: {}", class_weights.tolist())
+    logger.info("Use [KEY]/[VAL] field tokens: {}", config.use_field_tokens)
+    logger.info("Max tokens per attribute value: {}", config.max_attribute_value_tokens)
 
     output_path = Path(output_dir).resolve()
     output_path.mkdir(parents=True, exist_ok=True)
     tokenizer = AutoTokenizer.from_pretrained(config.model_path)
-    max_length = infer_max_length(tokenizer, train_pairs)
+    if config.use_field_tokens:
+        add_pair_special_tokens(tokenizer)
+    max_length = infer_pair_max_length(
+        tokenizer,
+        train_pairs,
+        use_field_tokens=config.use_field_tokens,
+        max_attribute_value_tokens=config.max_attribute_value_tokens,
+    )
+    logger.info("Max input length: {}", max_length)
 
-    train_dataset = SequencePairDataset(train_pairs, train_labels)
-    validation_dataset = SequencePairDataset(validation_pairs, validation_labels)
-    collator = PairDataCollator(tokenizer, max_length)
-    model_init = _model_init(config.model_path)
+    train_dataset = PreparedPairDataset(train_pairs)
+    validation_dataset = PreparedPairDataset(validation_pairs)
+    collator = PairEncodingCollator(
+        tokenizer,
+        max_length,
+        use_field_tokens=config.use_field_tokens,
+        max_attribute_value_tokens=config.max_attribute_value_tokens,
+    )
+    model_init = _model_init(
+        config.model_path,
+        tokenizer,
+        use_field_tokens=config.use_field_tokens,
+    )
 
     best_hyperparameters = {"learning_rate": 2e-5, "weight_decay": 0.01}
-
+    validation_metric = partial(compute_macro_pr_auc, categories=validation_categories)
     if config.hpo_trials > 1:
-        if importlib.util.find_spec("optuna") is None:
-            raise ImportError("Optuna is required when hpo_trials > 1; install project dependencies")
+        logger.info("Starting Optuna search: trials={}", config.hpo_trials)
         hpo_arguments = _training_arguments(output_path / ".hpo", config, **best_hyperparameters)
         hpo_trainer = WeightedSequenceTrainer(
             args=hpo_arguments,
@@ -428,14 +414,14 @@ def train_sequence_classifier(
             train_dataset=train_dataset,
             eval_dataset=validation_dataset,
             data_collator=collator,
-            compute_metrics=compute_pr_auc,
+            compute_metrics=validation_metric,
             class_weights=class_weights,
         )
         best_run = hpo_trainer.hyperparameter_search(
             backend="optuna",
             direction="maximize",
             hp_space=_hp_space,
-            compute_objective=lambda metrics: metrics["eval_pr_auc"],
+            compute_objective=lambda metrics: metrics["eval_macro_pr_auc"],
             n_trials=config.hpo_trials,
         )
         best_hyperparameters.update(
@@ -445,6 +431,8 @@ def train_sequence_classifier(
                 if key in best_hyperparameters
             }
         )
+        logger.info("Optuna completed")
+    logger.info("Best hyperparameters: {}", best_hyperparameters)
 
     training_arguments = _training_arguments(output_path, config, **best_hyperparameters)
     trainer = WeightedSequenceTrainer(
@@ -453,13 +441,17 @@ def train_sequence_classifier(
         train_dataset=train_dataset,
         eval_dataset=validation_dataset,
         data_collator=collator,
-        compute_metrics=compute_pr_auc,
+        compute_metrics=validation_metric,
         callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
         class_weights=class_weights,
     )
     trainer.train()
+    logger.info("Training completed")
     metrics = trainer.evaluate()
+    logger.info("Validation metrics: {}", metrics)
     trainer.model.config.match_max_length = max_length
+    trainer.model.config.match_use_field_tokens = config.use_field_tokens
+    trainer.model.config.match_max_attribute_value_tokens = config.max_attribute_value_tokens
     trainer.save_model(str(output_path))
     tokenizer.save_pretrained(output_path)
 
@@ -471,12 +463,20 @@ def train_sequence_classifier(
         gradient_accumulation_steps=training_arguments.gradient_accumulation_steps,
         learning_rate=best_hyperparameters["learning_rate"],
         weight_decay=best_hyperparameters["weight_decay"],
+        use_field_tokens=config.use_field_tokens,
+        max_attribute_value_tokens=config.max_attribute_value_tokens,
     )
-    metadata = {"validation_pr_auc": float(metrics["eval_pr_auc"]), "best_hyperparameters": best_hyperparameters, "resolved_config": asdict(resolved_config)}
+    metadata = {
+        "validation_macro_pr_auc": float(metrics["eval_macro_pr_auc"]),
+        "best_hyperparameters": best_hyperparameters,
+        "resolved_config": asdict(resolved_config),
+    }
+    logger.info("Saving metadata: {}", metadata)
     (output_path / "training_metadata.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info("Model and metadata saved to {!s}", output_path)
     return TrainingResult(
         model_dir=output_path,
-        validation_pr_auc=float(metrics["eval_pr_auc"]),
+        validation_macro_pr_auc=float(metrics["eval_macro_pr_auc"]),
         best_hyperparameters=best_hyperparameters,
         resolved_config=resolved_config,
     )
@@ -495,15 +495,26 @@ def load_trained_classifier(
     return tokenizer, model
 
 
+def _saved_pair_encoding_settings(model: PreTrainedModel) -> tuple[bool, int | None]:
+    return (
+        bool(getattr(model.config, "match_use_field_tokens", True)),
+        getattr(
+            model.config,
+            "match_max_attribute_value_tokens",
+            DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
+        ),
+    )
+
+
 def predict_match_probabilities(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
-    text_pairs: Sequence[TextPair],
+    pairs: Sequence[PreparedPair],
     *,
     batch_size: int = 64,
     max_length: int | None = None,
 ) -> np.ndarray:
-    """Return threshold-free positive-class probabilities for text pairs.
+    """Return threshold-free positive-class probabilities for prepared pairs.
 
     Examples
     --------
@@ -516,30 +527,109 @@ def predict_match_probabilities(
     """
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
-    if not text_pairs:
+    if not pairs:
         return np.empty(0, dtype=np.float32)
+    use_field_tokens, max_attribute_value_tokens = _saved_pair_encoding_settings(model)
     if max_length is None:
         max_length = getattr(model.config, "match_max_length", None)
     if max_length is None:
-        max_length = infer_max_length(tokenizer, text_pairs)
+        max_length = infer_pair_max_length(
+            tokenizer,
+            pairs,
+            use_field_tokens=use_field_tokens,
+            max_attribute_value_tokens=max_attribute_value_tokens,
+        )
 
-    dataset = SequencePairDataset(text_pairs)
-    collator = PairDataCollator(tokenizer, max_length)
+    dataset = PreparedPairDataset(pairs)
+    collator = PairEncodingCollator(
+        tokenizer,
+        max_length,
+        use_field_tokens=use_field_tokens,
+        max_attribute_value_tokens=max_attribute_value_tokens,
+        include_labels=False,
+    )
     device = next(model.parameters()).device
     current_batch_size = batch_size
 
     while True:
         try:
-            dataloader = DataLoader(dataset, batch_size=current_batch_size, shuffle=False, collate_fn=collator)
+            dataloader = DataLoader(
+                dataset,
+                batch_size=current_batch_size,
+                shuffle=False,
+                collate_fn=collator,
+            )
             chunks: list[np.ndarray] = []
             model.eval()
             with torch.inference_mode():
                 for batch in dataloader:
                     batch = {key: value.to(device) for key, value in batch.items()}
                     logits = model(**batch).logits
-                    chunks.append(
-                        logits.softmax(dim=-1)[:, 1].float().cpu().numpy()
-                    )
+                    chunks.append(logits.softmax(dim=-1)[:, 1].float().cpu().numpy())
+            return np.concatenate(chunks).astype(np.float32, copy=False)
+        except torch.cuda.OutOfMemoryError:
+            if current_batch_size == 1:
+                raise
+            current_batch_size = max(1, current_batch_size // 2)
+            torch.cuda.empty_cache()
+
+
+def encode_pair_cls(
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizerBase,
+    pairs: Sequence[PreparedPair],
+    *,
+    batch_size: int = 64,
+    max_length: int | None = None,
+) -> np.ndarray:
+    """Return final-layer CLS embeddings for prepared product pairs.
+
+    Examples
+    --------
+    >>> embeddings = encode_pair_cls(model, tokenizer, pairs)
+    >>> embeddings.shape
+    (len(pairs), model.config.hidden_size)
+    """
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    if not pairs:
+        return np.empty((0, model.config.hidden_size), dtype=np.float32)
+    use_field_tokens, max_attribute_value_tokens = _saved_pair_encoding_settings(model)
+    if max_length is None:
+        max_length = getattr(model.config, "match_max_length", None)
+    if max_length is None:
+        max_length = infer_pair_max_length(
+            tokenizer,
+            pairs,
+            use_field_tokens=use_field_tokens,
+            max_attribute_value_tokens=max_attribute_value_tokens,
+        )
+
+    dataset = PreparedPairDataset(pairs)
+    collator = PairEncodingCollator(
+        tokenizer,
+        max_length,
+        use_field_tokens=use_field_tokens,
+        max_attribute_value_tokens=max_attribute_value_tokens,
+        include_labels=False,
+    )
+    device = next(model.parameters()).device
+    current_batch_size = batch_size
+    while True:
+        try:
+            dataloader = DataLoader(
+                dataset,
+                batch_size=current_batch_size,
+                shuffle=False,
+                collate_fn=collator,
+            )
+            chunks: list[np.ndarray] = []
+            model.eval()
+            with torch.inference_mode():
+                for batch in dataloader:
+                    batch = {key: value.to(device) for key, value in batch.items()}
+                    embeddings = model.base_model(**batch, return_dict=True).last_hidden_state[:, 0, :]
+                    chunks.append(embeddings.float().cpu().numpy())
             return np.concatenate(chunks).astype(np.float32, copy=False)
         except torch.cuda.OutOfMemoryError:
             if current_batch_size == 1:

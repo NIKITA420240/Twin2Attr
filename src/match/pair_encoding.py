@@ -1,0 +1,366 @@
+"""Model-aware serialization and tokenization of prepared product pairs."""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Sequence
+
+import numpy as np
+import torch
+from torch.utils.data import Dataset
+from transformers import PreTrainedModel, PreTrainedTokenizerBase
+
+from .prepare_data import PreparedCard, PreparedPair
+
+__all__ = [
+    "DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS",
+    "KEY_TOKEN",
+    "VAL_TOKEN",
+    "PairEncodingCollator",
+    "PreparedPairDataset",
+    "add_pair_special_tokens",
+    "encode_prepared_pair",
+    "infer_pair_max_length",
+    "serialize_card",
+    "serialize_pair",
+]
+
+
+KEY_TOKEN = "[KEY]"
+VAL_TOKEN = "[VAL]"
+PAIR_SPECIAL_TOKENS = (KEY_TOKEN, VAL_TOKEN)
+DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS = 32
+
+
+class PreparedPairDataset(Dataset):
+    """Expose prepared pairs to a PyTorch ``DataLoader`` without copying them."""
+
+    def __init__(self, pairs: Sequence[PreparedPair]) -> None:
+        self._pairs = pairs
+
+    def __len__(self) -> int:
+        return len(self._pairs)
+
+    def __getitem__(self, index: int) -> PreparedPair:
+        return self._pairs[index]
+
+
+def add_pair_special_tokens(
+    tokenizer: PreTrainedTokenizerBase,
+    model: PreTrainedModel | None = None,
+) -> int:
+    """Register ``[KEY]`` and ``[VAL]`` and optionally resize model embeddings.
+
+    Call this once after loading a tokenizer and every freshly initialized
+    model. Existing special tokens are not changed.
+
+    Returns
+    -------
+    int
+        Number of tokens newly added to the tokenizer vocabulary.
+    """
+    added_count = tokenizer.add_tokens(list(PAIR_SPECIAL_TOKENS), special_tokens=True)
+
+    if model is not None:
+        embeddings = model.get_input_embeddings()
+        if embeddings is None:
+            raise ValueError("model does not expose input embeddings")
+        if embeddings.num_embeddings != len(tokenizer):
+            model.resize_token_embeddings(len(tokenizer))
+    return added_count
+
+
+def serialize_card(
+    card: PreparedCard,
+    *,
+    use_field_tokens: bool = True,
+) -> str:
+    """Serialize fields in source order without truncation for inspection."""
+    fields = (("name", card.name), ("category", card.category), *card.attributes)
+    if use_field_tokens:
+        return " ".join(f"{KEY_TOKEN} {key} {VAL_TOKEN} {value}" for key, value in fields)
+    return " ".join(f"{key}: {value}" for key, value in fields)
+
+
+def serialize_pair(
+    pair: PreparedPair,
+    *,
+    use_field_tokens: bool = True,
+) -> tuple[str, str]:
+    """Return complete left and right card texts without token-budget trimming."""
+    return (
+        serialize_card(pair.left, use_field_tokens=use_field_tokens),
+        serialize_card(pair.right, use_field_tokens=use_field_tokens),
+    )
+
+
+def _require_pair_special_tokens(tokenizer: PreTrainedTokenizerBase) -> None:
+    for token in PAIR_SPECIAL_TOKENS:
+        token_ids = tokenizer.encode(token, add_special_tokens=False)
+        if len(token_ids) != 1 or tokenizer.convert_ids_to_tokens(token_ids[0]) != token:
+            raise ValueError(
+                f"tokenizer does not contain {token!r}; call "
+                "add_pair_special_tokens(tokenizer, model) first"
+            )
+
+
+def _encode_card_sections(
+    tokenizer: PreTrainedTokenizerBase,
+    card: PreparedCard,
+    *,
+    use_field_tokens: bool,
+    max_attribute_value_tokens: int | None,
+) -> tuple[list[int], list[list[int]], int]:
+    required: list[int] = []
+    for key, value in (("name", card.name), ("category", card.category)):
+        text = f"{KEY_TOKEN} {key} {VAL_TOKEN} {value}" if use_field_tokens else f"{key}: {value}"
+        required.extend(tokenizer.encode(text, add_special_tokens=False))
+
+    attributes: list[list[int]] = []
+    for key, value in card.attributes:
+        prefix = f"{KEY_TOKEN} {key} {VAL_TOKEN}" if use_field_tokens else f"{key}:"
+        prefix_ids = tokenizer.encode(prefix, add_special_tokens=False)
+        value_ids = tokenizer.encode(f" {value}", add_special_tokens=False)
+        if max_attribute_value_tokens is not None:
+            value_ids = value_ids[:max_attribute_value_tokens]
+        attributes.append(prefix_ids + value_ids)
+    attributes.sort(key=len)
+    demand = len(required) + sum(len(attribute) for attribute in attributes)
+    return required, attributes, demand
+
+
+def _fit_pair_to_budget(
+    left_sections: tuple[list[int], list[list[int]], int],
+    right_sections: tuple[list[int], list[list[int]], int],
+    content_budget: int,
+) -> tuple[list[int], list[int]]:
+    def fit_card(
+        sections: tuple[list[int], list[list[int]], int],
+        budget: int,
+    ) -> list[int]:
+        required, attributes, _ = sections
+        if len(required) >= budget:
+            return required[:budget]
+
+        fitted = list(required)
+        for attribute in attributes:
+            if len(fitted) + len(attribute) > budget:
+                break
+            fitted.extend(attribute)
+        return fitted
+
+    left_demand = left_sections[2]
+    right_demand = right_sections[2]
+    left_budget = min(left_demand, (content_budget + 1) // 2)
+    right_budget = min(right_demand, content_budget // 2)
+    remaining = content_budget - left_budget - right_budget
+
+    left_extra = min(left_demand - left_budget, remaining)
+    left_budget += left_extra
+    remaining -= left_extra
+    right_budget += min(right_demand - right_budget, remaining)
+
+    left_ids = fit_card(left_sections, left_budget)
+    right_ids = fit_card(right_sections, right_budget)
+
+    while (remaining := content_budget - len(left_ids) - len(right_ids)) > 0:
+        left_candidate = fit_card(left_sections, len(left_ids) + remaining)
+        right_candidate = fit_card(right_sections, len(right_ids) + remaining)
+        left_gain = len(left_candidate) - len(left_ids)
+        right_gain = len(right_candidate) - len(right_ids)
+        if left_gain <= 0 and right_gain <= 0:
+            break
+        if left_gain >= right_gain:
+            left_ids = left_candidate
+        else:
+            right_ids = right_candidate
+    return left_ids, right_ids
+
+
+def _encode_prepared_pair(
+    tokenizer: PreTrainedTokenizerBase,
+    pair: PreparedPair,
+    *,
+    max_length: int,
+    special_token_count: int,
+    use_field_tokens: bool,
+    max_attribute_value_tokens: int | None,
+) -> dict[str, list[int]]:
+    content_budget = max_length - special_token_count
+    if content_budget < 1:
+        raise ValueError("max_length must leave room for pair content after special tokens")
+
+    left_sections = _encode_card_sections(
+        tokenizer,
+        pair.left,
+        use_field_tokens=use_field_tokens,
+        max_attribute_value_tokens=max_attribute_value_tokens,
+    )
+    right_sections = _encode_card_sections(
+        tokenizer,
+        pair.right,
+        use_field_tokens=use_field_tokens,
+        max_attribute_value_tokens=max_attribute_value_tokens,
+    )
+    left_ids, right_ids = _fit_pair_to_budget(
+        left_sections,
+        right_sections,
+        content_budget,
+    )
+
+    input_ids = tokenizer.build_inputs_with_special_tokens(left_ids, right_ids)
+    encoded: dict[str, list[int]] = {
+        "input_ids": input_ids,
+        "attention_mask": [1] * len(input_ids),
+    }
+    if "token_type_ids" in tokenizer.model_input_names:
+        encoded["token_type_ids"] = tokenizer.create_token_type_ids_from_sequences(left_ids, right_ids)
+    return encoded
+
+
+def encode_prepared_pair(
+    tokenizer: PreTrainedTokenizerBase,
+    pair: PreparedPair,
+    *,
+    max_length: int,
+    use_field_tokens: bool = True,
+    max_attribute_value_tokens: int | None = DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
+) -> dict[str, list[int]]:
+    """Tokenize a pair while dropping attributes only at field boundaries.
+
+    The content budget is initially split equally. If one card is shorter than
+    its share, its unused tokens are assigned to the other card. ``name`` and
+    ``category`` have priority. Attributes are stably sorted from shortest to
+    longest tokenized field, and only complete field sections are appended.
+
+    ``use_field_tokens=False`` disables ``[KEY]`` and ``[VAL]`` without
+    affecting the model-specific pair tokens such as ``[CLS]`` and ``[SEP]``.
+    ``max_attribute_value_tokens`` limits each attribute value independently;
+    ``None`` disables this per-value limit.
+    """
+    if max_attribute_value_tokens is not None and max_attribute_value_tokens < 1:
+        raise ValueError("max_attribute_value_tokens must be positive or None")
+    if use_field_tokens:
+        _require_pair_special_tokens(tokenizer)
+    return _encode_prepared_pair(
+        tokenizer,
+        pair,
+        max_length=max_length,
+        special_token_count=tokenizer.num_special_tokens_to_add(pair=True),
+        use_field_tokens=use_field_tokens,
+        max_attribute_value_tokens=max_attribute_value_tokens,
+    )
+
+
+class PairEncodingCollator:
+    """Encode structured pairs and dynamically pad them to the longest batch row."""
+
+    def __init__(
+        self,
+        tokenizer: PreTrainedTokenizerBase,
+        max_length: int,
+        *,
+        use_field_tokens: bool = True,
+        max_attribute_value_tokens: int | None = DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
+        include_labels: bool = True,
+    ) -> None:
+        if max_length < 1:
+            raise ValueError("max_length must be positive")
+        if max_attribute_value_tokens is not None and max_attribute_value_tokens < 1:
+            raise ValueError("max_attribute_value_tokens must be positive or None")
+        if use_field_tokens:
+            _require_pair_special_tokens(tokenizer)
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.use_field_tokens = use_field_tokens
+        self.max_attribute_value_tokens = max_attribute_value_tokens
+        self.include_labels = include_labels
+        self.special_token_count = tokenizer.num_special_tokens_to_add(pair=True)
+        if max_length <= self.special_token_count:
+            raise ValueError("max_length must leave room for pair content after special tokens")
+
+    def __call__(self, pairs: list[PreparedPair]) -> dict[str, torch.Tensor]:
+        if not pairs:
+            raise ValueError("cannot collate an empty batch")
+        encoded_pairs = [
+            _encode_prepared_pair(
+                self.tokenizer,
+                pair,
+                max_length=self.max_length,
+                special_token_count=self.special_token_count,
+                use_field_tokens=self.use_field_tokens,
+                max_attribute_value_tokens=self.max_attribute_value_tokens,
+            )
+            for pair in pairs
+        ]
+        batch = self.tokenizer.pad(
+            encoded_pairs,
+            padding=True,
+            return_tensors="pt",
+        )
+
+        if self.include_labels:
+            labels = [pair.label for pair in pairs]
+            if any(label is None for label in labels):
+                if not all(label is None for label in labels):
+                    raise ValueError("a batch cannot mix labeled and unlabeled pairs")
+            else:
+                batch["labels"] = torch.tensor(labels, dtype=torch.long)
+        return batch
+
+
+def infer_pair_max_length(
+    tokenizer: PreTrainedTokenizerBase,
+    pairs: Sequence[PreparedPair],
+    *,
+    quantile: float = 0.95,
+    sample_size: int = 10_000,
+    hard_cap: int = 512,
+    use_field_tokens: bool = True,
+    max_attribute_value_tokens: int | None = DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
+) -> int:
+    """Infer a rounded token limit from complete structured pair lengths."""
+    if not pairs:
+        raise ValueError("pairs must not be empty")
+    if not 0.0 < quantile <= 1.0:
+        raise ValueError("quantile must be in (0, 1]")
+    if sample_size < 1 or hard_cap < 8:
+        raise ValueError("sample_size must be positive and hard_cap at least 8")
+    if max_attribute_value_tokens is not None and max_attribute_value_tokens < 1:
+        raise ValueError("max_attribute_value_tokens must be positive or None")
+    if use_field_tokens:
+        _require_pair_special_tokens(tokenizer)
+
+    if len(pairs) > sample_size:
+        indices = np.linspace(0, len(pairs) - 1, sample_size, dtype=int)
+        sample = [pairs[int(index)] for index in indices]
+    else:
+        sample = pairs
+
+    special_token_count = tokenizer.num_special_tokens_to_add(pair=True)
+    lengths = np.fromiter(
+        (
+            _encode_card_sections(
+                tokenizer,
+                pair.left,
+                use_field_tokens=use_field_tokens,
+                max_attribute_value_tokens=max_attribute_value_tokens,
+            )[2]
+            + _encode_card_sections(
+                tokenizer,
+                pair.right,
+                use_field_tokens=use_field_tokens,
+                max_attribute_value_tokens=max_attribute_value_tokens,
+            )[2]
+            + special_token_count
+            for pair in sample
+        ),
+        dtype=np.int32,
+    )
+    selected = int(np.quantile(lengths, quantile, method="higher"))
+    selected = max(8, int(math.ceil(selected / 8) * 8))
+
+    model_limit = getattr(tokenizer, "model_max_length", hard_cap)
+    if not isinstance(model_limit, int) or model_limit <= 0 or model_limit > 100_000:
+        model_limit = hard_cap
+    return min(selected, model_limit, hard_cap)
