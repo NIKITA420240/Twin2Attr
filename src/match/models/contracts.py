@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, Sequence, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Sequence, runtime_checkable
 
 import numpy as np
 import polars as pl
 
 from ..prepare_data import PreparedPair, prepare_pairs
+
+if TYPE_CHECKING:
+    from ..data import TrainingData
+    from .artifacts import TrainingArtifacts
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,4 +65,12 @@ class MatchPredictor(Protocol):
         ...
 
 
-__all__ = ["MatchPredictor", "PairEncoder", "PredictionBatch"]
+@runtime_checkable
+class ModelTrainer(Protocol):
+    """A selected model strategy capable of consuming prepared training data."""
+
+    def train(self, data: TrainingData) -> TrainingArtifacts:
+        ...
+
+
+__all__ = ["MatchPredictor", "ModelTrainer", "PairEncoder", "PredictionBatch"]

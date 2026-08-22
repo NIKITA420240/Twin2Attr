@@ -8,7 +8,7 @@ from transformers import BertConfig, BertForSequenceClassification, BertTokenize
 
 from match.pair_encoding import PreparedPairDataset, infer_pair_max_length
 from match.prepare_data import PreparedCard, PreparedPair
-from match.transformer import (
+from match.models.transformer import (
     SequenceClassifierConfig,
     compute_class_weights,
     compute_pr_auc,

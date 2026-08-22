@@ -1,46 +1,36 @@
-"""Common model capabilities and concrete inference adapters."""
+"""Common contracts, artifacts and lazily loaded model implementations."""
 
 from importlib import import_module
 from typing import Any
 
-from .contracts import MatchPredictor, PairEncoder, PredictionBatch
-from .predictors import FusionPredictor, MaxPoolingPredictor, TransformerPredictor
-
-_LAZY_EXPORTS = {
-    "FusionTrainer": ".training",
-    "MaxPoolingTrainer": ".training",
-    "ModelTrainer": ".training",
-    "TrainingArtifacts": ".artifacts",
-    "TransformerTrainer": ".training",
-    "build_trainer": ".training",
-    "save_solution_manifest": ".artifacts",
+_EXPORTS = {
+    "FusionPredictor": (".fusion.predictor", "FusionPredictor"),
+    "FusionTrainer": (".fusion.training", "FusionTrainer"),
+    "MatchPredictor": (".contracts", "MatchPredictor"),
+    "MaxPoolingPredictor": (".maxpooling.predictor", "MaxPoolingPredictor"),
+    "MaxPoolingTrainer": (".maxpooling.training", "MaxPoolingTrainer"),
+    "ModelTrainer": (".contracts", "ModelTrainer"),
+    "PairEncoder": (".contracts", "PairEncoder"),
+    "PredictionBatch": (".contracts", "PredictionBatch"),
+    "TrainingArtifacts": (".artifacts", "TrainingArtifacts"),
+    "TransformerPredictor": (".transformer.predictor", "TransformerPredictor"),
+    "TransformerTrainer": (".transformer.training", "TransformerTrainer"),
+    "build_predictor": (".factory", "build_predictor"),
+    "build_trainer": (".factory", "build_trainer"),
+    "save_solution_manifest": (".artifacts", "save_solution_manifest"),
 }
 
-__all__ = [
-    "FusionPredictor",
-    "FusionTrainer",
-    "MatchPredictor",
-    "MaxPoolingPredictor",
-    "MaxPoolingTrainer",
-    "ModelTrainer",
-    "PairEncoder",
-    "PredictionBatch",
-    "TrainingArtifacts",
-    "TransformerPredictor",
-    "TransformerTrainer",
-    "build_trainer",
-    "save_solution_manifest",
-]
+__all__ = sorted(_EXPORTS)
 
 
 def __getattr__(name: str) -> Any:
     try:
-        module_name = _LAZY_EXPORTS[name]
+        module_name, attribute_name = _EXPORTS[name]
     except KeyError as error:
         raise AttributeError(
             f"module {__name__!r} has no attribute {name!r}"
         ) from error
-    value = getattr(import_module(module_name, __name__), name)
+    value = getattr(import_module(module_name, __name__), attribute_name)
     globals()[name] = value
     return value
 

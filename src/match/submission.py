@@ -9,13 +9,8 @@ from typing import Any, Mapping
 import numpy as np
 import polars as pl
 
-from .models import (
-    FusionPredictor,
-    MatchPredictor,
-    MaxPoolingPredictor,
-    PredictionBatch,
-    TransformerPredictor,
-)
+from .models.contracts import PredictionBatch
+from .models.factory import build_predictor
 from .paths import PROJECT_ROOT
 
 
@@ -117,57 +112,6 @@ def _prepare_attributes(
     return normalized, output_column
 
 
-def _load_predictor(
-    solution: Mapping[str, Any],
-    solution_root: Path,
-) -> MatchPredictor:
-    predictor_name = str(solution.get("predictor", "transformer"))
-    device = solution.get("device")
-    transformer: TransformerPredictor | None = None
-    if predictor_name in {"transformer", "fusion"}:
-        transformer = TransformerPredictor.load(
-            _resolve_from_solution(
-                solution.get("model_directory"),
-                root=solution_root,
-                name="model_directory",
-            ),
-            batch_size=int(solution.get("batch_size", 64)),
-            device=device,
-        )
-        if predictor_name == "transformer":
-            return transformer
-
-    maxpooling: MaxPoolingPredictor | None = None
-    if predictor_name in {"maxpooling", "fusion"}:
-        maxpooling = MaxPoolingPredictor.load(
-            _resolve_from_solution(
-                solution.get("maxpooling_path"),
-                root=solution_root,
-                name="maxpooling_path",
-            ),
-            batch_size=int(solution.get("maxpooling_batch_size", 512)),
-            device=device,
-        )
-        if predictor_name == "maxpooling":
-            return maxpooling
-
-    if predictor_name == "fusion":
-        if transformer is None or maxpooling is None:
-            raise RuntimeError("fusion predictor requires both pair encoders")
-        return FusionPredictor.load(
-            _resolve_from_solution(
-                solution.get("fusion_path"),
-                root=solution_root,
-                name="fusion_path",
-            ),
-            transformer=transformer,
-            maxpooling=maxpooling,
-            batch_size=int(solution.get("fusion_batch_size", 512)),
-            device=device,
-        )
-    raise ValueError(f"Unsupported predictor in solution.json: {predictor_name!r}")
-
-
 def _predict(
     items: pl.DataFrame,
     matches: pl.DataFrame,
@@ -180,7 +124,7 @@ def _predict(
         matches=matches,
         attributes_column=attributes_column,
     )
-    return _load_predictor(solution, solution_root).predict_proba(batch)
+    return build_predictor(solution, solution_root).predict_proba(batch)
 
 
 def create_submission(

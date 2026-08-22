@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from match.submission import _load_predictor
+from match.models.factory import build_predictor
 
 
 class PredictorLoadingTests(unittest.TestCase):
@@ -13,12 +13,14 @@ class PredictorLoadingTests(unittest.TestCase):
         transformer = object()
         with (
             patch(
-                "match.submission.TransformerPredictor.load",
+                "match.models.transformer.predictor.TransformerPredictor.load",
                 return_value=transformer,
             ) as load_transformer,
-            patch("match.submission.MaxPoolingPredictor.load") as load_maxpooling,
+            patch(
+                "match.models.maxpooling.predictor.MaxPoolingPredictor.load"
+            ) as load_maxpooling,
         ):
-            result = _load_predictor(
+            result = build_predictor(
                 {
                     "predictor": "transformer",
                     "model_directory": "models/transformer",
@@ -38,13 +40,15 @@ class PredictorLoadingTests(unittest.TestCase):
     def test_loads_only_maxpooling_for_maxpooling_prediction(self) -> None:
         maxpooling = object()
         with (
-            patch("match.submission.TransformerPredictor.load") as load_transformer,
             patch(
-                "match.submission.MaxPoolingPredictor.load",
+                "match.models.transformer.predictor.TransformerPredictor.load"
+            ) as load_transformer,
+            patch(
+                "match.models.maxpooling.predictor.MaxPoolingPredictor.load",
                 return_value=maxpooling,
             ) as load_maxpooling,
         ):
-            result = _load_predictor(
+            result = build_predictor(
                 {
                     "predictor": "maxpooling",
                     "maxpooling_path": "models/maxpooling.joblib",
@@ -66,19 +70,19 @@ class PredictorLoadingTests(unittest.TestCase):
         fusion = object()
         with (
             patch(
-                "match.submission.TransformerPredictor.load",
+                "match.models.transformer.predictor.TransformerPredictor.load",
                 return_value=transformer,
             ),
             patch(
-                "match.submission.MaxPoolingPredictor.load",
+                "match.models.maxpooling.predictor.MaxPoolingPredictor.load",
                 return_value=maxpooling,
             ),
             patch(
-                "match.submission.FusionPredictor.load",
+                "match.models.fusion.predictor.FusionPredictor.load",
                 return_value=fusion,
             ) as load_fusion,
         ):
-            result = _load_predictor(
+            result = build_predictor(
                 {
                     "predictor": "fusion",
                     "model_directory": "models/transformer",
@@ -99,7 +103,7 @@ class PredictorLoadingTests(unittest.TestCase):
 
     def test_rejects_unknown_predictor(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unsupported predictor"):
-            _load_predictor({"predictor": "unknown"}, self.root)
+            build_predictor({"predictor": "unknown"}, self.root)
 
 
 if __name__ == "__main__":
