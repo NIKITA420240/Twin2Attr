@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from loguru import logger
 
@@ -45,32 +46,25 @@ def _manifest_path(path: Path, *, root: Path) -> str:
         return str(path)
 
 
-def save_solution_manifest(
+def build_solution_manifest(
     config: AppConfig,
     artifacts: TrainingArtifacts,
-) -> Path:
-    """Write an inference manifest matching the produced artifact set."""
-    output_path = config.artifacts.solution_path
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    root = output_path.parent
+    *,
+    map_path: Callable[[Path], str],
+) -> dict[str, object]:
+    """Build an inference manifest with paths mapped for its destination."""
     solution: dict[str, object] = {"predictor": artifacts.predictor}
 
     if artifacts.transformer_dir is not None:
-        solution["model_directory"] = _manifest_path(
-            artifacts.transformer_dir,
-            root=root,
-        )
+        solution["model_directory"] = map_path(artifacts.transformer_dir)
         solution["batch_size"] = config.models_parameters.transformer.batch_size
     if artifacts.maxpooling_path is not None:
-        solution["maxpooling_path"] = _manifest_path(
-            artifacts.maxpooling_path,
-            root=root,
-        )
+        solution["maxpooling_path"] = map_path(artifacts.maxpooling_path)
         solution["maxpooling_batch_size"] = (
             config.models_parameters.maxpooling.batch_size
         )
     if artifacts.fusion_path is not None:
-        solution["fusion_path"] = _manifest_path(artifacts.fusion_path, root=root)
+        solution["fusion_path"] = map_path(artifacts.fusion_path)
         solution["fusion_batch_size"] = config.models_parameters.fusion.batch_size
     normalization_solution: dict[str, object] = {
         "enabled": config.normalization.enabled,
@@ -80,13 +74,9 @@ def save_solution_manifest(
     if config.normalization.enabled:
         normalization_solution.update(
             {
-                "synonyms_path": _manifest_path(
-                    config.normalization.synonyms_path,
-                    root=root,
-                ),
-                "unique_attributes_path": _manifest_path(
-                    config.normalization.unique_attributes_path,
-                    root=root,
+                "synonyms_path": map_path(config.normalization.synonyms_path),
+                "unique_attributes_path": map_path(
+                    config.normalization.unique_attributes_path
                 ),
                 "n_jobs": config.normalization.n_jobs,
                 "chunk_size": config.normalization.chunk_size,
@@ -101,7 +91,7 @@ def save_solution_manifest(
         ner_solution: dict[str, object] = {
             "enabled": True,
             "provider": ner.provider,
-            "model_dir": _manifest_path(ner.model_dir, root=root),
+            "model_dir": map_path(ner.model_dir),
             "source_column": ner.source_column,
             "output_column": ner.output_column,
             "enriched_column": ner.enriched_column,
@@ -112,9 +102,8 @@ def save_solution_manifest(
             "semantic_cleanup": ner.semantic_cleanup,
         }
         if ner.cluster_centers_path is not None:
-            ner_solution["cluster_centers_path"] = _manifest_path(
-                ner.cluster_centers_path,
-                root=root,
+            ner_solution["cluster_centers_path"] = map_path(
+                ner.cluster_centers_path
             )
         features_solution["ner"] = ner_solution
     if config.features.physical.enabled:
@@ -132,6 +121,23 @@ def save_solution_manifest(
     if features_solution:
         solution["features"] = features_solution
 
+    return solution
+
+
+def save_solution_manifest(
+    config: AppConfig,
+    artifacts: TrainingArtifacts,
+) -> Path:
+    """Write an inference manifest matching the produced artifact set."""
+    output_path = config.artifacts.solution_path
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    root = output_path.parent
+    solution = build_solution_manifest(
+        config,
+        artifacts,
+        map_path=lambda path: _manifest_path(path, root=root),
+    )
+
     output_path.write_text(
         json.dumps(solution, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -140,4 +146,8 @@ def save_solution_manifest(
     return output_path
 
 
-__all__ = ["TrainingArtifacts", "save_solution_manifest"]
+__all__ = [
+    "TrainingArtifacts",
+    "build_solution_manifest",
+    "save_solution_manifest",
+]

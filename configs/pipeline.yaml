@@ -2,6 +2,10 @@
 training:
   model: transformer
 
+# transformer | maxpooling | fusion
+inference:
+  model: transformer
+
 paths:
   items: data/items_human.parquet
   train_matches: data/matches.parquet
@@ -126,6 +130,9 @@ logging:
   level: INFO
   file: logs/pipeline.log
   rotation: 100 MB
+
+submission:
+  output_path: dist/twin2attr_submission.zip
 
 hydra:
   job:
