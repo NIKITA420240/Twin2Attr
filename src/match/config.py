@@ -24,6 +24,17 @@ class TrainingSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class InferenceSettings:
+    model: str
+
+    def __post_init__(self) -> None:
+        if self.model not in {"transformer", "maxpooling", "fusion"}:
+            raise ValueError(
+                "inference.model must be one of: transformer, maxpooling, fusion"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class PathSettings:
     items: Path
     train_matches: Path
@@ -239,8 +250,14 @@ class LoggingSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class SubmissionSettings:
+    output_path: Path
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     training: TrainingSettings
+    inference: InferenceSettings
     paths: PathSettings
     normalization: NormalizationSettings
     split: SplitSettings
@@ -250,6 +267,7 @@ class AppConfig:
     features: FeatureSettings
     runtime: RuntimeSettings
     logging: LoggingSettings
+    submission: SubmissionSettings
 
 
 ConfigSource = AppConfig | DictConfig | Mapping[str, Any]
@@ -311,6 +329,10 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         raise ValueError("application config must be a mapping")
 
     training = _section(resolved, "training")
+    inference_value = resolved.get("inference", training)
+    if not isinstance(inference_value, Mapping):
+        raise ValueError("config section 'inference' must be a mapping")
+    inference = inference_value
     paths = _section(resolved, "paths")
     normalization = _section(resolved, "normalization")
     split = _section(resolved, "split")
@@ -325,9 +347,14 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     physical = _section(features, "physical")
     runtime = _section(resolved, "runtime")
     logging = _section(resolved, "logging")
+    submission_value = resolved.get("submission", {})
+    if not isinstance(submission_value, Mapping):
+        raise ValueError("config section 'submission' must be a mapping")
+    submission = submission_value
 
     return AppConfig(
         training=TrainingSettings(model=str(_required(training, "model"))),
+        inference=InferenceSettings(model=str(_required(inference, "model"))),
         paths=PathSettings(
             items=_path(_required(paths, "items"), "paths.items"),
             train_matches=_path(
@@ -540,6 +567,15 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             file=_optional_path(logging.get("file")),
             rotation=str(_required(logging, "rotation")),
         ),
+        submission=SubmissionSettings(
+            output_path=_path(
+                submission.get(
+                    "output_path",
+                    "dist/twin2attr_submission.zip",
+                ),
+                "submission.output_path",
+            ),
+        ),
     )
 
 
@@ -585,6 +621,7 @@ __all__ = [
     "ConfigSource",
     "FeatureSettings",
     "FusionParameters",
+    "InferenceSettings",
     "LoggingSettings",
     "MaxPoolingParameters",
     "ModelsParametersSettings",
@@ -595,6 +632,7 @@ __all__ = [
     "PhysicalFeatureSettings",
     "RuntimeSettings",
     "SplitSettings",
+    "SubmissionSettings",
     "TrainingSettings",
     "TransformerParameters",
     "load_app_config",

@@ -19,6 +19,7 @@ class AppConfigTests(unittest.TestCase):
         self.assertTrue(self.config.paths.items.is_absolute())
         self.assertEqual(self.config.split.seed, self.config.runtime.seed)
         self.assertEqual(self.config.training.model, "transformer")
+        self.assertEqual(self.config.inference.model, "transformer")
         self.assertIsInstance(
             self.config.pair_encoding.max_attribute_value_tokens,
             int,
@@ -94,6 +95,13 @@ class AppConfigTests(unittest.TestCase):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
                 ["training.model=unknown"],
+            )
+
+    def test_rejects_unknown_inference_model(self) -> None:
+        with self.assertRaisesRegex(ValueError, "inference.model"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                ["inference.model=unknown"],
             )
 
     def test_saved_config_can_be_loaded_again(self) -> None:

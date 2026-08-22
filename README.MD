@@ -27,6 +27,46 @@ uv run python run.py \
 не должен передавать дополнительный параметр модели. Короткие формы: `-i`,
 `-m` и `-o`.
 
+## Сборка архива для evaluator
+
+После обучения архив собирается непосредственно из `configs/pipeline.yaml`:
+
+```bash
+uv run python -m build_submission
+```
+
+`training.model` определяет стратегию обучения, а `inference.model` — модель,
+которая попадёт в финальный архив. Эти параметры независимы: например, после
+обучения `fusion` можно собрать более компактное решение только с Transformer.
+
+Путь результата задаётся параметром `submission.output_path` и по умолчанию
+равен `dist/twin2attr_submission.zip`. В корень ZIP попадают `run.py`,
+`metadata.json`, автоматически сгенерированный `solution.json`, код из
+`src/match` и только необходимые артефакты:
+
+- `inference.model=transformer` — Transformer;
+- `inference.model=maxpooling` — MaxPooling;
+- `inference.model=fusion` — Transformer, MaxPooling и fusion head;
+- при включённой нормализации — оба parquet-файла правил;
+- при включённом NER — NER-модель и cluster centers;
+- physical provider не требует отдельных файлов весов.
+
+Сборщик проверяет наличие каждого обязательного файла до создания ZIP и не
+добавляет `__pycache__`, `.cache` и промежуточные `checkpoint-*`. Конфигурацию,
+выходной путь и dotlist-параметры можно переопределить:
+
+```bash
+uv run python -m build_submission \
+  --config configs/pipeline.yaml \
+  --output dist/fusion_v1.zip \
+  inference.model=fusion \
+  features.physical.enabled=true
+```
+
+Если модель ещё не обучена, команда завершится ошибкой с путём отсутствующего
+артефакта. Базовый `rubert-base-cased` содержит предобученные веса языка, но не
+обученную голову мэтчинга, поэтому не является заменой результата `train`.
+
 ## Обучение и диагностика
 
 Основной конфиг находится в `configs/pipeline.yaml`. В нём задаются пути,
@@ -71,6 +111,7 @@ uv run python run.py train \
 Итоговая модель выбирается одним параметром `training.model`. Значения
 `transformer` и `maxpooling` обучают соответствующую модель, а `fusion`
 автоматически обучает Transformer, MaxPooling и объединяющий классификатор.
+Модель для последующей упаковки выбирается отдельно через `inference.model`.
 Нормализация отдельно управляется флагом `normalization.enabled`. Например:
 
 ```bash
