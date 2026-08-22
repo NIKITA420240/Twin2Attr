@@ -208,13 +208,37 @@ def _encode_prepared_pair(
         content_budget,
     )
 
-    input_ids = tokenizer.build_inputs_with_special_tokens(left_ids, right_ids)
+    build_inputs = getattr(tokenizer, "build_inputs_with_special_tokens", None)
+    if callable(build_inputs):
+        input_ids = build_inputs(left_ids, right_ids)
+    else:
+        cls_token_id = tokenizer.cls_token_id
+        sep_token_id = tokenizer.sep_token_id
+        if cls_token_id is None or sep_token_id is None:
+            raise ValueError("BERT pair encoding requires CLS and SEP token ids")
+        if special_token_count != 3:
+            raise ValueError(
+                "tokenizer without build_inputs_with_special_tokens must use "
+                "the BERT [CLS] A [SEP] B [SEP] layout"
+            )
+        input_ids = [cls_token_id, *left_ids, sep_token_id, *right_ids, sep_token_id]
     encoded: dict[str, list[int]] = {
         "input_ids": input_ids,
         "attention_mask": [1] * len(input_ids),
     }
     if "token_type_ids" in tokenizer.model_input_names:
-        encoded["token_type_ids"] = tokenizer.create_token_type_ids_from_sequences(left_ids, right_ids)
+        create_token_types = getattr(
+            tokenizer,
+            "create_token_type_ids_from_sequences",
+            None,
+        )
+        if callable(create_token_types):
+            token_type_ids = create_token_types(left_ids, right_ids)
+        else:
+            token_type_ids = [0] * (len(left_ids) + 2) + [1] * (
+                len(right_ids) + 1
+            )
+        encoded["token_type_ids"] = token_type_ids
     return encoded
 
 

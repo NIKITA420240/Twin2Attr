@@ -49,19 +49,19 @@ def _selected_artifacts(config: AppConfig) -> TrainingArtifacts:
     if predictor == "transformer":
         return TrainingArtifacts(
             predictor=predictor,
-            transformer_dir=config.artifacts.transformer_dir,
+            transformer_dir=config.inference.transformer_dir,
         )
     if predictor == "maxpooling":
         return TrainingArtifacts(
             predictor=predictor,
-            maxpooling_path=config.artifacts.maxpooling_path,
+            maxpooling_path=config.inference.maxpooling_path,
         )
     if predictor == "fusion":
         return TrainingArtifacts(
             predictor=predictor,
-            transformer_dir=config.artifacts.transformer_dir,
-            maxpooling_path=config.artifacts.maxpooling_path,
-            fusion_path=config.artifacts.fusion_path,
+            transformer_dir=config.inference.transformer_dir,
+            maxpooling_path=config.inference.maxpooling_path,
+            fusion_path=config.inference.fusion_path,
         )
     raise ValueError(f"unsupported submission predictor: {predictor!r}")
 
