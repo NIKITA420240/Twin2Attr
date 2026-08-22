@@ -39,13 +39,13 @@ def _training_arguments(
     kwargs: dict[str, Any] = {
         "output_dir": str(output_dir),
         "num_train_epochs": config.max_epochs,
-        "per_device_train_batch_size": 64,
-        "per_device_eval_batch_size": 64,
-        "auto_find_batch_size": True,
-        "gradient_accumulation_steps": 1,
+        "per_device_train_batch_size": config.train_batch_size,
+        "per_device_eval_batch_size": config.eval_batch_size,
+        "auto_find_batch_size": config.auto_find_batch_size,
+        "gradient_accumulation_steps": config.gradient_accumulation_steps,
         "learning_rate": learning_rate,
         "weight_decay": weight_decay,
-        "max_grad_norm": 1.0,
+        "max_grad_norm": config.max_grad_norm,
         "eval_strategy": "epoch",
         "save_strategy": "epoch",
         "logging_strategy": "steps",
@@ -64,23 +64,30 @@ def _training_arguments(
     }
     parameters = inspect.signature(TrainingArguments).parameters
     if "warmup_ratio" in parameters:
-        kwargs["warmup_ratio"] = 0.06
+        kwargs["warmup_ratio"] = config.warmup_ratio
     else:
-        kwargs["warmup_steps"] = 0.06
+        kwargs["warmup_steps"] = 0
     if "eval_strategy" not in parameters:
         kwargs["evaluation_strategy"] = kwargs.pop("eval_strategy")
     return TrainingArguments(**kwargs)
 
 
-def _hp_space(trial: Any) -> dict[str, float]:
+def _hp_space(
+    trial: Any,
+    config: SequenceClassifierConfig,
+) -> dict[str, float]:
     return {
         "learning_rate": trial.suggest_float(
             "learning_rate",
-            1e-6,
-            5e-5,
+            config.hpo_learning_rate_min,
+            config.hpo_learning_rate_max,
             log=True,
         ),
-        "weight_decay": trial.suggest_float("weight_decay", 0.0, 0.1),
+        "weight_decay": trial.suggest_float(
+            "weight_decay",
+            config.hpo_weight_decay_min,
+            config.hpo_weight_decay_max,
+        ),
     }
 
 
@@ -160,7 +167,10 @@ def train_sequence_classifier(
         tokenizer,
         use_field_tokens=config.use_field_tokens,
     )
-    best_hyperparameters = {"learning_rate": 2e-5, "weight_decay": 0.01}
+    best_hyperparameters = {
+        "learning_rate": config.learning_rate,
+        "weight_decay": config.weight_decay,
+    }
     validation_metric = partial(
         compute_macro_pr_auc,
         categories=validation_categories,
@@ -182,7 +192,7 @@ def train_sequence_classifier(
         best_run = hpo_trainer.hyperparameter_search(
             backend="optuna",
             direction="maximize",
-            hp_space=_hp_space,
+            hp_space=partial(_hp_space, config=config),
             compute_objective=lambda metrics: metrics["eval_macro_pr_auc"],
             n_trials=config.hpo_trials,
         )
@@ -206,7 +216,11 @@ def train_sequence_classifier(
         eval_dataset=validation_dataset,
         data_collator=collator,
         compute_metrics=validation_metric,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
+        callbacks=[
+            EarlyStoppingCallback(
+                early_stopping_patience=config.early_stopping_patience
+            )
+        ],
         class_weights=class_weights,
     )
     trainer.train()
@@ -227,6 +241,7 @@ def train_sequence_classifier(
         )
     )
     resolved_config = ResolvedTrainingConfig(
+        max_epochs=config.max_epochs,
         max_length=max_length,
         train_batch_size=actual_batch_size,
         eval_batch_size=training_arguments.per_device_eval_batch_size,
@@ -235,6 +250,10 @@ def train_sequence_classifier(
         weight_decay=best_hyperparameters["weight_decay"],
         use_field_tokens=config.use_field_tokens,
         max_attribute_value_tokens=config.max_attribute_value_tokens,
+        warmup_ratio=config.warmup_ratio,
+        gradient_clip_norm=config.max_grad_norm,
+        early_stopping_patience=config.early_stopping_patience,
+        auto_find_batch_size=config.auto_find_batch_size,
     )
     metadata = {
         "validation_macro_pr_auc": float(metrics["eval_macro_pr_auc"]),
@@ -261,6 +280,19 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
         model_path=parameters.pretrained_model_path,
         max_epochs=parameters.max_epochs,
         hpo_trials=parameters.hpo_trials,
+        learning_rate=parameters.learning_rate,
+        weight_decay=parameters.weight_decay,
+        hpo_learning_rate_min=parameters.hpo_learning_rate_min,
+        hpo_learning_rate_max=parameters.hpo_learning_rate_max,
+        hpo_weight_decay_min=parameters.hpo_weight_decay_min,
+        hpo_weight_decay_max=parameters.hpo_weight_decay_max,
+        train_batch_size=parameters.train_batch_size,
+        eval_batch_size=parameters.eval_batch_size,
+        gradient_accumulation_steps=parameters.gradient_accumulation_steps,
+        warmup_ratio=parameters.warmup_ratio,
+        max_grad_norm=parameters.max_grad_norm,
+        early_stopping_patience=parameters.early_stopping_patience,
+        auto_find_batch_size=parameters.auto_find_batch_size,
         seed=config.runtime.seed,
         use_field_tokens=encoding.use_field_tokens,
         max_attribute_value_tokens=encoding.max_attribute_value_tokens,
