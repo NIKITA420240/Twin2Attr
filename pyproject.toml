@@ -21,7 +21,6 @@ dependencies = [
     "polars>=1.0",
     "pymorphy3>=2.0",
     "scikit-learn>=1.5",
-    "sentence-transformers>=3",
     "torch>=2.2",
     "tqdm>=4.66",
     "transformers>=4.44",

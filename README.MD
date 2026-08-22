@@ -10,41 +10,41 @@ uv sync --extra notebooks
 
 Для запуска без зависимостей ноутбуков достаточно `uv sync`.
 
-## Запуск
+## Единая точка запуска
 
-Решение принимает обязательные именованные аргументы:
+`run.py` используется и для локального обучения, и для финального инференса.
+Вызов без подкоманды совместим с evaluator и всегда означает инференс:
 
 ```bash
 uv run python run.py \
   --items_path data/items.parquet \
   --matches_path data/matches.parquet \
-  --output-path submit.csv
+  --output_path submit.csv
 ```
 
-Короткие формы: `-i` для товаров, `-m` для пар и `-o` для результата.
+Результат сохраняется как CSV со столбцами `id1`, `id2`, `predict`. Выбранная
+модель и пути к её артефактам фиксируются в `solution.json`, поэтому evaluator
+не должен передавать дополнительный параметр модели. Короткие формы: `-i`,
+`-m` и `-o`.
 
-## Полный pipeline
+## Обучение и диагностика
 
-Новый Hydra-конфиг находится в `configs/pipeline.yaml`. В нём задаются пути,
-нормализация, токены полей, ограничения длины, обучение и артефакты инференса.
+Основной конфиг находится в `configs/pipeline.yaml`. В нём задаются пути,
+нормализация, токены полей, ограничения длины и параметры обучения.
 
 ```bash
 # Обучение
-uv run python pipeline_cli.py action=train
-
-# Инференс
-uv run python pipeline_cli.py action=inference
+uv run python run.py train
 
 # Только безопасно оценить max_length, ничего не обучая и не сохраняя
-uv run python pipeline_cli.py action=inspect
+uv run python run.py inspect
 ```
 
-Любое поле можно переопределить через Hydra, например:
+Поля можно переопределять через Hydra/OmegaConf dotlist:
 
 ```bash
-uv run python pipeline_cli.py \
-  action=train \
-  'pipelines.train=[read_data,normalize,split_data,prepare_data,pair_encoding,transformer]' \
+uv run python run.py train \
+  normalization.enabled=true \
   pair_encoding.max_attribute_value_tokens=48 \
   pair_encoding.max_length=256
 ```
@@ -56,10 +56,11 @@ uv run python pipeline_cli.py \
 распределения `category × target`:
 
 ```bash
-uv run python pipeline_cli.py \
-  action=train \
+uv run python run.py train \
+  paths.items=data/items_human.parquet \
+  paths.train_matches=data/matches.parquet \
   split.mode=auto \
-  split.leakage_scope=pair \
+  split.leakage_scope=item \
   split.validation_fraction=0.2
 ```
 
@@ -67,16 +68,40 @@ uv run python pipeline_cli.py \
 `leakage_scope=item` не допускает ни одного общего товара, но из-за связанных
 компонент может менее точно сохранять требуемое распределение.
 
-Порядок и состав `pipelines.train` и `pipelines.inference` — единственный
-переключатель стадий. Например, добавление `maxpooling` обучает или применяет
-MaxPooling, а последовательность `transformer`, `maxpooling`, `fusion`
-обучает или применяет общую fusion-голову. Стадия `pair_encoding` разрешает
-настройки токенизации и `max_length`, но не материализует токены для всего
-датасета: токенизация остаётся динамической внутри батчей.
+Порядок обучения задан явно в `train_pipeline`: подготовка данных, вычисление
+`max_length` и обучение Transformer. Дополнительные компоненты включаются
+флагами `features.maxpooling.enabled` и `fusion.enabled`. Для fusion необходимо
+также включить MaxPooling. Нормализация управляется флагом
+`normalization.enabled`. Например:
+
+```bash
+uv run python run.py train \
+  features.maxpooling.enabled=true \
+  fusion.enabled=true
+```
+
+Конфиг задаёт параметры компонентов, но не конструирует порядок выполнения из
+строк. Финальный predict запускается отдельно через `run.py predict` и
+`solution.json`. Токенизация остаётся динамической внутри батчей.
 
 Полный resolved-конфиг обучения сохраняется рядом с моделью в
 `pipeline_config.yaml`. NER оставлен явной точкой расширения и должен
 оставаться выключенным до реализации provider-а.
+
+## Конфигурация финального решения
+
+По умолчанию `solution.json` выбирает обученный transformer:
+
+```json
+{
+  "predictor": "transformer",
+  "model_directory": "models/twin2attr",
+  "batch_size": 64
+}
+```
+
+Для fusion в manifest указываются `predictor: fusion`, `maxpooling_path` и
+`fusion_path`. `metadata.json` задаёт evaluator entrypoint `python -u run.py`.
 
 ## Нормализация атрибутов
 

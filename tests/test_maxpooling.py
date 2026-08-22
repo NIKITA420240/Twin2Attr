@@ -1,7 +1,5 @@
 import json
-import tempfile
 import unittest
-from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -11,13 +9,7 @@ from match import encode_attribute_pairs, train_maxpooling_model
 
 class MaxPoolingPipelineTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temp_directory = tempfile.TemporaryDirectory()
-        directory = Path(self.temp_directory.name)
-        self.data_path = directory / "items.parquet"
-        self.train_matches_path = directory / "train_matches.parquet"
-        self.inference_matches_path = directory / "inference_matches.parquet"
-
-        pl.DataFrame(
+        self.items = pl.DataFrame(
             {
                 "id": [1, 2, 3, 4],
                 "name": ["one", "two", "three", "four"],
@@ -29,27 +21,26 @@ class MaxPoolingPipelineTests(unittest.TestCase):
                 ],
                 "category": ["a", "a", "b", "b"],
             }
-        ).write_parquet(self.data_path)
+        )
 
-        pl.DataFrame(
+        self.train_matches = pl.DataFrame(
             {
                 "id1": [1, 2, 1, 2, 3, 4, 3, 4],
                 "id2": [2, 1, 1, 2, 4, 3, 3, 4],
                 "target": [1, 1, 1, 1, 0, 0, 0, 0],
             }
-        ).write_parquet(self.train_matches_path)
-
-        pl.DataFrame({"id1": [1, 2], "id2": [2, 1]}).write_parquet(
-            self.inference_matches_path
         )
 
-    def tearDown(self) -> None:
-        self.temp_directory.cleanup()
+        self.inference_matches = pl.DataFrame(
+            {"id1": [1, 2], "id2": [2, 1]}
+        )
 
     def test_trains_pipeline_and_encodes_symmetric_pairs(self) -> None:
+        items = self.items.rename({"attributes": "normalized_attributes"})
         model = train_maxpooling_model(
-            self.data_path,
-            self.train_matches_path,
+            items,
+            self.train_matches,
+            attributes_column="normalized_attributes",
             vector_size=4,
             fasttext_epochs=1,
             classifier_epochs=1,
@@ -60,9 +51,10 @@ class MaxPoolingPipelineTests(unittest.TestCase):
         )
 
         embeddings = encode_attribute_pairs(
-            self.data_path,
-            self.inference_matches_path,
+            items,
+            self.inference_matches,
             model,
+            attributes_column="normalized_attributes",
         )
 
         self.assertEqual(model.vector_size, 4)

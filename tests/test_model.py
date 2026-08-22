@@ -6,12 +6,12 @@ import numpy as np
 import torch
 from transformers import BertConfig, BertForSequenceClassification, BertTokenizerFast
 
-from match.model import (
+from match.pair_encoding import PreparedPairDataset, infer_pair_max_length
+from match.prepare_data import PreparedCard, PreparedPair
+from match.transformer import (
     SequenceClassifierConfig,
-    SequencePairDataset,
     compute_class_weights,
     compute_pr_auc,
-    infer_max_length,
     train_sequence_classifier,
 )
 
@@ -19,14 +19,32 @@ from match.model import (
 class FakeTokenizer:
     model_max_length = 512
 
-    def __call__(self, text, text_pair, **kwargs):
-        del kwargs
-        return {
-            "input_ids": [
-                list(range(len(left.split()) + len(right.split()) + 3))
-                for left, right in zip(text, text_pair)
-            ]
-        }
+    def encode(self, text, *, add_special_tokens=False):
+        del add_special_tokens
+        return list(range(len(text.split())))
+
+    def num_special_tokens_to_add(self, *, pair=False):
+        return 3 if pair else 2
+
+
+def _card(item_id: int, name: str, category: str = "category") -> PreparedCard:
+    return PreparedCard(item_id, name, category, ())
+
+
+def _pair(
+    left_id: int,
+    left_name: str,
+    right_id: int,
+    right_name: str,
+    label: int,
+    category: str = "category",
+) -> PreparedPair:
+    return PreparedPair(
+        _card(left_id, left_name, category),
+        _card(right_id, right_name, category),
+        label,
+        category,
+    )
 
 
 class SequenceClassifierModelTests(unittest.TestCase):
@@ -34,19 +52,32 @@ class SequenceClassifierModelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             SequenceClassifierConfig("checkpoint", hpo_trials=0)
 
-    def test_dataset_validates_pair_and_label_counts(self) -> None:
-        with self.assertRaises(ValueError):
-            SequencePairDataset([("left", "right")], labels=[])
+    def test_dataset_preserves_prepared_pairs(self) -> None:
+        pair = _pair(1, "left", 2, "right", 1)
+        dataset = PreparedPairDataset([pair])
+
+        self.assertEqual(len(dataset), 1)
+        self.assertIs(dataset[0], pair)
 
     def test_infers_quantile_length_and_rounds_to_multiple_of_eight(self) -> None:
         pairs = [
-            ("one", "two"),
-            ("one two three four", "five six seven eight nine"),
+            _pair(1, "one", 2, "two", 1),
+            _pair(
+                3,
+                "one two three four",
+                4,
+                "five six seven eight nine",
+                0,
+            ),
         ]
 
-        max_length = infer_max_length(FakeTokenizer(), pairs)
+        max_length = infer_pair_max_length(
+            FakeTokenizer(),
+            pairs,
+            use_field_tokens=False,
+        )
 
-        self.assertEqual(max_length, 16)
+        self.assertEqual(max_length, 24)
 
     def test_balanced_class_weights_give_rare_class_more_weight(self) -> None:
         weights = compute_class_weights([0, 0, 0, 1])
@@ -85,6 +116,7 @@ class SequenceClassifierModelTests(unittest.TestCase):
                 "phone",
                 "same",
                 "different",
+                "category",
             ]
             (checkpoint / "vocab.txt").write_text(
                 "\n".join(vocabulary),
@@ -109,27 +141,23 @@ class SequenceClassifierModelTests(unittest.TestCase):
             model.save_pretrained(checkpoint)
 
             train_pairs = [
-                ("black chair", "black chair"),
-                ("phone", "different chair"),
-                ("same chair", "black chair"),
-                ("phone", "chair"),
+                _pair(1, "black chair", 2, "black chair", 1),
+                _pair(3, "phone", 4, "different chair", 0),
+                _pair(5, "same chair", 6, "black chair", 1),
+                _pair(7, "phone", 8, "chair", 0),
             ]
-            train_labels = [1, 0, 1, 0]
             validation_pairs = [
-                ("same chair", "black chair"),
-                ("phone", "different chair"),
+                _pair(9, "same chair", 10, "black chair", 1),
+                _pair(11, "phone", 12, "different chair", 0),
             ]
-            validation_labels = [1, 0]
 
             result = train_sequence_classifier(
                 train_pairs,
-                train_labels,
                 validation_pairs,
-                validation_labels,
                 SequenceClassifierConfig(
                     str(checkpoint),
                     max_epochs=1,
-                    hpo_trials=2,
+                    hpo_trials=1,
                     seed=7,
                 ),
                 output_dir=output,
@@ -137,7 +165,7 @@ class SequenceClassifierModelTests(unittest.TestCase):
 
             self.assertTrue((output / "config.json").is_file())
             self.assertTrue((output / "training_metadata.json").is_file())
-            self.assertTrue(np.isfinite(result.validation_pr_auc))
+            self.assertTrue(np.isfinite(result.validation_macro_pr_auc))
 
 
 if __name__ == "__main__":
