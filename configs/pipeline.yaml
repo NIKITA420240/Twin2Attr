@@ -45,6 +45,16 @@ models_parameters:
     pretrained_model_path: models/cross-encoder-ms-marco-MiniLM-L12-v2
     max_epochs: 5
     hpo_trials: 10
+    learning_rate: 0.00002
+    weight_decay: 0.01
+    train_batch_size: 64
+    eval_batch_size: 64
+    gradient_accumulation_steps: 1
+    warmup_ratio: 0.06
+    max_grad_norm: 1.0
+    early_stopping_patience: 2
+    auto_find_batch_size: true
+    # Batch size used by predict after the trained model is loaded.
     batch_size: 64
 
   maxpooling:
