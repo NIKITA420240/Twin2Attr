@@ -113,6 +113,36 @@ MaxPooling также можно использовать самостоятел
 `MatchPredictor`. Transformer и MaxPooling могут извлекать признаки и делать
 предсказания, а Fusion композиционно объединяет их признаки.
 
+Реализации разделены по модели и ответственности:
+
+```text
+src/match/models/
+├── contracts.py
+├── artifacts.py
+├── factory.py
+├── transformer/
+│   ├── config.py
+│   ├── model.py
+│   ├── training.py
+│   ├── predictor.py
+│   └── metrics.py
+├── maxpooling/
+│   ├── model.py
+│   ├── features.py
+│   ├── training.py
+│   ├── predictor.py
+│   └── serialization.py
+└── fusion/
+    ├── model.py
+    ├── training.py
+    ├── predictor.py
+    └── serialization.py
+```
+
+`factory.py` — единственная точка выбора конкретного trainer или predictor.
+Workflow работает через контракты, а файлы каждой модели не смешивают
+определение сети, обучение, инференс и сохранение артефактов.
+
 ## Нормализация атрибутов
 
 Публичная функция принимает и возвращает `polars.DataFrame`. По умолчанию она

@@ -6,12 +6,10 @@ from pathlib import Path
 
 from match.config import load_app_config_file
 from match.models.artifacts import TrainingArtifacts, save_solution_manifest
-from match.models.training import (
-    FusionTrainer,
-    MaxPoolingTrainer,
-    TransformerTrainer,
-    build_trainer,
-)
+from match.models.factory import build_trainer
+from match.models.fusion.training import FusionTrainer
+from match.models.maxpooling.training import MaxPoolingTrainer
+from match.models.transformer.training import TransformerTrainer
 from match.paths import PROJECT_ROOT
 
 

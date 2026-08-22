@@ -13,7 +13,7 @@ from ..data import (
 )
 from ..data_split import DataSplitConfig
 from ..models.artifacts import TrainingArtifacts, save_solution_manifest
-from ..models.training import build_trainer
+from ..models.factory import build_trainer
 from ._common import (
     check_optional_features,
     normalization_enabled,

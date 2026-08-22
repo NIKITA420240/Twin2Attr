@@ -32,9 +32,12 @@ class ModelInterfaceTests(unittest.TestCase):
         probabilities = np.array([0.8], dtype=np.float32)
 
         with (
-            patch("match.transformer.encode_pair_cls", return_value=encoded),
             patch(
-                "match.transformer.predict_match_probabilities",
+                "match.models.transformer.predictor.encode_pair_cls",
+                return_value=encoded,
+            ),
+            patch(
+                "match.models.transformer.predictor.predict_match_probabilities",
                 return_value=probabilities,
             ),
         ):
@@ -54,9 +57,12 @@ class ModelInterfaceTests(unittest.TestCase):
         probabilities = np.array([0.7], dtype=np.float32)
 
         with (
-            patch("match.maxpooling.encode_attribute_pairs", return_value=encoded),
             patch(
-                "match.maxpooling.predict_maxpooling_probabilities",
+                "match.models.maxpooling.predictor.encode_attribute_pairs",
+                return_value=encoded,
+            ),
+            patch(
+                "match.models.maxpooling.predictor.predict_maxpooling_probabilities",
                 return_value=probabilities,
             ),
         ):
@@ -80,7 +86,7 @@ class ModelInterfaceTests(unittest.TestCase):
         probabilities = np.array([0.9], dtype=np.float32)
 
         with patch(
-            "match.fusion.predict_fusion_probabilities",
+            "match.models.fusion.predictor.predict_fusion_probabilities",
             return_value=probabilities,
         ) as predict:
             result = predictor.predict_proba(_batch())
