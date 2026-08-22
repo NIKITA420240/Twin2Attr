@@ -447,7 +447,7 @@ def _validate_stage_sequence(action: str, stages: tuple[str, ...]) -> None:
 
 
 def _stage_read_data(context: PipelineContext) -> None:
-    context.items_path = _path(context.config.paths.items, "paths.items")
+    context.items_path = _path(context.config.paths["items"], "paths.items")
     context.items = _read_parquet(context.items_path, label="items")
     context.attributes_column = str(context.config.normalization.source_column)
     if context.action in {"inference", "inspect"}:

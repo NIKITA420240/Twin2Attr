@@ -21,8 +21,8 @@ pipelines:
     - pair_encoding
 
 paths:
-  items: data/items.parquet
-  train_matches: data/train_matches.parquet
+  items: data/items_human.parquet
+  train_matches: data/matches.parquet
   validation_matches: data/validation_matches.parquet
   inference_matches: data/inference_matches.parquet
   # Optional for action=inspect; train_matches is used when null.
@@ -42,7 +42,7 @@ normalization:
 
 split:
   # predefined reads paths.validation_matches; auto splits paths.train_matches.
-  mode: predefined
+  mode: auto
   validation_fraction: 0.2
   # pair keeps duplicate/reversed pairs together; item keeps whole connected
   # item components together and is stricter, but may distort stratification.
@@ -63,7 +63,7 @@ pair_encoding:
   hard_cap: 512
 
 model:
-  pretrained_model_path: models/cross-encoder-ms-marco-MiniLM-L12-v2
+  pretrained_model_path: models/rubert-tiny2
   max_epochs: 5
   hpo_trials: 10
   seed: 42

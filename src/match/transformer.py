@@ -277,8 +277,8 @@ def _training_arguments(
     kwargs: dict[str, Any] = {
         "output_dir": str(output_dir),
         "num_train_epochs": config.max_epochs,
-        "per_device_train_batch_size": 64,
-        "per_device_eval_batch_size": 64,
+        "per_device_train_batch_size": 1024,
+        "per_device_eval_batch_size": 2048,
         "auto_find_batch_size": True,
         "gradient_accumulation_steps": 1,
         "learning_rate": learning_rate,
