@@ -60,6 +60,10 @@ _EXPORTS = {
         "load_trained_classifier",
     ),
     "normalize_attributes": (".normalization", "normalize_attributes"),
+    "normalize_physical_attributes": (
+        ".normalization",
+        "normalize_physical_attributes",
+    ),
     "predict_fusion_probabilities": (
         ".models.fusion.predictor",
         "predict_fusion_probabilities",

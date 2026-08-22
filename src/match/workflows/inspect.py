@@ -2,28 +2,21 @@
 
 from __future__ import annotations
 
-from ..data import prepare_pair_rows, read_parquet
+from ..data import prepare_configured_items, prepare_pair_rows, read_parquet
 from ..config import AppConfig
-from ._common import (
-    check_optional_features,
-    normalization_enabled,
-    prepare_items,
-    resolve_max_length,
-    workflow_logging,
-)
+from ._common import resolve_max_length, workflow_logging
 
 
 def inspect_max_length(config: AppConfig) -> int:
     """Prepare inspection pairs and return their recommended encoded length."""
     with workflow_logging(config, workflow_name="inspect"):
-        check_optional_features(config)
         items = read_parquet(
             config.paths.items,
             label="items",
         )
-        attributes_column = config.normalization.source_column
-        if normalization_enabled(config):
-            items, attributes_column = prepare_items(items, config)
+        prepared_items = prepare_configured_items(items, config)
+        items = prepared_items.frame
+        attributes_column = prepared_items.attributes_column
 
         configured_path = config.paths.inspect_matches or config.paths.train_matches
         inspect_matches = read_parquet(

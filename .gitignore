@@ -18,6 +18,5 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-/tests/
 *.log
 /artifacts/

@@ -1,6 +1,7 @@
 import unittest
 from contextlib import nullcontext
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from match.config import load_app_config_file
@@ -68,12 +69,14 @@ class TrainWorkflowConfigTests(unittest.TestCase):
                 "match.workflows.train.workflow_logging",
                 return_value=nullcontext(),
             ),
-            patch("match.workflows.train.check_optional_features"),
             patch("match.workflows.train.read_parquet", return_value=items),
             patch(
-                "match.workflows.train.normalization_enabled",
-                return_value=False,
-            ),
+                "match.workflows.train.prepare_configured_items",
+                return_value=SimpleNamespace(
+                    frame=items,
+                    attributes_column="attributes",
+                ),
+            ) as prepare_items,
             patch(
                 "match.workflows.train.load_training_matches",
                 return_value=(train_matches, validation_matches),
@@ -101,6 +104,7 @@ class TrainWorkflowConfigTests(unittest.TestCase):
         )
         self.assertEqual(result.solution_path, solution_path)
         build_trainer.assert_called_once_with(self.config)
+        prepare_items.assert_called_once_with(items, self.config)
         trainer.train.assert_called_once_with(data)
         save_config.assert_called_once_with(
             self.config,

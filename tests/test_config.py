@@ -59,6 +59,32 @@ class AppConfigTests(unittest.TestCase):
                 ["models_parameters.transformer.learning_rate=0"],
             )
 
+    def test_loads_disabled_ner_settings_without_artifacts(self) -> None:
+        ner = self.config.features.ner
+
+        self.assertFalse(ner.enabled)
+        self.assertEqual(ner.provider, "word_ner")
+        self.assertEqual(ner.source_column, "name")
+        self.assertEqual(ner.enriched_column, "enriched_attributes")
+
+    def test_enabled_ner_requires_its_artifact_paths(self) -> None:
+        with self.assertRaisesRegex(ValueError, "model_dir"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                [
+                    "features.ner.enabled=true",
+                    "features.ner.model_dir=null",
+                ],
+            )
+
+    def test_loads_physical_feature_provider_settings(self) -> None:
+        physical = self.config.features.physical
+
+        self.assertFalse(physical.enabled)
+        self.assertEqual(physical.source_column, "name")
+        self.assertTrue(physical.normalize_units)
+        self.assertEqual(physical.enriched_column, "feature_attributes")
+
     def test_config_is_immutable(self) -> None:
         with self.assertRaises(FrozenInstanceError):
             self.config.runtime.seed = 100
