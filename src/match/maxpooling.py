@@ -6,7 +6,6 @@ import copy
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
 from time import perf_counter
 from typing import Any
 
@@ -25,7 +24,6 @@ from torch.utils.data import DataLoader, TensorDataset
 __all__ = ["encode_attribute_pairs", "train_maxpooling_model"]
 
 
-_ITEM_COLUMNS = {"id", "name", "attributes", "category"}
 _TRAIN_MATCH_COLUMNS = {"id1", "id2", "target"}
 _INFERENCE_MATCH_COLUMNS = {"id1", "id2"}
 _NON_ALNUM_PATTERN = re.compile(r"[^а-яёa-z0-9]+")
@@ -71,27 +69,23 @@ class MaxPoolingModel:
     best_validation_pr_auc: float
 
 
-def _read_parquet(path: str | Path, required: set[str], label: str) -> pl.DataFrame:
-    try:
-        frame = pl.read_parquet(path)
-    except (OSError, pl.exceptions.PolarsError):
-        logger.exception("Failed to read {} parquet: {!s}", label, path)
-        raise
-
+def _validate_columns(frame: pl.DataFrame, required: set[str], label: str) -> None:
+    if not isinstance(frame, pl.DataFrame):
+        raise TypeError(f"{label} must be a polars.DataFrame")
     missing = required - set(frame.columns)
     if missing:
-        raise ValueError(f"{label} parquet is missing columns: {sorted(missing)}")
-    return frame
+        raise ValueError(f"{label} is missing columns: {sorted(missing)}")
 
 
-def _load_items(path: str | Path) -> pl.DataFrame:
-    items = _read_parquet(path, _ITEM_COLUMNS, "items")
+def _validate_items(items: pl.DataFrame, attributes_column: str) -> None:
+    if not attributes_column.strip():
+        raise ValueError("attributes_column must not be empty")
+    _validate_columns(items, {"id", attributes_column}, "items")
     if items.get_column("id").null_count():
-        raise ValueError("items parquet contains null ids")
+        raise ValueError("items contains null ids")
     duplicate_count = items.height - items.get_column("id").n_unique()
     if duplicate_count:
-        raise ValueError(f"items parquet contains {duplicate_count} duplicate ids")
-    return items
+        raise ValueError(f"items contains {duplicate_count} duplicate ids")
 
 
 def _normalize_text(text: Any) -> str:
@@ -122,9 +116,9 @@ def _attributes_to_tokens(attributes: Mapping[str, str]) -> list[str]:
     return tokens
 
 
-def _build_corpus(items: pl.DataFrame) -> list[list[str]]:
+def _build_corpus(items: pl.DataFrame, attributes_column: str) -> list[list[str]]:
     corpus = []
-    for raw in items.get_column("attributes"):
+    for raw in items.get_column(attributes_column):
         tokens = _attributes_to_tokens(_parse_attributes(raw))
         if tokens:
             corpus.append(tokens)
@@ -265,6 +259,7 @@ def _build_card_cache(
     items: pl.DataFrame,
     required_ids: set[Any],
     model: FastText,
+    attributes_column: str,
 ) -> dict[Any, CardEmbedding]:
     available_ids = set(items.get_column("id"))
     missing_ids = required_ids - available_ids
@@ -275,7 +270,9 @@ def _build_card_cache(
     selected = items.filter(pl.col("id").is_in(list(required_ids)))
     return {
         item_id: _pool_card(raw_attributes, model)
-        for item_id, raw_attributes in selected.select("id", "attributes").iter_rows()
+        for item_id, raw_attributes in selected.select(
+            "id", attributes_column
+        ).iter_rows()
     }
 
 
@@ -283,11 +280,17 @@ def _encode_loaded_pairs(
     items: pl.DataFrame,
     matches: pl.DataFrame,
     model: FastText,
+    attributes_column: str,
 ) -> np.ndarray:
     feature_size = 2 * model.vector_size
     embeddings = np.empty((matches.height, feature_size), dtype=np.float32)
     temporary = np.empty(feature_size, dtype=np.float32)
-    cache = _build_card_cache(items, _required_item_ids(matches), model)
+    cache = _build_card_cache(
+        items,
+        _required_item_ids(matches),
+        model,
+        attributes_column,
+    )
 
     for index, (id1, id2) in enumerate(matches.select("id1", "id2").iter_rows()):
         _pair_embedding(embeddings[index], cache[id1], cache[id2], temporary)
@@ -460,9 +463,10 @@ def _train_classifier(
 
 
 def train_maxpooling_model(
-    data_path: str | Path,
-    match_path: str | Path,
+    items: pl.DataFrame,
+    matches: pl.DataFrame,
     *,
+    attributes_column: str = "attributes",
     vector_size: int = 256,
     window: int = 5,
     min_count: int = 2,
@@ -478,10 +482,11 @@ def train_maxpooling_model(
     random_state: int = 42,
     device: str | torch.device | None = None,
 ) -> MaxPoolingModel:
-    """Train the internal FastText encoder and MLP classifier from parquet files.
+    """Train the internal FastText encoder and MLP from loaded data frames.
 
-    ``data_path`` must contain ``id``, ``name``, ``attributes`` and ``category``.
-    ``match_path`` must contain ``id1``, ``id2`` and binary ``target`` columns.
+    ``items`` must contain ``id`` and ``attributes_column``. ``matches`` must
+    contain ``id1``, ``id2`` and binary ``target`` columns. Neither frame is
+    modified.
     """
     if vector_size < 1 or window < 1 or min_count < 1 or workers < 1:
         raise ValueError("FastText numeric parameters must be positive")
@@ -493,9 +498,9 @@ def train_maxpooling_model(
         raise ValueError("patience must be positive")
 
     started_at = perf_counter()
-    items = _load_items(data_path)
-    matches = _read_parquet(match_path, _TRAIN_MATCH_COLUMNS, "training matches")
-    corpus = _build_corpus(items)
+    _validate_items(items, attributes_column)
+    _validate_columns(matches, _TRAIN_MATCH_COLUMNS, "training matches")
+    corpus = _build_corpus(items, attributes_column)
     fasttext = _train_fasttext(
         corpus,
         vector_size=vector_size,
@@ -506,7 +511,12 @@ def train_maxpooling_model(
         random_state=random_state,
     )
     del corpus
-    pair_features = _encode_loaded_pairs(items, matches, fasttext)
+    pair_features = _encode_loaded_pairs(
+        items,
+        matches,
+        fasttext,
+        attributes_column,
+    )
     targets = matches.get_column("target").to_numpy()
     scaler, classifier, best_auc, best_pr_auc = _train_classifier(
         pair_features,
@@ -542,22 +552,29 @@ def train_maxpooling_model(
 
 
 def encode_attribute_pairs(
-    data_path: str | Path,
-    match_path: str | Path,
+    items: pl.DataFrame,
+    matches: pl.DataFrame,
     model: MaxPoolingModel,
+    *,
+    attributes_column: str = "attributes",
 ) -> np.ndarray:
-    """Return raw max-pooling embeddings for pairs in ``match_path``.
+    """Return raw max-pooling embeddings for the supplied pairs.
 
-    Rows remain in parquet order. Only ``id1`` and ``id2`` are required in the
-    pair file; ``target`` is deliberately ignored when present. The result has
-    shape ``(pair_count, 2 * model.vector_size)`` and dtype ``float32``.
+    Rows remain in ``matches`` order. Only ``id1`` and ``id2`` are required;
+    ``target`` is deliberately ignored when present. The result has shape
+    ``(pair_count, 2 * model.vector_size)`` and dtype ``float32``.
     """
     if not isinstance(model, MaxPoolingModel):
         raise TypeError("model must be returned by train_maxpooling_model")
     started_at = perf_counter()
-    items = _load_items(data_path)
-    matches = _read_parquet(match_path, _INFERENCE_MATCH_COLUMNS, "inference matches")
-    result = _encode_loaded_pairs(items, matches, model._fasttext)
+    _validate_items(items, attributes_column)
+    _validate_columns(matches, _INFERENCE_MATCH_COLUMNS, "matches")
+    result = _encode_loaded_pairs(
+        items,
+        matches,
+        model._fasttext,
+        attributes_column,
+    )
     logger.info(
         "Encoded max-pooling pair embeddings: pairs={}, dimensions={}, elapsed_seconds={:.3f}",
         matches.height,

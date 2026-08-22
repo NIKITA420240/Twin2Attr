@@ -1,38 +1,13 @@
-# train | inference | inspect
-action: train
-
-# This ordered list is the only switch controlling which components run.
-pipelines:
-  train:
-    - read_data
-    - split_data
-    - prepare_data
-    - pair_encoding
-    - transformer
-  inference:
-    - read_data
-    - prepare_data
-    - pair_encoding
-    - transformer
-    - save_predictions
-  inspect:
-    - read_data
-    - prepare_data
-    - pair_encoding
-
 paths:
   items: data/items.parquet
   train_matches: data/train_matches.parquet
   validation_matches: data/validation_matches.parquet
-  inference_matches: data/inference_matches.parquet
-  # Optional for action=inspect; train_matches is used when null.
+  # Optional for inspect; train_matches is used when null.
   inspect_matches: null
   model_dir: models/twin2attr
-  predictions: artifacts/predictions.parquet
-  cls_embeddings: artifacts/cls_embeddings.npy
-  maxpooling_embeddings: artifacts/maxpooling_embeddings.npy
 
 normalization:
+  enabled: false
   source_column: attributes
   output_column: normalized_attributes
   synonyms_path: data/synonyms.parquet
@@ -68,14 +43,9 @@ model:
   hpo_trials: 10
   seed: 42
 
-inference:
-  batch_size: 64
-  probability_column: match_probability
-  save_cls_embeddings: true
-
 fusion:
+  enabled: false
   model_path: models/fusion_head.pt
-  probability_column: fusion_match_probability
   # Batch size used to extract frozen Transformer CLS embeddings.
   embedding_batch_size: 64
   # Parameters below train and apply only the fusion head.
@@ -88,8 +58,8 @@ fusion:
   weight_decay: 0.0001
 
 features:
-  # The raw vector can be saved separately and optionally consumed by fusion.
   maxpooling:
+    enabled: false
     model_path: models/maxpooling.joblib
     vector_size: 256
     window: 5
