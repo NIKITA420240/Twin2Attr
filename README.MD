@@ -68,25 +68,25 @@ uv run python run.py train \
 `leakage_scope=item` не допускает ни одного общего товара, но из-за связанных
 компонент может менее точно сохранять требуемое распределение.
 
-Порядок обучения задан явно в `workflows.train()`: подготовка данных, вычисление
-`max_length` и обучение Transformer. Дополнительные компоненты включаются
-флагами `features.maxpooling.enabled` и `fusion.enabled`. Для fusion необходимо
-также включить MaxPooling. Нормализация управляется флагом
-`normalization.enabled`. Например:
+Итоговая модель выбирается одним параметром `training.model`. Значения
+`transformer` и `maxpooling` обучают соответствующую модель, а `fusion`
+автоматически обучает Transformer, MaxPooling и объединяющий классификатор.
+Нормализация отдельно управляется флагом `normalization.enabled`. Например:
 
 ```bash
 uv run python run.py train \
-  features.maxpooling.enabled=true \
-  fusion.enabled=true
+  training.model=fusion
 ```
 
-Конфиг задаёт параметры компонентов, но не конструирует порядок выполнения из
-строк. Финальный predict запускается отдельно через `run.py predict` и
-`solution.json`. Токенизация остаётся динамической внутри батчей.
+Гиперпараметры лежат в `models_parameters.transformer`,
+`models_parameters.maxpooling` и `models_parameters.fusion`. Выбранный trainer
+возвращает единый `TrainingArtifacts`. Финальный predict запускается отдельно
+через `run.py predict`; совместимый `solution.json` создаётся после успешного
+обучения автоматически. Токенизация остаётся динамической внутри батчей.
 
-Полный resolved-конфиг обучения сохраняется рядом с моделью в
-`pipeline_config.yaml`. NER оставлен явной точкой расширения и должен
-оставаться выключенным до реализации provider-а.
+Пути Transformer, MaxPooling, Fusion, resolved-конфига и `solution.json`
+задаются отдельно в секции `artifacts`. NER оставлен явной точкой расширения
+и должен оставаться выключенным до реализации provider-а.
 
 OmegaConf используется только на границе загрузки YAML и dotlist overrides.
 Внутри workflow передаётся неизменяемый типизированный `AppConfig`, поэтому
@@ -99,7 +99,7 @@ OmegaConf используется только на границе загруз
 ```json
 {
   "predictor": "transformer",
-  "model_directory": "models/twin2attr",
+  "model_directory": "models/twin2attr/transformer",
   "batch_size": 64
 }
 ```

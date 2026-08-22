@@ -17,7 +17,8 @@ class AppConfigTests(unittest.TestCase):
         self.assertIsInstance(self.config, AppConfig)
         self.assertIsInstance(self.config.paths.items, Path)
         self.assertTrue(self.config.paths.items.is_absolute())
-        self.assertEqual(self.config.split.seed, self.config.model.seed)
+        self.assertEqual(self.config.split.seed, self.config.runtime.seed)
+        self.assertEqual(self.config.training.model, "transformer")
         self.assertIsInstance(
             self.config.pair_encoding.max_attribute_value_tokens,
             int,
@@ -27,16 +28,23 @@ class AppConfigTests(unittest.TestCase):
     def test_applies_overrides_before_creating_typed_config(self) -> None:
         config = load_app_config_file(
             PROJECT_ROOT / "configs" / "pipeline.yaml",
-            ["model.seed=99", "features.maxpooling.enabled=true"],
+            ["runtime.seed=99", "training.model=fusion"],
         )
 
-        self.assertEqual(config.model.seed, 99)
+        self.assertEqual(config.runtime.seed, 99)
         self.assertEqual(config.split.seed, 99)
-        self.assertTrue(config.features.maxpooling.enabled)
+        self.assertEqual(config.training.model, "fusion")
 
     def test_config_is_immutable(self) -> None:
         with self.assertRaises(FrozenInstanceError):
-            self.config.model.seed = 100
+            self.config.runtime.seed = 100
+
+    def test_rejects_unknown_training_model(self) -> None:
+        with self.assertRaisesRegex(ValueError, "training.model"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                ["training.model=unknown"],
+            )
 
     def test_saved_config_can_be_loaded_again(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

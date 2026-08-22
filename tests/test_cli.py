@@ -14,8 +14,10 @@ class UnifiedCliTests(unittest.TestCase):
 
     def test_explicit_command_is_preserved(self) -> None:
         self.assertEqual(
-            _with_default_command(["train", "model.max_epochs=1"]),
-            ["train", "model.max_epochs=1"],
+            _with_default_command(
+                ["train", "models_parameters.transformer.max_epochs=1"]
+            ),
+            ["train", "models_parameters.transformer.max_epochs=1"],
         )
 
     def test_parses_evaluator_invocation_as_predict(self) -> None:
@@ -36,12 +38,18 @@ class UnifiedCliTests(unittest.TestCase):
         self.assertEqual(args.output_path, "submission.csv")
 
     def test_parses_training_overrides(self) -> None:
-        args = parse_args(["train", "model.max_epochs=3", "split.mode=auto"])
+        args = parse_args(
+            [
+                "train",
+                "models_parameters.transformer.max_epochs=3",
+                "split.mode=auto",
+            ]
+        )
 
         self.assertEqual(args.command, "train")
         self.assertEqual(
             args.overrides,
-            ["model.max_epochs=3", "split.mode=auto"],
+            ["models_parameters.transformer.max_epochs=3", "split.mode=auto"],
         )
 
 

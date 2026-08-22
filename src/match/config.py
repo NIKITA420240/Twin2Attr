@@ -13,12 +13,22 @@ from .paths import resolve_project_path
 
 
 @dataclass(frozen=True, slots=True)
+class TrainingSettings:
+    model: str
+
+    def __post_init__(self) -> None:
+        if self.model not in {"transformer", "maxpooling", "fusion"}:
+            raise ValueError(
+                "training.model must be one of: transformer, maxpooling, fusion"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class PathSettings:
     items: Path
     train_matches: Path
     validation_matches: Path
     inspect_matches: Path | None
-    model_dir: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,31 +64,15 @@ class PairEncodingSettings:
 
 
 @dataclass(frozen=True, slots=True)
-class ModelSettings:
+class TransformerParameters:
     pretrained_model_path: str
     max_epochs: int
     hpo_trials: int
-    seed: int
-
-
-@dataclass(frozen=True, slots=True)
-class FusionSettings:
-    enabled: bool
-    model_path: Path
-    embedding_batch_size: int
-    hidden_dim: int
-    dropout: float
     batch_size: int
-    max_epochs: int
-    patience: int
-    learning_rate: float
-    weight_decay: float
 
 
 @dataclass(frozen=True, slots=True)
-class MaxPoolingSettings:
-    enabled: bool
-    model_path: Path
+class MaxPoolingParameters:
     vector_size: int
     window: int
     min_count: int
@@ -94,6 +88,34 @@ class MaxPoolingSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class FusionParameters:
+    embedding_batch_size: int
+    hidden_dim: int
+    dropout: float
+    batch_size: int
+    max_epochs: int
+    patience: int
+    learning_rate: float
+    weight_decay: float
+
+
+@dataclass(frozen=True, slots=True)
+class ModelsParametersSettings:
+    transformer: TransformerParameters
+    maxpooling: MaxPoolingParameters
+    fusion: FusionParameters
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactSettings:
+    transformer_dir: Path
+    maxpooling_path: Path
+    fusion_path: Path
+    resolved_config_path: Path
+    solution_path: Path
+
+
+@dataclass(frozen=True, slots=True)
 class NerSettings:
     enabled: bool
     provider: str | None
@@ -101,13 +123,13 @@ class NerSettings:
 
 @dataclass(frozen=True, slots=True)
 class FeatureSettings:
-    maxpooling: MaxPoolingSettings
     ner: NerSettings
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeSettings:
     device: str | None
+    seed: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,12 +141,13 @@ class LoggingSettings:
 
 @dataclass(frozen=True, slots=True)
 class AppConfig:
+    training: TrainingSettings
     paths: PathSettings
     normalization: NormalizationSettings
     split: SplitSettings
     pair_encoding: PairEncodingSettings
-    model: ModelSettings
-    fusion: FusionSettings
+    models_parameters: ModelsParametersSettings
+    artifacts: ArtifactSettings
     features: FeatureSettings
     runtime: RuntimeSettings
     logging: LoggingSettings
@@ -188,19 +211,23 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     if not isinstance(resolved, Mapping):
         raise ValueError("application config must be a mapping")
 
+    training = _section(resolved, "training")
     paths = _section(resolved, "paths")
     normalization = _section(resolved, "normalization")
     split = _section(resolved, "split")
     encoding = _section(resolved, "pair_encoding")
-    model = _section(resolved, "model")
-    fusion = _section(resolved, "fusion")
+    models_parameters = _section(resolved, "models_parameters")
+    transformer = _section(models_parameters, "transformer")
+    maxpooling = _section(models_parameters, "maxpooling")
+    fusion = _section(models_parameters, "fusion")
+    artifacts = _section(resolved, "artifacts")
     features = _section(resolved, "features")
-    maxpooling = _section(features, "maxpooling")
     ner = _section(features, "ner")
     runtime = _section(resolved, "runtime")
     logging = _section(resolved, "logging")
 
     return AppConfig(
+        training=TrainingSettings(model=str(_required(training, "model"))),
         paths=PathSettings(
             items=_path(_required(paths, "items"), "paths.items"),
             train_matches=_path(
@@ -212,7 +239,6 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 "paths.validation_matches",
             ),
             inspect_matches=_optional_path(paths.get("inspect_matches")),
-            model_dir=_path(_required(paths, "model_dir"), "paths.model_dir"),
         ),
         normalization=NormalizationSettings(
             enabled=_bool(
@@ -260,40 +286,24 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             sample_size=int(_required(encoding, "sample_size")),
             hard_cap=int(_required(encoding, "hard_cap")),
         ),
-        model=ModelSettings(
-            pretrained_model_path=str(_required(model, "pretrained_model_path")),
-            max_epochs=int(_required(model, "max_epochs")),
-            hpo_trials=int(_required(model, "hpo_trials")),
-            seed=int(_required(model, "seed")),
-        ),
-        fusion=FusionSettings(
-            enabled=_bool(fusion.get("enabled", False), "fusion.enabled"),
-            model_path=_path(_required(fusion, "model_path"), "fusion.model_path"),
-            embedding_batch_size=int(_required(fusion, "embedding_batch_size")),
-            hidden_dim=int(_required(fusion, "hidden_dim")),
-            dropout=float(_required(fusion, "dropout")),
-            batch_size=int(_required(fusion, "batch_size")),
-            max_epochs=int(_required(fusion, "max_epochs")),
-            patience=int(_required(fusion, "patience")),
-            learning_rate=float(_required(fusion, "learning_rate")),
-            weight_decay=float(_required(fusion, "weight_decay")),
-        ),
-        features=FeatureSettings(
-            maxpooling=MaxPoolingSettings(
-                enabled=_bool(
-                    maxpooling.get("enabled", False),
-                    "features.maxpooling.enabled",
+        models_parameters=ModelsParametersSettings(
+            transformer=TransformerParameters(
+                pretrained_model_path=str(
+                    _required(transformer, "pretrained_model_path")
                 ),
-                model_path=_path(
-                    _required(maxpooling, "model_path"),
-                    "features.maxpooling.model_path",
-                ),
+                max_epochs=int(_required(transformer, "max_epochs")),
+                hpo_trials=int(_required(transformer, "hpo_trials")),
+                batch_size=int(_required(transformer, "batch_size")),
+            ),
+            maxpooling=MaxPoolingParameters(
                 vector_size=int(_required(maxpooling, "vector_size")),
                 window=int(_required(maxpooling, "window")),
                 min_count=int(_required(maxpooling, "min_count")),
                 workers=int(_required(maxpooling, "workers")),
                 fasttext_epochs=int(_required(maxpooling, "fasttext_epochs")),
-                classifier_epochs=int(_required(maxpooling, "classifier_epochs")),
+                classifier_epochs=int(
+                    _required(maxpooling, "classifier_epochs")
+                ),
                 batch_size=int(_required(maxpooling, "batch_size")),
                 validation_fraction=float(
                     _required(maxpooling, "validation_fraction")
@@ -303,6 +313,42 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 learning_rate=float(_required(maxpooling, "learning_rate")),
                 weight_decay=float(_required(maxpooling, "weight_decay")),
             ),
+            fusion=FusionParameters(
+                embedding_batch_size=int(
+                    _required(fusion, "embedding_batch_size")
+                ),
+                hidden_dim=int(_required(fusion, "hidden_dim")),
+                dropout=float(_required(fusion, "dropout")),
+                batch_size=int(_required(fusion, "batch_size")),
+                max_epochs=int(_required(fusion, "max_epochs")),
+                patience=int(_required(fusion, "patience")),
+                learning_rate=float(_required(fusion, "learning_rate")),
+                weight_decay=float(_required(fusion, "weight_decay")),
+            ),
+        ),
+        artifacts=ArtifactSettings(
+            transformer_dir=_path(
+                _required(artifacts, "transformer_dir"),
+                "artifacts.transformer_dir",
+            ),
+            maxpooling_path=_path(
+                _required(artifacts, "maxpooling_path"),
+                "artifacts.maxpooling_path",
+            ),
+            fusion_path=_path(
+                _required(artifacts, "fusion_path"),
+                "artifacts.fusion_path",
+            ),
+            resolved_config_path=_path(
+                _required(artifacts, "resolved_config_path"),
+                "artifacts.resolved_config_path",
+            ),
+            solution_path=_path(
+                _required(artifacts, "solution_path"),
+                "artifacts.solution_path",
+            ),
+        ),
+        features=FeatureSettings(
             ner=NerSettings(
                 enabled=_bool(
                     ner.get("enabled", False),
@@ -312,9 +358,8 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             ),
         ),
         runtime=RuntimeSettings(
-            device=None
-            if runtime.get("device") is None
-            else str(runtime["device"]),
+            device=None if runtime.get("device") is None else str(runtime["device"]),
+            seed=int(_required(runtime, "seed")),
         ),
         logging=LoggingSettings(
             level=str(_required(logging, "level")),
@@ -356,23 +401,27 @@ def _serializable(value: Any) -> Any:
 
 def save_app_config(config: AppConfig, path: Path) -> None:
     """Persist the resolved typed configuration as YAML."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     OmegaConf.save(OmegaConf.create(_serializable(config)), path)
 
 
 __all__ = [
     "AppConfig",
+    "ArtifactSettings",
     "ConfigSource",
     "FeatureSettings",
-    "FusionSettings",
+    "FusionParameters",
     "LoggingSettings",
-    "MaxPoolingSettings",
-    "ModelSettings",
+    "MaxPoolingParameters",
+    "ModelsParametersSettings",
     "NerSettings",
     "NormalizationSettings",
     "PairEncodingSettings",
     "PathSettings",
     "RuntimeSettings",
     "SplitSettings",
+    "TrainingSettings",
+    "TransformerParameters",
     "load_app_config",
     "load_app_config_file",
     "save_app_config",
