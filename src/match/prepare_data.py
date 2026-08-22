@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-import orjson
 import polars as pl
 
 __all__ = [
@@ -51,8 +51,8 @@ def _parse_attributes(raw: Any, *, item_id: Any) -> tuple[AttributePair, ...]:
         parsed = raw
     else:
         try:
-            parsed = orjson.loads(raw)
-        except (orjson.JSONDecodeError, TypeError) as error:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError, UnicodeDecodeError) as error:
             raise ValueError(f"item {item_id!r} attributes must contain a JSON object") from error
     if not isinstance(parsed, Mapping):
         raise ValueError(f"item {item_id!r} attributes must contain a JSON object")

@@ -51,6 +51,10 @@ uv run python -m build_submission
 - при включённом NER — NER-модель и cluster centers;
 - physical provider не требует отдельных файлов весов.
 
+Polars wheels из `build_submission/vendor_wheels` также автоматически
+добавляются в архив. Если Polars отсутствует в evaluator image, `run.py`
+устанавливает эти wheels во временную директорию до импорта inference-кода.
+
 Сборщик проверяет наличие каждого обязательного файла до создания ZIP и не
 добавляет `__pycache__`, `.cache` и промежуточные `checkpoint-*`. Конфигурацию,
 выходной путь и dotlist-параметры можно переопределить:

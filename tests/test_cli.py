@@ -1,6 +1,8 @@
 import unittest
+from unittest.mock import patch
 
-from run import _with_default_command, parse_args
+import run as run_module
+from run import _with_default_command, ensure_polars_available, parse_args
 
 
 class UnifiedCliTests(unittest.TestCase):
@@ -51,6 +53,33 @@ class UnifiedCliTests(unittest.TestCase):
             args.overrides,
             ["models_parameters.transformer.max_epochs=3", "split.mode=auto"],
         )
+
+    def test_bootstraps_bundled_polars_when_image_does_not_have_it(self) -> None:
+        missing = ModuleNotFoundError("No module named 'polars'", name="polars")
+        with (
+            patch.object(
+                run_module.importlib,
+                "import_module",
+                side_effect=[missing, object()],
+            ) as import_module,
+            patch.object(run_module.subprocess, "run") as install,
+            patch.object(run_module.sys, "path", list(run_module.sys.path)),
+            patch.object(
+                run_module,
+                "__file__",
+                str(
+                    run_module.SOURCE_ROOT.parent
+                    / "build_submission"
+                    / "run.py"
+                ),
+            ),
+        ):
+            ensure_polars_available()
+
+        command = install.call_args.args[0]
+        self.assertIn("--no-index", command)
+        self.assertIn("polars==1.43.2", command)
+        self.assertEqual(import_module.call_count, 2)
 
 
 if __name__ == "__main__":

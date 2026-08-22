@@ -17,6 +17,8 @@ from match.paths import PROJECT_ROOT
 
 
 _REQUIRED_PROJECT_FILES = ("run.py", "metadata.json")
+_VENDOR_WHEELS_SOURCE = PurePosixPath("build_submission/vendor_wheels")
+_VENDOR_WHEELS_TARGET = PurePosixPath("vendor_wheels")
 _SKIPPED_DIRECTORY_NAMES = {".cache", "__pycache__"}
 _STORED_SUFFIXES = {
     ".bin",
@@ -160,7 +162,28 @@ def _collect_inputs(
                     f"duplicate archive path: {entry.archive_path}"
                 )
             entries[entry.archive_path] = entry
+    wheels_source = project_root / Path(_VENDOR_WHEELS_SOURCE)
+    _validate_polars_wheels(wheels_source)
+    for entry in _files_for_path(wheels_source, _VENDOR_WHEELS_TARGET):
+        entries[entry.archive_path] = entry
     return tuple(entries[name] for name in sorted(entries, key=str))
+
+
+def _validate_polars_wheels(directory: Path) -> None:
+    if not directory.is_dir():
+        raise FileNotFoundError(
+            f"bundled wheels directory does not exist: {directory}"
+        )
+    required_patterns = ("polars-*.whl", "polars_runtime_32-*.whl")
+    missing = [
+        pattern
+        for pattern in required_patterns
+        if not any(directory.glob(pattern))
+    ]
+    if missing:
+        raise FileNotFoundError(
+            f"bundled Polars wheels are missing in {directory}: {missing}"
+        )
 
 
 def _compression(path: Path) -> int:

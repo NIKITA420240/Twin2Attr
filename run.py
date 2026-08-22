@@ -1,8 +1,11 @@
 """Unified entry point for training, inspection and competition inference."""
 
 import argparse
+import importlib
 from pathlib import Path
+import subprocess
 import sys
+import tempfile
 from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
@@ -15,6 +18,53 @@ if str(SOURCE_ROOT) not in sys.path:
 
 COMMANDS = {"train", "predict", "inspect"}
 DEFAULT_CONFIG = "configs/pipeline.yaml"
+POLARS_VERSION = "1.43.2"
+
+
+def ensure_polars_available() -> None:
+    """Load Polars or install its bundled wheels into a temporary directory."""
+    try:
+        importlib.import_module("polars")
+        return
+    except ModuleNotFoundError as error:
+        if error.name != "polars":
+            raise
+
+    wheels_dir = Path(__file__).resolve().parent / "vendor_wheels"
+    if not any(wheels_dir.glob("polars-*.whl")) or not any(
+        wheels_dir.glob("polars_runtime_32-*.whl")
+    ):
+        raise RuntimeError(
+            "Polars is not installed and its bundled wheels are missing: "
+            f"{wheels_dir}"
+        )
+    install_dir = (
+        Path(tempfile.gettempdir())
+        / f"twin2attr_polars_{POLARS_VERSION}_"
+        f"{sys.version_info.major}{sys.version_info.minor}"
+    )
+    install_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Polars is absent; installing bundled wheels into {install_dir}")
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--no-index",
+            "--find-links",
+            str(wheels_dir),
+            "--upgrade",
+            "--target",
+            str(install_dir),
+            f"polars=={POLARS_VERSION}",
+        ],
+        check=True,
+    )
+    sys.path.insert(0, str(install_dir))
+    importlib.invalidate_caches()
+    importlib.import_module("polars")
 
 
 def _with_default_command(arguments: Sequence[str]) -> list[str]:
@@ -101,6 +151,8 @@ def _load_workflow_config(
 
 def run_predict(args: argparse.Namespace) -> None:
     """Create a validated evaluator-compatible prediction CSV."""
+    ensure_polars_available()
+
     from match.submission import create_submission
 
     result = create_submission(
