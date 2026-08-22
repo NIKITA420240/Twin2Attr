@@ -20,7 +20,7 @@ normalization:
 
 split:
   # predefined reads paths.validation_matches; auto splits paths.train_matches.
-  mode: predefined
+  mode: auto
   validation_fraction: 0.2
   # pair keeps duplicate/reversed pairs together; item keeps whole connected
   # item components together and is stricter, but may distort stratification.
