@@ -156,11 +156,73 @@ class ArtifactSettings:
 class NerSettings:
     enabled: bool
     provider: str | None
+    model_dir: Path | None
+    cluster_centers_path: Path | None
+    source_column: str
+    output_column: str
+    enriched_column: str
+    merge_policy: str
+    batch_size: int
+    max_length: int
+    use_amp: bool
+    semantic_cleanup: bool
+
+    def __post_init__(self) -> None:
+        if self.provider not in {None, "word_ner"}:
+            raise ValueError("features.ner.provider must be 'word_ner' or null")
+        if self.merge_policy != "missing_only":
+            raise ValueError("features.ner.merge_policy must be 'missing_only'")
+        if not self.source_column.strip():
+            raise ValueError("features.ner.source_column must not be empty")
+        if not self.output_column.strip() or not self.enriched_column.strip():
+            raise ValueError("features.ner output columns must not be empty")
+        if self.output_column == self.enriched_column:
+            raise ValueError("NER output and enriched columns must be different")
+        if self.batch_size < 1 or self.max_length < 8:
+            raise ValueError("NER batch_size must be positive and max_length at least 8")
+        if self.enabled:
+            if self.provider != "word_ner":
+                raise ValueError("enabled NER requires provider='word_ner'")
+            if self.model_dir is None:
+                raise ValueError("enabled NER requires features.ner.model_dir")
+            if self.semantic_cleanup and self.cluster_centers_path is None:
+                raise ValueError(
+                    "NER semantic cleanup requires cluster_centers_path"
+                )
+
+
+@dataclass(frozen=True, slots=True)
+class PhysicalFeatureSettings:
+    enabled: bool
+    source_column: str
+    output_column: str
+    enriched_column: str
+    merge_policy: str
+    normalize_units: bool
+    n_jobs: int
+    chunk_size: int
+
+    def __post_init__(self) -> None:
+        if not self.source_column.strip():
+            raise ValueError("features.physical.source_column must not be empty")
+        if not self.output_column.strip() or not self.enriched_column.strip():
+            raise ValueError("features.physical output columns must not be empty")
+        if self.output_column == self.enriched_column:
+            raise ValueError("physical output and enriched columns must be different")
+        if self.merge_policy != "missing_only":
+            raise ValueError(
+                "features.physical.merge_policy must be 'missing_only'"
+            )
+        if self.n_jobs == 0 or self.chunk_size < 1:
+            raise ValueError(
+                "features.physical n_jobs must not be zero and chunk_size positive"
+            )
 
 
 @dataclass(frozen=True, slots=True)
 class FeatureSettings:
     ner: NerSettings
+    physical: PhysicalFeatureSettings
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,6 +322,7 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     artifacts = _section(resolved, "artifacts")
     features = _section(resolved, "features")
     ner = _section(features, "ner")
+    physical = _section(features, "physical")
     runtime = _section(resolved, "runtime")
     logging = _section(resolved, "logging")
 
@@ -424,6 +487,48 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     "features.ner.enabled",
                 ),
                 provider=None if ner.get("provider") is None else str(ner["provider"]),
+                model_dir=_optional_path(ner.get("model_dir")),
+                cluster_centers_path=_optional_path(
+                    ner.get("cluster_centers_path")
+                ),
+                source_column=str(ner.get("source_column", "name")),
+                output_column=str(ner.get("output_column", "ner_attributes")),
+                enriched_column=str(
+                    ner.get("enriched_column", "enriched_attributes")
+                ),
+                merge_policy=str(ner.get("merge_policy", "missing_only")),
+                batch_size=int(ner.get("batch_size", 512)),
+                max_length=int(ner.get("max_length", 100)),
+                use_amp=_bool(
+                    ner.get("use_amp", True),
+                    "features.ner.use_amp",
+                ),
+                semantic_cleanup=_bool(
+                    ner.get("semantic_cleanup", True),
+                    "features.ner.semantic_cleanup",
+                ),
+            ),
+            physical=PhysicalFeatureSettings(
+                enabled=_bool(
+                    physical.get("enabled", False),
+                    "features.physical.enabled",
+                ),
+                source_column=str(physical.get("source_column", "name")),
+                output_column=str(
+                    physical.get("output_column", "physical_attributes")
+                ),
+                enriched_column=str(
+                    physical.get("enriched_column", "feature_attributes")
+                ),
+                merge_policy=str(
+                    physical.get("merge_policy", "missing_only")
+                ),
+                normalize_units=_bool(
+                    physical.get("normalize_units", True),
+                    "features.physical.normalize_units",
+                ),
+                n_jobs=int(physical.get("n_jobs", 1)),
+                chunk_size=int(physical.get("chunk_size", 10_000)),
             ),
         ),
         runtime=RuntimeSettings(
@@ -487,6 +592,7 @@ __all__ = [
     "NormalizationSettings",
     "PairEncodingSettings",
     "PathSettings",
+    "PhysicalFeatureSettings",
     "RuntimeSettings",
     "SplitSettings",
     "TrainingSettings",

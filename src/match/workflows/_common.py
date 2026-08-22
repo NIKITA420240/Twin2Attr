@@ -5,45 +5,16 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Iterator
 
-import polars as pl
 from loguru import logger
 from transformers import AutoTokenizer
 
 from ..config import AppConfig
-from ..normalization import normalize_attributes
 from ..pair_encoding import add_pair_special_tokens, infer_pair_max_length
 from ..prepare_data import PreparedPair
 
 
 def normalization_enabled(config: AppConfig) -> bool:
     return config.normalization.enabled
-
-
-def prepare_items(
-    items: pl.DataFrame,
-    config: AppConfig,
-) -> tuple[pl.DataFrame, str]:
-    normalization = config.normalization
-    source_column = normalization.source_column
-    logger.info("Running attribute normalization")
-    normalized = normalize_attributes(
-        items,
-        normalization.synonyms_path,
-        normalization.unique_attributes_path,
-        source_column=source_column,
-        output_column=normalization.output_column,
-        n_jobs=normalization.n_jobs,
-        chunk_size=normalization.chunk_size,
-    )
-    return normalized, normalization.output_column
-
-
-def check_optional_features(config: AppConfig) -> None:
-    if config.features.ner.enabled:
-        raise NotImplementedError(
-            "features.ner.enabled=true, but no NER card transformer has been "
-            "implemented yet; keep it false until an NER provider is added"
-        )
 
 
 def resolve_max_length(

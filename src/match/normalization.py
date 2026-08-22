@@ -27,7 +27,7 @@ from .normalization_rules import (
     UNIT_ALIASES,
 )
 
-__all__ = ["normalize_attributes"]
+__all__ = ["normalize_attributes", "normalize_physical_attributes"]
 
 
 _SPACE_PATTERN = re.compile(r"\s+")
@@ -285,6 +285,19 @@ def _normalize_multidimensional_attributes(
     return result
 
 
+def normalize_physical_attributes(
+    attributes: Mapping[Any, Any],
+) -> dict[str, str]:
+    """Normalize physical attribute names, units and numeric values.
+
+    This is the reusable, mapping-level part of the notebook's
+    ``PhysicalUnitNormalizer``. It is shared by full card normalization and
+    by physical values extracted from product names.
+    """
+    multidimensional = _normalize_multidimensional_attributes(attributes)
+    return _normalize_physical_attributes(multidimensional)
+
+
 def _load_synonym_replacements(path: str | Path) -> dict[str, str]:
     synonyms = pl.read_parquet(path)
     required_columns = {"replacer", "synonyms"}
@@ -385,8 +398,7 @@ def _normalize_attribute_json(
         return str(original)
     if not isinstance(attributes, dict):
         return str(original)
-    attributes = _normalize_multidimensional_attributes(attributes)
-    attributes = _normalize_physical_attributes(attributes)
+    attributes = normalize_physical_attributes(attributes)
     attributes = _normalize_synonym_attributes(attributes, attribute_name_map)
     return json.dumps(attributes, ensure_ascii=False)
 

@@ -9,6 +9,7 @@ from typing import Any, Mapping
 import numpy as np
 import polars as pl
 
+from .data.preprocessing import prepare_manifest_items
 from .models.contracts import PredictionBatch
 from .models.factory import build_predictor
 from .paths import PROJECT_ROOT
@@ -16,13 +17,6 @@ from .paths import PROJECT_ROOT
 
 PAIR_COLUMNS = ("id1", "id2")
 ITEM_COLUMNS = ("id", "name", "attributes", "category")
-
-
-def _resolve_from_solution(value: Any, *, root: Path, name: str) -> Path:
-    if value is None or not str(value).strip():
-        raise ValueError(f"solution field {name!r} must contain a path")
-    path = Path(str(value)).expanduser()
-    return path if path.is_absolute() else root / path
 
 
 def _load_solution(solution_path: str | Path | None) -> tuple[dict[str, Any], Path]:
@@ -80,49 +74,17 @@ def _read_inputs(
     return items, matches
 
 
-def _prepare_attributes(
-    items: pl.DataFrame,
-    solution: Mapping[str, Any],
-    solution_root: Path,
-) -> tuple[pl.DataFrame, str]:
-    settings = solution.get("normalization")
-    if not isinstance(settings, Mapping) or not bool(settings.get("enabled", False)):
-        return items, "attributes"
-
-    from .normalization import normalize_attributes
-
-    output_column = str(settings.get("output_column", "normalized_attributes"))
-    normalized = normalize_attributes(
-        items,
-        _resolve_from_solution(
-            settings.get("synonyms_path"),
-            root=solution_root,
-            name="normalization.synonyms_path",
-        ),
-        _resolve_from_solution(
-            settings.get("unique_attributes_path"),
-            root=solution_root,
-            name="normalization.unique_attributes_path",
-        ),
-        source_column=str(settings.get("source_column", "attributes")),
-        output_column=output_column,
-        n_jobs=int(settings.get("n_jobs", 1)),
-        chunk_size=int(settings.get("chunk_size", 5_000)),
-    )
-    return normalized, output_column
-
-
 def _predict(
     items: pl.DataFrame,
     matches: pl.DataFrame,
     solution: Mapping[str, Any],
     solution_root: Path,
 ) -> np.ndarray:
-    items, attributes_column = _prepare_attributes(items, solution, solution_root)
+    prepared_items = prepare_manifest_items(items, solution, solution_root)
     batch = PredictionBatch(
-        items=items,
+        items=prepared_items.frame,
         matches=matches,
-        attributes_column=attributes_column,
+        attributes_column=prepared_items.attributes_column,
     )
     return build_predictor(solution, solution_root).predict_proba(batch)
 

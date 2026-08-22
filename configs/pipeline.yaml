@@ -95,10 +95,28 @@ artifacts:
   solution_path: solution.json
 
 features:
-  # Reserved extension point. Enabling it currently fails explicitly.
   ner:
     enabled: false
-    provider: null
+    provider: word_ner
+    model_dir: models/ner/rubert_tiny2_word_ner
+    cluster_centers_path: models/ner/cluster_centers.pt
+    source_column: name
+    output_column: ner_attributes
+    enriched_column: enriched_attributes
+    merge_policy: missing_only
+    batch_size: 512
+    max_length: 100
+    use_amp: true
+    semantic_cleanup: true
+  physical:
+    enabled: false
+    source_column: name
+    output_column: physical_attributes
+    enriched_column: feature_attributes
+    merge_policy: missing_only
+    normalize_units: true
+    n_jobs: 1
+    chunk_size: 10000
 
 runtime:
   device: null

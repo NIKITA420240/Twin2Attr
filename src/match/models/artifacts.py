@@ -72,22 +72,65 @@ def save_solution_manifest(
     if artifacts.fusion_path is not None:
         solution["fusion_path"] = _manifest_path(artifacts.fusion_path, root=root)
         solution["fusion_batch_size"] = config.models_parameters.fusion.batch_size
+    normalization_solution: dict[str, object] = {
+        "enabled": config.normalization.enabled,
+        "source_column": config.normalization.source_column,
+        "output_column": config.normalization.output_column,
+    }
     if config.normalization.enabled:
-        solution["normalization"] = {
+        normalization_solution.update(
+            {
+                "synonyms_path": _manifest_path(
+                    config.normalization.synonyms_path,
+                    root=root,
+                ),
+                "unique_attributes_path": _manifest_path(
+                    config.normalization.unique_attributes_path,
+                    root=root,
+                ),
+                "n_jobs": config.normalization.n_jobs,
+                "chunk_size": config.normalization.chunk_size,
+            }
+        )
+    solution["normalization"] = normalization_solution
+    features_solution: dict[str, object] = {}
+    if config.features.ner.enabled:
+        ner = config.features.ner
+        if ner.model_dir is None:
+            raise ValueError("enabled NER requires model_dir in solution manifest")
+        ner_solution: dict[str, object] = {
             "enabled": True,
-            "source_column": config.normalization.source_column,
-            "output_column": config.normalization.output_column,
-            "synonyms_path": _manifest_path(
-                config.normalization.synonyms_path,
-                root=root,
-            ),
-            "unique_attributes_path": _manifest_path(
-                config.normalization.unique_attributes_path,
-                root=root,
-            ),
-            "n_jobs": config.normalization.n_jobs,
-            "chunk_size": config.normalization.chunk_size,
+            "provider": ner.provider,
+            "model_dir": _manifest_path(ner.model_dir, root=root),
+            "source_column": ner.source_column,
+            "output_column": ner.output_column,
+            "enriched_column": ner.enriched_column,
+            "merge_policy": ner.merge_policy,
+            "batch_size": ner.batch_size,
+            "max_length": ner.max_length,
+            "use_amp": ner.use_amp,
+            "semantic_cleanup": ner.semantic_cleanup,
         }
+        if ner.cluster_centers_path is not None:
+            ner_solution["cluster_centers_path"] = _manifest_path(
+                ner.cluster_centers_path,
+                root=root,
+            )
+        features_solution["ner"] = ner_solution
+    if config.features.physical.enabled:
+        physical = config.features.physical
+        features_solution["physical"] = {
+            "enabled": True,
+            "source_column": physical.source_column,
+            "output_column": physical.output_column,
+            "enriched_column": physical.enriched_column,
+            "merge_policy": physical.merge_policy,
+            "normalize_units": physical.normalize_units,
+            "n_jobs": physical.n_jobs,
+            "chunk_size": physical.chunk_size,
+        }
+    if features_solution:
+        solution["features"] = features_solution
 
     output_path.write_text(
         json.dumps(solution, ensure_ascii=False, indent=2) + "\n",

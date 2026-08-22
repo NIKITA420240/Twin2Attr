@@ -1,5 +1,6 @@
 import unittest
 from contextlib import nullcontext
+from types import SimpleNamespace
 from unittest.mock import ANY, patch
 
 from match.config import load_app_config_file
@@ -21,10 +22,12 @@ class InspectWorkflowTests(unittest.TestCase):
                 "match.workflows.inspect.workflow_logging",
                 return_value=nullcontext(),
             ),
-            patch("match.workflows.inspect.check_optional_features"),
             patch(
-                "match.workflows.inspect.normalization_enabled",
-                return_value=False,
+                "match.workflows.inspect.prepare_configured_items",
+                return_value=SimpleNamespace(
+                    frame=items,
+                    attributes_column="attributes",
+                ),
             ),
             patch(
                 "match.workflows.inspect.read_parquet",

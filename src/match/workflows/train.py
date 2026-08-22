@@ -8,18 +8,14 @@ from ..config import AppConfig, save_app_config
 from ..data import (
     TrainingMatchPaths,
     load_training_matches,
+    prepare_configured_items,
     prepare_training_data,
     read_parquet,
 )
 from ..data_split import DataSplitConfig
 from ..models.artifacts import TrainingArtifacts, save_solution_manifest
 from ..models.factory import build_trainer
-from ._common import (
-    check_optional_features,
-    normalization_enabled,
-    prepare_items,
-    workflow_logging,
-)
+from ._common import workflow_logging
 
 
 def _training_match_paths(config: AppConfig) -> TrainingMatchPaths:
@@ -45,11 +41,10 @@ def _data_split_config(config: AppConfig) -> DataSplitConfig:
 def train(config: AppConfig) -> TrainingArtifacts:
     """Prepare data, train the selected model and persist its manifest."""
     with workflow_logging(config, workflow_name="train"):
-        check_optional_features(config)
         items = read_parquet(config.paths.items, label="items")
-        attributes_column = config.normalization.source_column
-        if normalization_enabled(config):
-            items, attributes_column = prepare_items(items, config)
+        prepared_items = prepare_configured_items(items, config)
+        items = prepared_items.frame
+        attributes_column = prepared_items.attributes_column
 
         train_matches, validation_matches = load_training_matches(
             items,

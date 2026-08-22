@@ -102,8 +102,65 @@ uv run python run.py train \
 Поле `batch_size` относится только к финальному Transformer-инференсу.
 
 Пути Transformer, MaxPooling, Fusion, resolved-конфига и `solution.json`
-задаются отдельно в секции `artifacts`. NER оставлен явной точкой расширения
-и должен оставаться выключенным до реализации provider-а.
+задаются отдельно в секции `artifacts`. NER по умолчанию выключен, пока в
+решение не добавлены его артефакты.
+
+NER работает как опциональный item-enricher перед выбранной моделью. Он
+извлекает из `name` бренд, тип, модель, материал, цвет, размер, назначение и
+артикул, сохраняет результат в `ner_attributes`, а затем создаёт
+`enriched_attributes`. Значения исходной карточки имеют приоритет над
+предсказаниями NER.
+
+```yaml
+features:
+  ner:
+    enabled: true
+    provider: word_ner
+    model_dir: models/ner/rubert_tiny2_word_ner
+    cluster_centers_path: models/ner/cluster_centers.pt
+    source_column: name
+    output_column: ner_attributes
+    enriched_column: enriched_attributes
+    merge_policy: missing_only
+    batch_size: 512
+    max_length: 100
+    use_amp: true
+    semantic_cleanup: true
+```
+
+Директория модели должна содержать `word_ner_config.json`, `model.pt`,
+локальный Hugging Face `config.json` и tokenizer-файлы. Если включён
+`semantic_cleanup`, также необходим `cluster_centers.pt`. Один и тот же
+preprocessing применяется в `train`, `inspect` и финальном `predict`, а его
+настройки автоматически записываются в `solution.json`.
+
+Feature-провайдеры создаются через `ItemEnricherFactory` и последовательно
+применяются объектом `FeaturePipeline`. Каждый провайдер включается собственным
+флагом `enabled`; порядок зафиксирован как `NER → physical`.
+
+Physical provider переносит алгоритмическую часть parser из notebook. Он
+извлекает из `name` размеры, массу, объём, мощность, напряжение, память,
+частоту и другие значения с единицами измерения. Конструкции `AxB` и `AxBxC`
+разбиваются на длину, ширину и высоту. После извлечения используется общий
+нормализатор физических единиц, поэтому, например, `120x60x75 см` становится
+значениями длины, ширины и высоты в миллиметрах.
+
+```yaml
+features:
+  physical:
+    enabled: true
+    source_column: name
+    output_column: physical_attributes
+    enriched_column: feature_attributes
+    merge_policy: missing_only
+    normalize_units: true
+    n_jobs: 1
+    chunk_size: 10000
+```
+
+Если включены оба провайдера, порядок по умолчанию выглядит так:
+`normalization → NER → physical → model`. Исходные атрибуты карточки на каждом
+шаге имеют приоритет над автоматически извлечёнными значениями.
 
 OmegaConf используется только на границе загрузки YAML и dotlist overrides.
 Внутри workflow передаётся неизменяемый типизированный `AppConfig`, поэтому

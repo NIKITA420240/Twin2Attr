@@ -68,6 +68,70 @@ class ModelTrainingStrategyTests(unittest.TestCase):
         )
         self.assertEqual(solution["fusion_path"], "models/fusion.pt")
 
+    def test_solution_manifest_persists_ner_preprocessing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = replace(
+                self.config,
+                features=replace(
+                    self.config.features,
+                    ner=replace(
+                        self.config.features.ner,
+                        enabled=True,
+                        model_dir=root / "models" / "ner",
+                        cluster_centers_path=root / "models" / "centers.pt",
+                    ),
+                ),
+                artifacts=replace(
+                    self.config.artifacts,
+                    transformer_dir=root / "models" / "transformer",
+                    solution_path=root / "solution.json",
+                ),
+            )
+            artifacts = TrainingArtifacts(
+                predictor="transformer",
+                transformer_dir=config.artifacts.transformer_dir,
+            )
+            output_path = save_solution_manifest(config, artifacts)
+            solution = json.loads(output_path.read_text(encoding="utf-8"))
+
+        ner = solution["features"]["ner"]
+        self.assertTrue(ner["enabled"])
+        self.assertEqual(ner["provider"], "word_ner")
+        self.assertEqual(ner["model_dir"], "models/ner")
+        self.assertEqual(ner["cluster_centers_path"], "models/centers.pt")
+        self.assertEqual(ner["enriched_column"], "enriched_attributes")
+
+    def test_solution_manifest_persists_physical_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = replace(
+                self.config,
+                features=replace(
+                    self.config.features,
+                    physical=replace(
+                        self.config.features.physical,
+                        enabled=True,
+                    ),
+                ),
+                artifacts=replace(
+                    self.config.artifacts,
+                    transformer_dir=root / "models" / "transformer",
+                    solution_path=root / "solution.json",
+                ),
+            )
+            artifacts = TrainingArtifacts(
+                predictor="transformer",
+                transformer_dir=config.artifacts.transformer_dir,
+            )
+            output_path = save_solution_manifest(config, artifacts)
+            solution = json.loads(output_path.read_text(encoding="utf-8"))
+
+        physical = solution["features"]["physical"]
+        self.assertTrue(physical["enabled"])
+        self.assertTrue(physical["normalize_units"])
+        self.assertEqual(physical["enriched_column"], "feature_attributes")
+
 
 if __name__ == "__main__":
     unittest.main()
