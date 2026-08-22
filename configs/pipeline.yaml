@@ -63,7 +63,7 @@ pair_encoding:
   hard_cap: 512
 
 model:
-  pretrained_model_path: models/rubert-tiny2
+  pretrained_model_path: models/rubert-base-cased
   max_epochs: 5
   hpo_trials: 10
   seed: 42
