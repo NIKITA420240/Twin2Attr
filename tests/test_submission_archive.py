@@ -27,6 +27,13 @@ class SubmissionArchiveTests(unittest.TestCase):
         )
         (root / "run.py").write_text("print('run')\n", encoding="utf-8")
         (root / "metadata.json").write_text("{}\n", encoding="utf-8")
+        wheels = root / "build_submission" / "vendor_wheels"
+        wheels.mkdir(parents=True)
+        (wheels / "polars-1.43.2-py3-none-any.whl").write_bytes(b"polars")
+        (
+            wheels
+            / "polars_runtime_32-1.43.2-cp310-abi3-manylinux_x86_64.whl"
+        ).write_bytes(b"runtime")
 
     def test_packages_only_selected_model_and_generates_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -64,6 +71,7 @@ class SubmissionArchiveTests(unittest.TestCase):
         self.assertEqual(solution["predictor"], "transformer")
         self.assertEqual(solution["model_directory"], "models/transformer")
         self.assertIn("models/transformer/model.safetensors", names)
+        self.assertIn("vendor_wheels/polars-1.43.2-py3-none-any.whl", names)
         self.assertNotIn("models/maxpooling.joblib", names)
         self.assertNotIn(
             "models/transformer/checkpoint-10/model.safetensors",

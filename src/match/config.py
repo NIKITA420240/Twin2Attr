@@ -5,11 +5,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
-from typing import Any
-
-from omegaconf import DictConfig, OmegaConf
+from typing import TYPE_CHECKING, Any
 
 from .paths import resolve_project_path
+
+if TYPE_CHECKING:
+    from omegaconf import DictConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,7 +271,10 @@ class AppConfig:
     submission: SubmissionSettings
 
 
-ConfigSource = AppConfig | DictConfig | Mapping[str, Any]
+if TYPE_CHECKING:
+    ConfigSource = AppConfig | DictConfig | Mapping[str, Any]
+else:
+    ConfigSource = Any
 
 
 def _section(values: Mapping[str, Any], name: str) -> Mapping[str, Any]:
@@ -321,6 +325,8 @@ def _bool(value: Any, name: str) -> bool:
 
 def load_app_config(config: ConfigSource) -> AppConfig:
     """Resolve OmegaConf values once and return immutable typed settings."""
+    from omegaconf import DictConfig, OmegaConf
+
     if isinstance(config, AppConfig):
         return config
     omega = config if isinstance(config, DictConfig) else OmegaConf.create(config)
@@ -584,6 +590,8 @@ def load_app_config_file(
     overrides: Sequence[str] = (),
 ) -> AppConfig:
     """Load YAML plus dot-list overrides at the application boundary."""
+    from omegaconf import OmegaConf
+
     config_path = resolve_project_path(path)
     if not config_path.is_file():
         raise FileNotFoundError(f"Pipeline config does not exist: {config_path}")
@@ -611,6 +619,8 @@ def _serializable(value: Any) -> Any:
 
 def save_app_config(config: AppConfig, path: Path) -> None:
     """Persist the resolved typed configuration as YAML."""
+    from omegaconf import OmegaConf
+
     path.parent.mkdir(parents=True, exist_ok=True)
     OmegaConf.save(OmegaConf.create(_serializable(config)), path)
 
