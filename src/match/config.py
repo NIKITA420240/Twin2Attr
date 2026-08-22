@@ -68,6 +68,15 @@ class TransformerParameters:
     pretrained_model_path: str
     max_epochs: int
     hpo_trials: int
+    learning_rate: float
+    weight_decay: float
+    train_batch_size: int
+    eval_batch_size: int
+    gradient_accumulation_steps: int
+    warmup_ratio: float
+    max_grad_norm: float
+    early_stopping_patience: int
+    auto_find_batch_size: bool
     batch_size: int
 
 
@@ -293,6 +302,26 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 ),
                 max_epochs=int(_required(transformer, "max_epochs")),
                 hpo_trials=int(_required(transformer, "hpo_trials")),
+                learning_rate=float(_required(transformer, "learning_rate")),
+                weight_decay=float(_required(transformer, "weight_decay")),
+                train_batch_size=int(
+                    _required(transformer, "train_batch_size")
+                ),
+                eval_batch_size=int(
+                    _required(transformer, "eval_batch_size")
+                ),
+                gradient_accumulation_steps=int(
+                    _required(transformer, "gradient_accumulation_steps")
+                ),
+                warmup_ratio=float(_required(transformer, "warmup_ratio")),
+                max_grad_norm=float(_required(transformer, "max_grad_norm")),
+                early_stopping_patience=int(
+                    _required(transformer, "early_stopping_patience")
+                ),
+                auto_find_batch_size=_bool(
+                    _required(transformer, "auto_find_batch_size"),
+                    "models_parameters.transformer.auto_find_batch_size",
+                ),
                 batch_size=int(_required(transformer, "batch_size")),
             ),
             maxpooling=MaxPoolingParameters(
