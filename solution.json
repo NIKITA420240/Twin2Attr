@@ -1,5 +1,5 @@
 {
   "predictor": "transformer",
-  "model_directory": "models/twin2attr",
+  "model_directory": "models/twin2attr/transformer",
   "batch_size": 64
 }

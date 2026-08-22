@@ -1,10 +1,13 @@
+# transformer | maxpooling | fusion
+training:
+  model: transformer
+
 paths:
   items: data/items.parquet
   train_matches: data/train_matches.parquet
   validation_matches: data/validation_matches.parquet
   # Optional for inspect; train_matches is used when null.
   inspect_matches: null
-  model_dir: models/twin2attr
 
 normalization:
   enabled: false
@@ -22,7 +25,7 @@ split:
   # pair keeps duplicate/reversed pairs together; item keeps whole connected
   # item components together and is stricter, but may distort stratification.
   leakage_scope: pair
-  seed: ${model.seed}
+  seed: ${runtime.seed}
   candidate_splits: 128
   train_output_path: artifacts/splits/train_matches.parquet
   validation_output_path: artifacts/splits/validation_matches.parquet
@@ -37,30 +40,14 @@ pair_encoding:
   sample_size: 10000
   hard_cap: 512
 
-model:
-  pretrained_model_path: models/cross-encoder-ms-marco-MiniLM-L12-v2
-  max_epochs: 5
-  hpo_trials: 10
-  seed: 42
+models_parameters:
+  transformer:
+    pretrained_model_path: models/cross-encoder-ms-marco-MiniLM-L12-v2
+    max_epochs: 5
+    hpo_trials: 10
+    batch_size: 64
 
-fusion:
-  enabled: false
-  model_path: models/fusion_head.pt
-  # Batch size used to extract frozen Transformer CLS embeddings.
-  embedding_batch_size: 64
-  # Parameters below train and apply only the fusion head.
-  hidden_dim: 256
-  dropout: 0.2
-  batch_size: 512
-  max_epochs: 30
-  patience: 5
-  learning_rate: 0.001
-  weight_decay: 0.0001
-
-features:
   maxpooling:
-    enabled: false
-    model_path: models/maxpooling.joblib
     vector_size: 256
     window: 5
     min_count: 2
@@ -73,6 +60,26 @@ features:
     dropout: 0.2
     learning_rate: 0.001
     weight_decay: 0.0001
+
+  fusion:
+    # Batch size used to extract frozen Transformer CLS embeddings.
+    embedding_batch_size: 64
+    hidden_dim: 256
+    dropout: 0.2
+    batch_size: 512
+    max_epochs: 30
+    patience: 5
+    learning_rate: 0.001
+    weight_decay: 0.0001
+
+artifacts:
+  transformer_dir: models/twin2attr/transformer
+  maxpooling_path: models/twin2attr/maxpooling.joblib
+  fusion_path: models/twin2attr/fusion.pt
+  resolved_config_path: models/twin2attr/pipeline_config.yaml
+  solution_path: solution.json
+
+features:
   # Reserved extension point. Enabling it currently fails explicitly.
   ner:
     enabled: false
@@ -80,6 +87,7 @@ features:
 
 runtime:
   device: null
+  seed: 42
 
 logging:
   level: INFO

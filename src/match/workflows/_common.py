@@ -54,7 +54,9 @@ def resolve_max_length(
     if encoding.max_length is not None:
         return encoding.max_length
 
-    tokenizer = AutoTokenizer.from_pretrained(config.model.pretrained_model_path)
+    tokenizer = AutoTokenizer.from_pretrained(
+        config.models_parameters.transformer.pretrained_model_path
+    )
     if encoding.use_field_tokens:
         add_pair_special_tokens(tokenizer)
     max_length = infer_pair_max_length(
@@ -86,11 +88,10 @@ def workflow_logging(config: AppConfig, *, workflow_name: str) -> Iterator[None]
     try:
         logger.info(
             "Starting Twin2Attr workflow: name={}, normalization={}, "
-            "maxpooling={}, fusion={}, ner={}",
+            "training_model={}, ner={}",
             workflow_name,
             normalization_enabled(config),
-            config.features.maxpooling.enabled,
-            config.fusion.enabled,
+            config.training.model,
             config.features.ner.enabled,
         )
         yield

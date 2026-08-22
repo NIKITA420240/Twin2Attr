@@ -34,7 +34,10 @@ def _add_config_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "overrides",
         nargs=argparse.REMAINDER,
-        help="Hydra-style overrides such as model.max_epochs=3",
+        help=(
+            "Hydra-style overrides such as "
+            "models_parameters.transformer.max_epochs=3"
+        ),
     )
 
 
