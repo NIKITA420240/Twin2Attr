@@ -88,6 +88,10 @@ class SequenceClassifierConfig:
         Whether pair encoding uses the added ``[KEY]`` and ``[VAL]`` tokens.
     max_attribute_value_tokens:
         Per-attribute value limit. ``None`` disables individual truncation.
+    max_length:
+        Explicit pair length. ``None`` infers it from the training data.
+    max_length_quantile, max_length_sample_size, max_length_hard_cap:
+        Parameters used only when ``max_length`` is inferred.
     """
 
     model_path: str
@@ -96,6 +100,10 @@ class SequenceClassifierConfig:
     seed: int = 42
     use_field_tokens: bool = True
     max_attribute_value_tokens: int | None = DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS
+    max_length: int | None = None
+    max_length_quantile: float = 0.95
+    max_length_sample_size: int = 10_000
+    max_length_hard_cap: int = 512
 
     def __post_init__(self) -> None:
         if not self.model_path.strip():
@@ -106,6 +114,14 @@ class SequenceClassifierConfig:
             raise ValueError("hpo_trials must be positive")
         if self.max_attribute_value_tokens is not None and self.max_attribute_value_tokens < 1:
             raise ValueError("max_attribute_value_tokens must be positive or None")
+        if self.max_length is not None and self.max_length < 8:
+            raise ValueError("max_length must be at least 8 or None")
+        if not 0.0 < self.max_length_quantile <= 1.0:
+            raise ValueError("max_length_quantile must be in (0, 1]")
+        if self.max_length_sample_size < 1:
+            raise ValueError("max_length_sample_size must be positive")
+        if self.max_length_hard_cap < 8:
+            raise ValueError("max_length_hard_cap must be at least 8")
 
 
 @dataclass(frozen=True)
@@ -381,12 +397,17 @@ def train_sequence_classifier(
     tokenizer = AutoTokenizer.from_pretrained(config.model_path)
     if config.use_field_tokens:
         add_pair_special_tokens(tokenizer)
-    max_length = infer_pair_max_length(
-        tokenizer,
-        train_pairs,
-        use_field_tokens=config.use_field_tokens,
-        max_attribute_value_tokens=config.max_attribute_value_tokens,
-    )
+    max_length = config.max_length
+    if max_length is None:
+        max_length = infer_pair_max_length(
+            tokenizer,
+            train_pairs,
+            quantile=config.max_length_quantile,
+            sample_size=config.max_length_sample_size,
+            hard_cap=config.max_length_hard_cap,
+            use_field_tokens=config.use_field_tokens,
+            max_attribute_value_tokens=config.max_attribute_value_tokens,
+        )
     logger.info("Max input length: {}", max_length)
 
     train_dataset = PreparedPairDataset(train_pairs)

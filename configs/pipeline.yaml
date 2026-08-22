@@ -1,0 +1,124 @@
+# train | inference | inspect
+action: train
+
+# This ordered list is the only switch controlling which components run.
+pipelines:
+  train:
+    - read_data
+    - split_data
+    - prepare_data
+    - pair_encoding
+    - transformer
+  inference:
+    - read_data
+    - prepare_data
+    - pair_encoding
+    - transformer
+    - save_predictions
+  inspect:
+    - read_data
+    - prepare_data
+    - pair_encoding
+
+paths:
+  items: data/items.parquet
+  train_matches: data/train_matches.parquet
+  validation_matches: data/validation_matches.parquet
+  inference_matches: data/inference_matches.parquet
+  # Optional for action=inspect; train_matches is used when null.
+  inspect_matches: null
+  model_dir: models/twin2attr
+  predictions: artifacts/predictions.parquet
+  cls_embeddings: artifacts/cls_embeddings.npy
+  maxpooling_embeddings: artifacts/maxpooling_embeddings.npy
+
+normalization:
+  source_column: attributes
+  output_column: normalized_attributes
+  synonyms_path: data/synonyms.parquet
+  unique_attributes_path: data/unique_attributes.parquet
+  n_jobs: 4
+  chunk_size: 5000
+
+split:
+  # predefined reads paths.validation_matches; auto splits paths.train_matches.
+  mode: predefined
+  validation_fraction: 0.2
+  # pair keeps duplicate/reversed pairs together; item keeps whole connected
+  # item components together and is stricter, but may distort stratification.
+  leakage_scope: pair
+  seed: ${model.seed}
+  candidate_splits: 128
+  train_output_path: artifacts/splits/train_matches.parquet
+  validation_output_path: artifacts/splits/validation_matches.parquet
+
+pair_encoding:
+  use_field_tokens: true
+  # null disables per-attribute value truncation.
+  max_attribute_value_tokens: 32
+  # null lets the training data determine the limit.
+  max_length: null
+  quantile: 0.95
+  sample_size: 10000
+  hard_cap: 512
+
+model:
+  pretrained_model_path: models/cross-encoder-ms-marco-MiniLM-L12-v2
+  max_epochs: 5
+  hpo_trials: 10
+  seed: 42
+
+inference:
+  batch_size: 64
+  probability_column: match_probability
+  save_cls_embeddings: true
+
+fusion:
+  model_path: models/fusion_head.pt
+  probability_column: fusion_match_probability
+  # Batch size used to extract frozen Transformer CLS embeddings.
+  embedding_batch_size: 64
+  # Parameters below train and apply only the fusion head.
+  hidden_dim: 256
+  dropout: 0.2
+  batch_size: 512
+  max_epochs: 30
+  patience: 5
+  learning_rate: 0.001
+  weight_decay: 0.0001
+
+features:
+  # The raw vector can be saved separately and optionally consumed by fusion.
+  maxpooling:
+    model_path: models/maxpooling.joblib
+    vector_size: 256
+    window: 5
+    min_count: 2
+    workers: 8
+    fasttext_epochs: 10
+    classifier_epochs: 50
+    batch_size: 512
+    validation_fraction: 0.2
+    patience: 7
+    dropout: 0.2
+    learning_rate: 0.001
+    weight_decay: 0.0001
+  # Reserved extension point. Enabling it currently fails explicitly.
+  ner:
+    enabled: false
+    provider: null
+
+runtime:
+  device: null
+
+logging:
+  level: INFO
+  file: logs/pipeline.log
+  rotation: 100 MB
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: .
+  output_subdir: null
