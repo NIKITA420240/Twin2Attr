@@ -42,25 +42,25 @@ pair_encoding:
 
 models_parameters:
   transformer:
-    pretrained_model_path: models/cross-encoder-ms-marco-MiniLM-L12-v2
+    pretrained_model_path: models/rubert-base-cased
     max_epochs: 5
-    hpo_trials: 10
+    hpo_trials: 1
     # Used directly when hpo_trials=1; otherwise these are initial values.
-    learning_rate: 0.00002
-    weight_decay: 0.01
+    learning_rate: 0.00000651546924074236
+    weight_decay: 0.06357496988887383
     hpo_learning_rate_min: 0.000001
     hpo_learning_rate_max: 0.00005
     hpo_weight_decay_min: 0.0
     hpo_weight_decay_max: 0.1
-    train_batch_size: 64
-    eval_batch_size: 64
+    train_batch_size: 256
+    eval_batch_size: 256
     gradient_accumulation_steps: 1
     warmup_ratio: 0.06
     max_grad_norm: 1.0
     early_stopping_patience: 2
     auto_find_batch_size: true
     # Batch size used by predict after the trained model is loaded.
-    batch_size: 64
+    batch_size: 256
 
   maxpooling:
     vector_size: 256

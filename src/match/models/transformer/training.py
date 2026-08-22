@@ -51,6 +51,7 @@ def _training_arguments(
         "logging_strategy": "steps",
         "logging_steps": 100,
         "logging_first_step": True,
+        "disable_tqdm": True,
         "load_best_model_at_end": True,
         "metric_for_best_model": "macro_pr_auc",
         "greater_is_better": True,
