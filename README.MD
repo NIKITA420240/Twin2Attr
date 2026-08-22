@@ -38,6 +38,9 @@ uv run python -m build_submission
 `training.model` определяет стратегию обучения, а `inference.model` — модель,
 которая попадёт в финальный архив. Эти параметры независимы: например, после
 обучения `fusion` можно собрать более компактное решение только с Transformer.
+Пути готовых весов задаются отдельно через `inference.transformer_dir`,
+`inference.maxpooling_path` и `inference.fusion_path`, поэтому сборка не зависит
+от директорий, куда training workflow сохраняет новые артефакты.
 
 Путь результата задаётся параметром `submission.output_path` и по умолчанию
 равен `dist/twin2attr_submission.zip`. В корень ZIP попадают `run.py`,

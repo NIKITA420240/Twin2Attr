@@ -20,6 +20,10 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(self.config.split.seed, self.config.runtime.seed)
         self.assertEqual(self.config.training.model, "transformer")
         self.assertEqual(self.config.inference.model, "transformer")
+        self.assertEqual(
+            self.config.inference.transformer_dir,
+            PROJECT_ROOT / "weights" / "rubert-tiny2",
+        )
         self.assertIsInstance(
             self.config.pair_encoding.max_attribute_value_tokens,
             int,

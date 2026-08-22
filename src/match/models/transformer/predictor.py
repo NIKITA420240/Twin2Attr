@@ -42,7 +42,7 @@ def load_trained_classifier(
     device: str | torch.device | None = None,
 ) -> tuple[PreTrainedTokenizerBase, PreTrainedModel]:
     target_device = _resolve_device(device)
-    tokenizer = AutoTokenizer.from_pretrained(model_dir)
+    tokenizer = AutoTokenizer.from_pretrained(model_dir, use_fast=True)
     model = AutoModelForSequenceClassification.from_pretrained(model_dir)
     model.to(target_device).eval()
     return tokenizer, model

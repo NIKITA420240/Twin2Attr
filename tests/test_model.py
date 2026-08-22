@@ -6,7 +6,11 @@ import numpy as np
 import torch
 from transformers import BertConfig, BertForSequenceClassification, BertTokenizerFast
 
-from match.pair_encoding import PreparedPairDataset, infer_pair_max_length
+from match.pair_encoding import (
+    PreparedPairDataset,
+    encode_prepared_pair,
+    infer_pair_max_length,
+)
 from match.prepare_data import PreparedCard, PreparedPair
 from match.models.transformer import (
     SequenceClassifierConfig,
@@ -25,6 +29,14 @@ class FakeTokenizer:
 
     def num_special_tokens_to_add(self, *, pair=False):
         return 3 if pair else 2
+
+
+class TransformersV5BertTokenizer(FakeTokenizer):
+    """Minimal v5-style tokenizer without legacy pair builder methods."""
+
+    cls_token_id = 101
+    sep_token_id = 102
+    model_input_names = ["input_ids", "token_type_ids", "attention_mask"]
 
 
 def _card(item_id: int, name: str, category: str = "category") -> PreparedCard:
@@ -78,6 +90,22 @@ class SequenceClassifierModelTests(unittest.TestCase):
         )
 
         self.assertEqual(max_length, 24)
+
+    def test_encodes_bert_pair_without_removed_transformers_v5_methods(self) -> None:
+        encoded = encode_prepared_pair(
+            TransformersV5BertTokenizer(),
+            _pair(1, "left name", 2, "right name", 1),
+            max_length=32,
+            use_field_tokens=False,
+        )
+
+        self.assertEqual(encoded["input_ids"][0], 101)
+        self.assertEqual(encoded["input_ids"].count(102), 2)
+        self.assertEqual(
+            len(encoded["token_type_ids"]),
+            len(encoded["input_ids"]),
+        )
+        self.assertIn(1, encoded["token_type_ids"])
 
     def test_balanced_class_weights_give_rare_class_more_weight(self) -> None:
         weights = compute_class_weights([0, 0, 0, 1])

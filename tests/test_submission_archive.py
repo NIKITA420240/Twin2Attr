@@ -50,8 +50,8 @@ class SubmissionArchiveTests(unittest.TestCase):
             output = root / "dist" / "submission.zip"
             config = replace(
                 self.config,
-                artifacts=replace(
-                    self.config.artifacts,
+                inference=replace(
+                    self.config.inference,
                     transformer_dir=transformer,
                     maxpooling_path=maxpooling,
                 ),
@@ -98,8 +98,8 @@ class SubmissionArchiveTests(unittest.TestCase):
             unique.write_bytes(b"unique")
             config = replace(
                 self.config,
-                artifacts=replace(
-                    self.config.artifacts,
+                inference=replace(
+                    self.config.inference,
                     transformer_dir=transformer,
                 ),
                 normalization=replace(
@@ -153,9 +153,6 @@ class SubmissionArchiveTests(unittest.TestCase):
                 inference=replace(
                     self.config.inference,
                     model="maxpooling",
-                ),
-                artifacts=replace(
-                    self.config.artifacts,
                     transformer_dir=root / "models" / "missing-transformer",
                     maxpooling_path=maxpooling,
                 ),
@@ -182,8 +179,8 @@ class SubmissionArchiveTests(unittest.TestCase):
             self._project(root)
             config = replace(
                 self.config,
-                artifacts=replace(
-                    self.config.artifacts,
+                inference=replace(
+                    self.config.inference,
                     transformer_dir=root / "models" / "missing",
                 ),
                 submission=replace(

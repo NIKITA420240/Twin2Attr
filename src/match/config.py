@@ -27,6 +27,9 @@ class TrainingSettings:
 @dataclass(frozen=True, slots=True)
 class InferenceSettings:
     model: str
+    transformer_dir: Path
+    maxpooling_path: Path
+    fusion_path: Path
 
     def __post_init__(self) -> None:
         if self.model not in {"transformer", "maxpooling", "fusion"}:
@@ -360,7 +363,30 @@ def load_app_config(config: ConfigSource) -> AppConfig:
 
     return AppConfig(
         training=TrainingSettings(model=str(_required(training, "model"))),
-        inference=InferenceSettings(model=str(_required(inference, "model"))),
+        inference=InferenceSettings(
+            model=str(_required(inference, "model")),
+            transformer_dir=_path(
+                inference.get(
+                    "transformer_dir",
+                    _required(artifacts, "transformer_dir"),
+                ),
+                "inference.transformer_dir",
+            ),
+            maxpooling_path=_path(
+                inference.get(
+                    "maxpooling_path",
+                    _required(artifacts, "maxpooling_path"),
+                ),
+                "inference.maxpooling_path",
+            ),
+            fusion_path=_path(
+                inference.get(
+                    "fusion_path",
+                    _required(artifacts, "fusion_path"),
+                ),
+                "inference.fusion_path",
+            ),
+        ),
         paths=PathSettings(
             items=_path(_required(paths, "items"), "paths.items"),
             train_matches=_path(

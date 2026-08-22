@@ -5,6 +5,9 @@ training:
 # transformer | maxpooling | fusion
 inference:
   model: transformer
+  transformer_dir: weights/rubert-tiny2
+  maxpooling_path: models/twin2attr/maxpooling.joblib
+  fusion_path: models/twin2attr/fusion.pt
 
 paths:
   items: data/items_human.parquet
