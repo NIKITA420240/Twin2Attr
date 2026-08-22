@@ -84,6 +84,23 @@ uv run python run.py train \
 через `run.py predict`; совместимый `solution.json` создаётся после успешного
 обучения автоматически. Токенизация остаётся динамической внутри батчей.
 
+Для Transformer отдельно задаются optimizer, train/eval batch size, gradient
+accumulation, warmup, gradient clipping и early stopping. Например, запуск без
+HPO с фиксированными параметрами выглядит так:
+
+```bash
+uv run python run.py train \
+  models_parameters.transformer.hpo_trials=1 \
+  models_parameters.transformer.learning_rate=0.00001 \
+  models_parameters.transformer.weight_decay=0.01 \
+  models_parameters.transformer.train_batch_size=32 \
+  models_parameters.transformer.gradient_accumulation_steps=2
+```
+
+При `hpo_trials > 1` итоговые `learning_rate` и `weight_decay` выбирает Optuna
+из диапазонов `hpo_learning_rate_min/max` и `hpo_weight_decay_min/max`.
+Поле `batch_size` относится только к финальному Transformer-инференсу.
+
 Пути Transformer, MaxPooling, Fusion, resolved-конфига и `solution.json`
 задаются отдельно в секции `artifacts`. NER оставлен явной точкой расширения
 и должен оставаться выключенным до реализации provider-а.

@@ -13,6 +13,10 @@ class SequenceClassifierConfig:
     hpo_trials: int = 10
     learning_rate: float = 2e-5
     weight_decay: float = 0.01
+    hpo_learning_rate_min: float = 1e-6
+    hpo_learning_rate_max: float = 5e-5
+    hpo_weight_decay_min: float = 0.0
+    hpo_weight_decay_max: float = 0.1
     train_batch_size: int = 64
     eval_batch_size: int = 64
     gradient_accumulation_steps: int = 1
@@ -39,6 +43,14 @@ class SequenceClassifierConfig:
             raise ValueError("learning_rate must be positive")
         if self.weight_decay < 0.0:
             raise ValueError("weight_decay must not be negative")
+        if not 0.0 < self.hpo_learning_rate_min < self.hpo_learning_rate_max:
+            raise ValueError(
+                "HPO learning-rate bounds must be positive and increasing"
+            )
+        if not 0.0 <= self.hpo_weight_decay_min < self.hpo_weight_decay_max:
+            raise ValueError(
+                "HPO weight-decay bounds must be non-negative and increasing"
+            )
         if self.train_batch_size < 1 or self.eval_batch_size < 1:
             raise ValueError("train and eval batch sizes must be positive")
         if self.gradient_accumulation_steps < 1:
@@ -66,6 +78,7 @@ class SequenceClassifierConfig:
 
 @dataclass(frozen=True)
 class ResolvedTrainingConfig:
+    max_epochs: int
     max_length: int
     train_batch_size: int
     eval_batch_size: int
@@ -74,8 +87,10 @@ class ResolvedTrainingConfig:
     weight_decay: float
     use_field_tokens: bool
     max_attribute_value_tokens: int | None
-    warmup_ratio: float = 0.06
-    gradient_clip_norm: float = 1.0
+    warmup_ratio: float
+    gradient_clip_norm: float
+    early_stopping_patience: int
+    auto_find_batch_size: bool
 
 
 @dataclass(frozen=True)

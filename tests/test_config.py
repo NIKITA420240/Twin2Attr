@@ -35,6 +35,30 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(config.split.seed, 99)
         self.assertEqual(config.training.model, "fusion")
 
+    def test_applies_transformer_optimizer_overrides(self) -> None:
+        config = load_app_config_file(
+            PROJECT_ROOT / "configs" / "pipeline.yaml",
+            [
+                "models_parameters.transformer.hpo_trials=1",
+                "models_parameters.transformer.learning_rate=0.00001",
+                "models_parameters.transformer.train_batch_size=16",
+                "models_parameters.transformer.gradient_accumulation_steps=4",
+            ],
+        )
+
+        parameters = config.models_parameters.transformer
+        self.assertEqual(parameters.hpo_trials, 1)
+        self.assertEqual(parameters.learning_rate, 1e-5)
+        self.assertEqual(parameters.train_batch_size, 16)
+        self.assertEqual(parameters.gradient_accumulation_steps, 4)
+
+    def test_rejects_invalid_transformer_learning_rate(self) -> None:
+        with self.assertRaisesRegex(ValueError, "optimizer parameters"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                ["models_parameters.transformer.learning_rate=0"],
+            )
+
     def test_config_is_immutable(self) -> None:
         with self.assertRaises(FrozenInstanceError):
             self.config.runtime.seed = 100

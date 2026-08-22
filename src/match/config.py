@@ -70,6 +70,10 @@ class TransformerParameters:
     hpo_trials: int
     learning_rate: float
     weight_decay: float
+    hpo_learning_rate_min: float
+    hpo_learning_rate_max: float
+    hpo_weight_decay_min: float
+    hpo_weight_decay_max: float
     train_batch_size: int
     eval_batch_size: int
     gradient_accumulation_steps: int
@@ -78,6 +82,30 @@ class TransformerParameters:
     early_stopping_patience: int
     auto_find_batch_size: bool
     batch_size: int
+
+    def __post_init__(self) -> None:
+        if not self.pretrained_model_path.strip():
+            raise ValueError("transformer.pretrained_model_path must not be empty")
+        if self.max_epochs < 1 or self.hpo_trials < 1:
+            raise ValueError("transformer epoch and HPO counts must be positive")
+        if self.learning_rate <= 0.0 or self.weight_decay < 0.0:
+            raise ValueError("transformer optimizer parameters are invalid")
+        if not 0.0 < self.hpo_learning_rate_min < self.hpo_learning_rate_max:
+            raise ValueError("transformer HPO learning-rate bounds are invalid")
+        if not 0.0 <= self.hpo_weight_decay_min < self.hpo_weight_decay_max:
+            raise ValueError("transformer HPO weight-decay bounds are invalid")
+        if min(
+            self.train_batch_size,
+            self.eval_batch_size,
+            self.gradient_accumulation_steps,
+            self.early_stopping_patience,
+            self.batch_size,
+        ) < 1:
+            raise ValueError("transformer batch and patience values must be positive")
+        if not 0.0 <= self.warmup_ratio < 1.0:
+            raise ValueError("transformer.warmup_ratio must be in [0, 1)")
+        if self.max_grad_norm <= 0.0:
+            raise ValueError("transformer.max_grad_norm must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,6 +332,18 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 hpo_trials=int(_required(transformer, "hpo_trials")),
                 learning_rate=float(_required(transformer, "learning_rate")),
                 weight_decay=float(_required(transformer, "weight_decay")),
+                hpo_learning_rate_min=float(
+                    _required(transformer, "hpo_learning_rate_min")
+                ),
+                hpo_learning_rate_max=float(
+                    _required(transformer, "hpo_learning_rate_max")
+                ),
+                hpo_weight_decay_min=float(
+                    _required(transformer, "hpo_weight_decay_min")
+                ),
+                hpo_weight_decay_max=float(
+                    _required(transformer, "hpo_weight_decay_max")
+                ),
                 train_batch_size=int(
                     _required(transformer, "train_batch_size")
                 ),

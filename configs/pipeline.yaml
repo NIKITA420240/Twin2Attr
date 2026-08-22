@@ -45,8 +45,13 @@ models_parameters:
     pretrained_model_path: models/cross-encoder-ms-marco-MiniLM-L12-v2
     max_epochs: 5
     hpo_trials: 10
+    # Used directly when hpo_trials=1; otherwise these are initial values.
     learning_rate: 0.00002
     weight_decay: 0.01
+    hpo_learning_rate_min: 0.000001
+    hpo_learning_rate_max: 0.00005
+    hpo_weight_decay_min: 0.0
+    hpo_weight_decay_max: 0.1
     train_batch_size: 64
     eval_batch_size: 64
     gradient_accumulation_steps: 1
