@@ -4,7 +4,11 @@ import unittest
 import numpy as np
 import polars as pl
 
-from match import encode_attribute_pairs, train_maxpooling_model
+from match import (
+    encode_attribute_pairs,
+    predict_maxpooling_probabilities,
+    train_maxpooling_model,
+)
 
 
 class MaxPoolingPipelineTests(unittest.TestCase):
@@ -56,6 +60,13 @@ class MaxPoolingPipelineTests(unittest.TestCase):
             model,
             attributes_column="normalized_attributes",
         )
+        probabilities = predict_maxpooling_probabilities(
+            items,
+            self.inference_matches,
+            model,
+            attributes_column="normalized_attributes",
+            batch_size=2,
+        )
 
         self.assertEqual(model.vector_size, 4)
         self.assertTrue(np.isfinite(model.best_validation_pr_auc))
@@ -63,6 +74,8 @@ class MaxPoolingPipelineTests(unittest.TestCase):
         self.assertEqual(embeddings.dtype, np.float32)
         self.assertTrue(np.isfinite(embeddings).all())
         np.testing.assert_allclose(embeddings[0], embeddings[1], atol=1e-6)
+        self.assertEqual(probabilities.shape, (2,))
+        self.assertTrue(np.isfinite(probabilities).all())
 
 
 if __name__ == "__main__":

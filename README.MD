@@ -106,6 +106,12 @@ OmegaConf используется только на границе загруз
 
 Для fusion в manifest указываются `predictor: fusion`, `maxpooling_path` и
 `fusion_path`. `metadata.json` задаёт evaluator entrypoint `python -u run.py`.
+MaxPooling также можно использовать самостоятельно, указав
+`predictor: maxpooling` и `maxpooling_path`.
+
+Модели подключаются к workflow через небольшие интерфейсы `PairEncoder` и
+`MatchPredictor`. Transformer и MaxPooling могут извлекать признаки и делать
+предсказания, а Fusion композиционно объединяет их признаки.
 
 ## Нормализация атрибутов
 

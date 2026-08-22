@@ -27,12 +27,11 @@ from ..fusion import (
     FusionConfig,
     train_fusion_classifier,
 )
-from ..maxpooling import MaxPoolingModel, encode_attribute_pairs, train_maxpooling_model
+from ..maxpooling import MaxPoolingModel, train_maxpooling_model
+from ..models import MaxPoolingPredictor, PredictionBatch, TransformerPredictor
 from ..transformer import (
     SequenceClassifierConfig,
     TrainingResult,
-    encode_pair_cls,
-    load_trained_classifier,
     train_sequence_classifier,
 )
 from ..prepare_data import PreparedPair
@@ -127,43 +126,34 @@ def _train_fusion(
         raise RuntimeError("fusion training requires a trained max-pooling model")
 
     started_at = perf_counter()
-    tokenizer, transformer = load_trained_classifier(
+    transformer = TransformerPredictor.load(
         config.paths.model_dir,
+        batch_size=config.fusion.embedding_batch_size,
         device=config.runtime.device,
     )
-    embedding_batch_size = config.fusion.embedding_batch_size
-    train_cls = encode_pair_cls(
-        transformer,
-        tokenizer,
-        train_pairs,
-        batch_size=embedding_batch_size,
+    maxpooling = MaxPoolingPredictor(
+        model=maxpooling_model,
+        device=config.runtime.device,
     )
-    validation_cls = encode_pair_cls(
-        transformer,
-        tokenizer,
-        validation_pairs,
-        batch_size=embedding_batch_size,
+    train_batch = PredictionBatch(
+        items=items,
+        matches=train_matches,
+        pairs=train_pairs,
+        attributes_column=attributes_column,
     )
-
+    validation_batch = PredictionBatch(
+        items=items,
+        matches=validation_matches,
+        pairs=validation_pairs,
+        attributes_column=attributes_column,
+    )
     fusion_path = config.fusion.model_path
-    train_maxpooling = encode_attribute_pairs(
-        items,
-        train_matches,
-        maxpooling_model,
-        attributes_column=attributes_column,
-    )
-    validation_maxpooling = encode_attribute_pairs(
-        items,
-        validation_matches,
-        maxpooling_model,
-        attributes_column=attributes_column,
-    )
     fusion_result = train_fusion_classifier(
-        train_cls,
-        train_maxpooling,
+        transformer.encode(train_batch),
+        maxpooling.encode(train_batch),
         [int(pair.label) for pair in train_pairs],
-        validation_cls,
-        validation_maxpooling,
+        transformer.encode(validation_batch),
+        maxpooling.encode(validation_batch),
         [int(pair.label) for pair in validation_pairs],
         [pair.category for pair in validation_pairs],
         _fusion_config(config),

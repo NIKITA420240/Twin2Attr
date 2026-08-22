@@ -21,7 +21,12 @@ from sklearn.preprocessing import StandardScaler
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-__all__ = ["encode_attribute_pairs", "train_maxpooling_model"]
+__all__ = [
+    "MaxPoolingModel",
+    "encode_attribute_pairs",
+    "predict_maxpooling_probabilities",
+    "train_maxpooling_model",
+]
 
 
 _TRAIN_MATCH_COLUMNS = {"id1", "id2", "target"}
@@ -582,3 +587,39 @@ def encode_attribute_pairs(
         perf_counter() - started_at,
     )
     return result
+
+
+def predict_maxpooling_probabilities(
+    items: pl.DataFrame,
+    matches: pl.DataFrame,
+    model: MaxPoolingModel,
+    *,
+    attributes_column: str = "attributes",
+    batch_size: int = 512,
+    device: str | torch.device | None = None,
+) -> np.ndarray:
+    """Return positive-class probabilities from a fitted max-pooling model."""
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    features = encode_attribute_pairs(
+        items,
+        matches,
+        model,
+        attributes_column=attributes_column,
+    )
+    if not len(features):
+        return np.empty(0, dtype=np.float32)
+
+    scaled = model._scaler.transform(features).astype(np.float32, copy=False)
+    target_device = _resolve_device(device)
+    classifier = model._classifier.to(target_device).eval()
+    chunks: list[np.ndarray] = []
+    with torch.inference_mode():
+        for (feature_batch,) in DataLoader(
+            TensorDataset(torch.from_numpy(scaled)),
+            batch_size=min(batch_size, len(scaled)),
+            shuffle=False,
+        ):
+            logits = classifier(feature_batch.to(target_device))
+            chunks.append(torch.sigmoid(logits).float().cpu().numpy())
+    return np.concatenate(chunks).astype(np.float32, copy=False)

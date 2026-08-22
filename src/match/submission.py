@@ -9,8 +9,14 @@ from typing import Any, Mapping
 import numpy as np
 import polars as pl
 
+from .models import (
+    FusionPredictor,
+    MatchPredictor,
+    MaxPoolingPredictor,
+    PredictionBatch,
+    TransformerPredictor,
+)
 from .paths import PROJECT_ROOT
-from .prepare_data import prepare_pairs
 
 
 PAIR_COLUMNS = ("id1", "id2")
@@ -111,46 +117,55 @@ def _prepare_attributes(
     return normalized, output_column
 
 
-def _transformer_artifacts(
+def _load_predictor(
     solution: Mapping[str, Any],
     solution_root: Path,
-):
-    from .transformer import load_trained_classifier
+) -> MatchPredictor:
+    predictor_name = str(solution.get("predictor", "transformer"))
+    device = solution.get("device")
+    transformer: TransformerPredictor | None = None
+    if predictor_name in {"transformer", "fusion"}:
+        transformer = TransformerPredictor.load(
+            _resolve_from_solution(
+                solution.get("model_directory"),
+                root=solution_root,
+                name="model_directory",
+            ),
+            batch_size=int(solution.get("batch_size", 64)),
+            device=device,
+        )
+        if predictor_name == "transformer":
+            return transformer
 
-    model_directory = _resolve_from_solution(
-        solution.get("model_directory"),
-        root=solution_root,
-        name="model_directory",
-    )
-    return load_trained_classifier(model_directory, device=solution.get("device"))
+    maxpooling: MaxPoolingPredictor | None = None
+    if predictor_name in {"maxpooling", "fusion"}:
+        maxpooling = MaxPoolingPredictor.load(
+            _resolve_from_solution(
+                solution.get("maxpooling_path"),
+                root=solution_root,
+                name="maxpooling_path",
+            ),
+            batch_size=int(solution.get("maxpooling_batch_size", 512)),
+            device=device,
+        )
+        if predictor_name == "maxpooling":
+            return maxpooling
 
-
-def _maxpooling_embeddings(
-    items: pl.DataFrame,
-    matches: pl.DataFrame,
-    attributes_column: str,
-    solution: Mapping[str, Any],
-    solution_root: Path,
-) -> np.ndarray:
-    import joblib
-
-    from .maxpooling import MaxPoolingModel, encode_attribute_pairs
-
-    model_path = _resolve_from_solution(
-        solution.get("maxpooling_path"),
-        root=solution_root,
-        name="maxpooling_path",
-    )
-    model = joblib.load(model_path)
-    if not isinstance(model, MaxPoolingModel):
-        raise TypeError("maxpooling_path does not contain a MaxPoolingModel")
-
-    return encode_attribute_pairs(
-        items,
-        matches,
-        model,
-        attributes_column=attributes_column,
-    )
+    if predictor_name == "fusion":
+        if transformer is None or maxpooling is None:
+            raise RuntimeError("fusion predictor requires both pair encoders")
+        return FusionPredictor.load(
+            _resolve_from_solution(
+                solution.get("fusion_path"),
+                root=solution_root,
+                name="fusion_path",
+            ),
+            transformer=transformer,
+            maxpooling=maxpooling,
+            batch_size=int(solution.get("fusion_batch_size", 512)),
+            device=device,
+        )
+    raise ValueError(f"Unsupported predictor in solution.json: {predictor_name!r}")
 
 
 def _predict(
@@ -159,50 +174,13 @@ def _predict(
     solution: Mapping[str, Any],
     solution_root: Path,
 ) -> np.ndarray:
-    from .transformer import encode_pair_cls, predict_match_probabilities
-
     items, attributes_column = _prepare_attributes(items, solution, solution_root)
-    pairs = prepare_pairs(items, matches, attributes_column=attributes_column)
-    tokenizer, transformer = _transformer_artifacts(solution, solution_root)
-    batch_size = int(solution.get("batch_size", 64))
-    predictor = str(solution.get("predictor", "transformer"))
-
-    if predictor == "transformer":
-        return predict_match_probabilities(
-            transformer,
-            tokenizer,
-            pairs,
-            batch_size=batch_size,
-        )
-    if predictor == "fusion":
-        from .fusion import load_fusion_classifier, predict_fusion_probabilities
-
-        cls_embeddings = encode_pair_cls(
-            transformer,
-            tokenizer,
-            pairs,
-            batch_size=batch_size,
-        )
-        maxpooling_embeddings = _maxpooling_embeddings(
-            items,
-            matches,
-            attributes_column,
-            solution,
-            solution_root,
-        )
-        fusion_path = _resolve_from_solution(
-            solution.get("fusion_path"),
-            root=solution_root,
-            name="fusion_path",
-        )
-        fusion = load_fusion_classifier(fusion_path, device=solution.get("device"))
-        return predict_fusion_probabilities(
-            fusion,
-            cls_embeddings,
-            maxpooling_embeddings,
-            batch_size=int(solution.get("fusion_batch_size", 512)),
-        )
-    raise ValueError(f"Unsupported predictor in solution.json: {predictor!r}")
+    batch = PredictionBatch(
+        items=items,
+        matches=matches,
+        attributes_column=attributes_column,
+    )
+    return _load_predictor(solution, solution_root).predict_proba(batch)
 
 
 def create_submission(
