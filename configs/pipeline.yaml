@@ -3,8 +3,8 @@ training:
   model: transformer
 
 paths:
-  items: data/items.parquet
-  train_matches: data/train_matches.parquet
+  items: data/items_human.parquet
+  train_matches: data/matches.parquet
   validation_matches: data/validation_matches.parquet
   # Optional for inspect; train_matches is used when null.
   inspect_matches: null
