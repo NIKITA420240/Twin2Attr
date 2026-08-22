@@ -7,6 +7,7 @@ from typing import Any
 
 
 _EXPORTS = {
+    "AppConfig": (".config", "AppConfig"),
     "CONFIG_DIR": (".paths", "CONFIG_DIR"),
     "DATA_DIR": (".paths", "DATA_DIR"),
     "DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS": (
@@ -32,8 +33,10 @@ _EXPORTS = {
     "encode_pair_cls": (".transformer", "encode_pair_cls"),
     "encode_prepared_pair": (".pair_encoding", "encode_prepared_pair"),
     "infer_pair_max_length": (".pair_encoding", "infer_pair_max_length"),
-    "inspect_max_length": (".pipeline", "inspect_max_length"),
+    "inspect_max_length": (".workflows.inspect", "inspect_max_length"),
     "load_fusion_classifier": (".fusion", "load_fusion_classifier"),
+    "load_app_config": (".config", "load_app_config"),
+    "load_app_config_file": (".config", "load_app_config_file"),
     "load_trained_classifier": (".transformer", "load_trained_classifier"),
     "normalize_attributes": (".normalization", "normalize_attributes"),
     "predict_fusion_probabilities": (".fusion", "predict_fusion_probabilities"),
@@ -46,7 +49,7 @@ _EXPORTS = {
     "split_matches": (".data_split", "split_matches"),
     "train_fusion_classifier": (".fusion", "train_fusion_classifier"),
     "train_maxpooling_model": (".maxpooling", "train_maxpooling_model"),
-    "train_pipeline": (".pipeline", "train_pipeline"),
+    "train": (".workflows.train", "train"),
     "train_sequence_classifier": (".transformer", "train_sequence_classifier"),
     "validate_predefined_split": (".data_split", "validate_predefined_split"),
 }

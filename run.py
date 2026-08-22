@@ -3,7 +3,10 @@
 import argparse
 from pathlib import Path
 import sys
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
+
+if TYPE_CHECKING:
+    from match.config import AppConfig
 
 
 SOURCE_ROOT = Path(__file__).resolve().parent / "src"
@@ -26,7 +29,7 @@ def _add_config_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--config",
         default=DEFAULT_CONFIG,
-        help="Path to the base OmegaConf/Hydra YAML file",
+        help="Path to the base YAML configuration file",
     )
     parser.add_argument(
         "overrides",
@@ -84,22 +87,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return build_parser().parse_args(_with_default_command(arguments))
 
 
-def _load_pipeline_config(
+def _load_workflow_config(
     config_path: str,
     overrides: Sequence[str],
-):
-    from omegaconf import OmegaConf
+) -> "AppConfig":
+    from match.config import load_app_config_file
 
-    from match.paths import resolve_project_path
-
-    path = resolve_project_path(config_path)
-    if not path.is_file():
-        raise FileNotFoundError(f"Pipeline config does not exist: {path}")
-    config = OmegaConf.load(path)
-    clean_overrides = [value for value in overrides if value != "--"]
-    if clean_overrides:
-        config = OmegaConf.merge(config, OmegaConf.from_dotlist(clean_overrides))
-    return config
+    return load_app_config_file(config_path, overrides)
 
 
 def run_predict(args: argparse.Namespace) -> None:
@@ -116,21 +110,21 @@ def run_predict(args: argparse.Namespace) -> None:
 
 
 def run_train(args: argparse.Namespace) -> None:
-    """Load the training configuration and execute its ordered stages."""
-    from match.pipeline import train_pipeline
+    """Load the training configuration and execute its explicit workflow."""
+    from match.workflows.train import train
 
-    config = _load_pipeline_config(
+    config = _load_workflow_config(
         args.config,
         args.overrides,
     )
-    train_pipeline(config)
+    train(config)
 
 
 def run_inspect(args: argparse.Namespace) -> None:
     """Inspect the configured data and print the recommended pair length."""
-    from match.pipeline import inspect_max_length
+    from match.workflows.inspect import inspect_max_length
 
-    config = _load_pipeline_config(
+    config = _load_workflow_config(
         args.config,
         args.overrides,
     )
