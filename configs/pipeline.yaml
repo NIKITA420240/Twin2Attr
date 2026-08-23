@@ -5,7 +5,7 @@ training:
 # transformer | maxpooling | fusion | boosting | cascade
 inference:
   model: transformer
-  transformer_dir: weights/rubert-tiny2
+  transformer_dir: weights/rubert-base-cased
   maxpooling_path: models/twin2attr/maxpooling.joblib
   fusion_path: models/twin2attr/fusion.pt
   boosting_dir: models/twin2attr/boosting
