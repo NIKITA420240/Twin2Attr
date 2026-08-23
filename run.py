@@ -21,6 +21,10 @@ COMMANDS = {"train", "predict", "inspect"}
 DEFAULT_CONFIG = "configs/pipeline.yaml"
 POLARS_VERSION = "1.43.2"
 CATBOOST_VERSION = "1.2.10"
+PYMORPHY3_VERSION = "2.0.6"
+JOBLIB_VERSION = "1.5.3"
+LOGURU_VERSION = "0.7.3"
+PINT_VERSION = "0.25.3"
 
 
 def ensure_polars_available() -> None:
@@ -67,6 +71,105 @@ def ensure_polars_available() -> None:
     sys.path.insert(0, str(install_dir))
     importlib.invalidate_caches()
     importlib.import_module("polars")
+
+
+def ensure_preprocessing_runtime_available(
+    solution_path: str | Path | None = None,
+) -> None:
+    """Install the complete bundled runtime needed by item preprocessing."""
+    import json
+
+    path = (
+        Path(solution_path)
+        if solution_path is not None
+        else Path(__file__).resolve().parent / "solution.json"
+    ).expanduser().resolve()
+    if not path.is_file():
+        return
+    solution = json.loads(path.read_text(encoding="utf-8"))
+    normalization = solution.get("normalization")
+    features = solution.get("features")
+    physical = features.get("physical") if isinstance(features, dict) else None
+    needs_preprocessing_runtime = (
+        isinstance(normalization, dict)
+        and bool(normalization.get("enabled", False))
+    ) or (
+        isinstance(physical, dict)
+        and bool(physical.get("enabled", False))
+    )
+    if not needs_preprocessing_runtime:
+        return
+
+    runtime_modules = ("loguru", "joblib", "pint", "pymorphy3")
+    for module_name in runtime_modules:
+        try:
+            importlib.import_module(module_name)
+        except ModuleNotFoundError as error:
+            if error.name != module_name:
+                raise
+            break
+    else:
+        return
+
+    wheels_dir = Path(__file__).resolve().parent / "vendor_wheels"
+    required_patterns = (
+        "pymorphy3-*.whl",
+        "pymorphy3_dicts_ru-*.whl",
+        "dawg2_python-*.whl",
+        "setuptools-*.whl",
+        "joblib-*.whl",
+        "loguru-*.whl",
+        "Pint-*.whl",
+        "flexcache-*.whl",
+        "flexparser-*.whl",
+        "platformdirs-*.whl",
+        "typing_extensions-*.whl",
+        "colorama-*.whl",
+        "win32_setctime-*.whl",
+    )
+    missing = [
+        pattern for pattern in required_patterns if not any(wheels_dir.glob(pattern))
+    ]
+    if missing:
+        raise RuntimeError(
+            "item preprocessing dependencies are unavailable and bundled "
+            "wheels are missing from "
+            f"{wheels_dir}: {missing}"
+        )
+    tag = f"{sys.version_info.major}{sys.version_info.minor}"
+    install_dir = (
+        Path(tempfile.gettempdir())
+        / f"twin2attr_preprocessing_1_{tag}"
+    )
+    install_dir.mkdir(parents=True, exist_ok=True)
+    print(
+        "Item preprocessing dependencies are absent; "
+        f"installing bundled wheels into {install_dir}"
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--no-index",
+            "--find-links",
+            str(wheels_dir),
+            "--upgrade",
+            "--target",
+            str(install_dir),
+            f"pymorphy3=={PYMORPHY3_VERSION}",
+            f"joblib=={JOBLIB_VERSION}",
+            f"loguru=={LOGURU_VERSION}",
+            f"pint=={PINT_VERSION}",
+        ],
+        check=True,
+    )
+    sys.path.insert(0, str(install_dir))
+    importlib.invalidate_caches()
+    for module_name in runtime_modules:
+        importlib.import_module(module_name)
 
 
 def ensure_catboost_available(solution_path: str | Path | None = None) -> None:
@@ -206,6 +309,7 @@ def _load_workflow_config(
 def run_predict(args: argparse.Namespace) -> None:
     """Create a validated evaluator-compatible prediction CSV."""
     ensure_polars_available()
+    ensure_preprocessing_runtime_available(args.solution)
     ensure_catboost_available(args.solution)
 
     from match.submission import create_submission
