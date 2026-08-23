@@ -108,8 +108,10 @@ def _pair_special_token_count(tokenizer: PreTrainedTokenizerBase) -> int:
     """Return the pair-token overhead across Transformers tokenizer APIs.
 
     Transformers v5 tokenizer backends may omit the legacy pair-builder
-    methods and may not retain pair post-processor metadata. In that case a
-    BERT tokenizer still has an unambiguous ``[CLS] A [SEP] B [SEP]`` layout.
+    methods and may not retain pair post-processor metadata. In that case the
+    special-token names still distinguish BERT's
+    ``[CLS] A [SEP] B [SEP]`` layout from RoBERTa/XLM-R's
+    ``<s> A </s></s> B </s>`` layout.
     """
     build_inputs = getattr(tokenizer, "build_inputs_with_special_tokens", None)
     if callable(build_inputs):
@@ -129,9 +131,12 @@ def _pair_special_token_count(tokenizer: PreTrainedTokenizerBase) -> int:
     )
     if cls_token_id is not None and sep_token_id is not None and uses_bert_tokens:
         return 3
+    uses_roberta_tokens = cls_token == "<s>" and sep_token == "</s>"
+    if cls_token_id is not None and sep_token_id is not None and uses_roberta_tokens:
+        return 4
     raise ValueError(
-        "tokenizer without build_inputs_with_special_tokens must use "
-        "the BERT [CLS] A [SEP] B [SEP] layout"
+        "tokenizer without build_inputs_with_special_tokens must use a supported "
+        "BERT or RoBERTa/XLM-R pair layout"
     )
 
 
@@ -246,13 +251,28 @@ def _encode_prepared_pair(
         cls_token_id = tokenizer.cls_token_id
         sep_token_id = tokenizer.sep_token_id
         if cls_token_id is None or sep_token_id is None:
-            raise ValueError("BERT pair encoding requires CLS and SEP token ids")
-        if special_token_count != 3:
+            raise ValueError("pair encoding requires CLS and SEP token ids")
+        cls_token = getattr(tokenizer, "cls_token", None)
+        sep_token = getattr(tokenizer, "sep_token", None)
+        if special_token_count == 3 and cls_token in (None, "[CLS]") and sep_token in (
+            None,
+            "[SEP]",
+        ):
+            input_ids = [cls_token_id, *left_ids, sep_token_id, *right_ids, sep_token_id]
+        elif special_token_count == 4 and cls_token == "<s>" and sep_token == "</s>":
+            input_ids = [
+                cls_token_id,
+                *left_ids,
+                sep_token_id,
+                sep_token_id,
+                *right_ids,
+                sep_token_id,
+            ]
+        else:
             raise ValueError(
-                "tokenizer without build_inputs_with_special_tokens must use "
-                "the BERT [CLS] A [SEP] B [SEP] layout"
+                "tokenizer without build_inputs_with_special_tokens must use a "
+                "supported BERT or RoBERTa/XLM-R pair layout"
             )
-        input_ids = [cls_token_id, *left_ids, sep_token_id, *right_ids, sep_token_id]
     encoded: dict[str, list[int]] = {
         "input_ids": input_ids,
         "attention_mask": [1] * len(input_ids),
