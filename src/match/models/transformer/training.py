@@ -46,6 +46,7 @@ def _training_arguments(
         "gradient_accumulation_steps": config.gradient_accumulation_steps,
         "learning_rate": learning_rate,
         "weight_decay": weight_decay,
+        "optim": "adamw_torch",
         "max_grad_norm": config.max_grad_norm,
         "eval_strategy": "epoch",
         "save_strategy": "epoch",
