@@ -94,7 +94,11 @@ class AppConfigTests(unittest.TestCase):
             )
 
     def test_loads_disabled_ner_settings_without_artifacts(self) -> None:
-        ner = self.config.features.ner
+        config = load_app_config_file(
+            PROJECT_ROOT / "configs" / "pipeline.yaml",
+            ["features.ner.enabled=false"],
+        )
+        ner = config.features.ner
 
         self.assertFalse(ner.enabled)
         self.assertEqual(ner.provider, "word_ner")
