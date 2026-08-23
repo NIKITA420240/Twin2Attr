@@ -62,6 +62,24 @@ class UnifiedCliTests(unittest.TestCase):
             ["models_parameters.transformer.max_epochs=3", "split.mode=auto"],
         )
 
+    def test_parses_initialize_overrides(self) -> None:
+        args = parse_args(
+            [
+                "initialize",
+                "pair_encoding.max_length=64",
+                "artifacts.transformer_dir=models/initialized",
+            ]
+        )
+
+        self.assertEqual(args.command, "initialize")
+        self.assertEqual(
+            args.overrides,
+            [
+                "pair_encoding.max_length=64",
+                "artifacts.transformer_dir=models/initialized",
+            ],
+        )
+
     def test_bootstraps_bundled_polars_when_image_does_not_have_it(self) -> None:
         missing = ModuleNotFoundError("No module named 'polars'", name="polars")
         with (

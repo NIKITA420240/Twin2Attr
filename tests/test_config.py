@@ -22,8 +22,13 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(self.config.inference.model, "transformer")
         self.assertEqual(
             self.config.inference.transformer_dir,
-            PROJECT_ROOT / "weights" / "rubert-tiny2",
+            PROJECT_ROOT / "models" / "twin2attr" / "transformer",
         )
+        self.assertEqual(
+            self.config.models_parameters.transformer.pretrained_model_path,
+            "weights/distilrubert-small-cased-conversational",
+        )
+        self.assertFalse(self.config.pair_encoding.use_field_tokens)
         self.assertIsInstance(
             self.config.pair_encoding.max_attribute_value_tokens,
             int,
