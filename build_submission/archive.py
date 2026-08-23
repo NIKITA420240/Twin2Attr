@@ -143,6 +143,72 @@ def _validate_resource(path: Path) -> None:
         raise ValueError(f"unsupported submission artifact: {path}")
 
 
+def _validate_transformer_artifact(directory: Path) -> None:
+    """Reject raw language checkpoints before they reach the evaluator."""
+    config_path = directory / "config.json"
+    if not config_path.is_file():
+        raise FileNotFoundError(
+            f"trained Transformer config does not exist: {config_path}"
+        )
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as error:
+        raise ValueError(f"invalid Transformer config: {config_path}") from error
+    if not isinstance(config, dict):
+        raise ValueError(f"Transformer config must be a JSON object: {config_path}")
+
+    use_field_tokens = config.get("match_use_field_tokens")
+    max_length = config.get("match_max_length")
+    architectures = config.get("architectures")
+    is_sequence_classifier = isinstance(architectures, list) and any(
+        "SequenceClassifier" in str(name) or "SequenceClassification" in str(name)
+        for name in architectures
+    )
+    is_pooling_classifier = (
+        config.get("model_type") == "match_pooling_sequence_classifier"
+        or config.get("match_head_type") == "pooling"
+    )
+    if (
+        not isinstance(use_field_tokens, bool)
+        or not isinstance(max_length, int)
+        or max_length < 1
+        or not (is_sequence_classifier or is_pooling_classifier)
+    ):
+        raise ValueError(
+            "submission Transformer is not a trained Twin2Attr classifier: "
+            f"{directory}. Package the output of `run.py train`, not a raw "
+            "pretrained language model."
+        )
+
+    weight_patterns = (
+        "model.safetensors",
+        "model.safetensors.index.json",
+        "pytorch_model.bin",
+        "pytorch_model.bin.index.json",
+    )
+    if not any((directory / name).is_file() for name in weight_patterns):
+        raise FileNotFoundError(
+            f"trained Transformer weights are missing in {directory}"
+        )
+
+    if use_field_tokens:
+        from transformers import AutoTokenizer
+
+        from match.pair_encoding import _require_pair_special_tokens
+
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(
+                directory,
+                local_files_only=True,
+            )
+            _require_pair_special_tokens(tokenizer)
+        except (OSError, ValueError) as error:
+            raise ValueError(
+                "trained Transformer tokenizer is incompatible with its "
+                f"pair-encoding metadata: {directory}"
+            ) from error
+
+
 def _skip_file(path: Path, *, source_root: Path) -> bool:
     relative = path.relative_to(source_root)
     if any(part in _SKIPPED_DIRECTORY_NAMES for part in relative.parts):
@@ -258,6 +324,8 @@ def build_submission_archive(
     resources = _required_resources(config, artifacts)
     for resource in resources:
         _validate_resource(resource)
+    if artifacts.transformer_dir is not None:
+        _validate_transformer_artifact(artifacts.transformer_dir)
 
     solution = build_solution_manifest(
         config,

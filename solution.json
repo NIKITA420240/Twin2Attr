@@ -1,5 +1,14 @@
 {
   "predictor": "transformer",
-  "model_directory": "models/twin2attr/transformer",
-  "batch_size": 64
+  "model_directory": "models\\twin2attr\\transformer",
+  "batch_size": 256,
+  "normalization": {
+    "enabled": true,
+    "source_column": "attributes",
+    "output_column": "normalized_attributes",
+    "synonyms_path": "data\\synonyms.parquet",
+    "unique_attributes_path": "data\\unique_attributes.parquet",
+    "n_jobs": 4,
+    "chunk_size": 5000
+  }
 }
