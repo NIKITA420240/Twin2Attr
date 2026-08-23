@@ -26,6 +26,7 @@ from ...pair_encoding import (
 from ...prepare_data import PreparedPair
 from ..artifacts import TrainingArtifacts
 from .config import ResolvedTrainingConfig, SequenceClassifierConfig, TrainingResult
+from .head import PoolingHeadConfig
 from .metrics import compute_class_weights, compute_macro_pr_auc
 from .model import WeightedSequenceTrainer, model_factory
 
@@ -171,6 +172,8 @@ def train_sequence_classifier(
         config.model_path,
         tokenizer,
         use_field_tokens=config.use_field_tokens,
+        head_type=config.head_type,
+        head_config=config.head_config,
     )
     best_hyperparameters = {
         "learning_rate": config.learning_rate,
@@ -305,6 +308,13 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
         max_length_quantile=encoding.quantile,
         max_length_sample_size=encoding.sample_size,
         max_length_hard_cap=encoding.hard_cap,
+        head_type=parameters.head.type,
+        head_config=PoolingHeadConfig(
+            poolings=parameters.head.poolings,
+            mlp_hidden_dims=parameters.head.mlp_hidden_dims,
+            dropout=parameters.head.dropout,
+            attention_hidden_dim=parameters.head.attention_hidden_dim,
+        ),
     )
 
 

@@ -86,6 +86,22 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(parameters.train_batch_size, 16)
         self.assertEqual(parameters.gradient_accumulation_steps, 4)
 
+    def test_loads_composable_transformer_head(self) -> None:
+        head = self.config.models_parameters.transformer.head
+
+        self.assertEqual(head.type, "pooling")
+        self.assertEqual(head.poolings, ("cls", "mean", "attention"))
+        self.assertEqual(head.mlp_hidden_dims, (312,))
+        self.assertEqual(head.attention_hidden_dim, 156)
+
+    def test_can_select_original_transformer_head(self) -> None:
+        config = load_app_config_file(
+            PROJECT_ROOT / "configs" / "pipeline.yaml",
+            ["models_parameters.transformer.head.type=default"],
+        )
+
+        self.assertEqual(config.models_parameters.transformer.head.type, "default")
+
     def test_rejects_invalid_transformer_learning_rate(self) -> None:
         with self.assertRaisesRegex(ValueError, "optimizer parameters"):
             load_app_config_file(
