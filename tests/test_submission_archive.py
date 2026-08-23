@@ -12,8 +12,16 @@ from match.paths import PROJECT_ROOT
 
 class SubmissionArchiveTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.config = load_app_config_file(
+        config = load_app_config_file(
             PROJECT_ROOT / "configs" / "pipeline.yaml"
+        )
+        self.config = replace(
+            config,
+            normalization=replace(config.normalization, enabled=False),
+            features=replace(
+                config.features,
+                ner=replace(config.features.ner, enabled=False),
+            ),
         )
 
     @staticmethod

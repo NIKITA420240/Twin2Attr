@@ -200,13 +200,16 @@ def _convert_physical_value(value: str, from_unit: str, to_unit: str) -> float |
         number = float(value.replace(",", "."))
     except ValueError:
         return None
+    if not math.isfinite(number):
+        return None
     if from_unit == to_unit:
         return number
     conversion = _conversion(from_unit, to_unit)
     if conversion is None:
         return None
     scale, offset = conversion
-    return number * scale + offset
+    converted = number * scale + offset
+    return converted if math.isfinite(converted) else None
 
 
 def _format_number(value: float) -> str:
