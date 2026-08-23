@@ -1,0 +1,18 @@
+{
+  "model_name": "cointegrated/rubert-tiny2",
+  "class_names": [
+    "O",
+    "бренд",
+    "тип",
+    "модель",
+    "материал",
+    "цвет",
+    "размер",
+    "назначение",
+    "артикул"
+  ],
+  "num_attention_heads": 4,
+  "pos_dim": 16,
+  "max_subwords_per_word": 12,
+  "attention_hidden": 64
+}
