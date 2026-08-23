@@ -195,6 +195,47 @@ class PairEncodingSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class TransformerHeadParameters:
+    type: str = "default"
+    poolings: tuple[str, ...] = ("cls",)
+    mlp_hidden_dims: tuple[int, ...] = ()
+    dropout: float = 0.1
+    attention_hidden_dim: int | None = None
+
+    def __post_init__(self) -> None:
+        normalized_type = self.type.strip().lower()
+        if normalized_type not in {"default", "pooling"}:
+            raise ValueError("transformer.head.type must be 'default' or 'pooling'")
+        normalized_poolings = tuple(
+            pooling.strip().lower() for pooling in self.poolings
+        )
+        if not normalized_poolings:
+            raise ValueError("transformer.head.poolings must not be empty")
+        unknown = set(normalized_poolings) - {"cls", "mean", "max", "attention"}
+        if unknown:
+            raise ValueError(
+                "unsupported transformer.head.poolings: "
+                + ", ".join(sorted(unknown))
+            )
+        if len(set(normalized_poolings)) != len(normalized_poolings):
+            raise ValueError("transformer.head.poolings must be unique")
+        if any(dimension < 1 for dimension in self.mlp_hidden_dims):
+            raise ValueError("transformer.head.mlp_hidden_dims must be positive")
+        if not 0.0 <= self.dropout < 1.0:
+            raise ValueError("transformer.head.dropout must be in [0, 1)")
+        if self.attention_hidden_dim is not None and self.attention_hidden_dim < 1:
+            raise ValueError(
+                "transformer.head.attention_hidden_dim must be positive or null"
+            )
+        object.__setattr__(self, "type", normalized_type)
+        object.__setattr__(
+            self,
+            "poolings",
+            normalized_poolings,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class TransformerParameters:
     pretrained_model_path: str
     max_epochs: int
@@ -213,6 +254,7 @@ class TransformerParameters:
     early_stopping_patience: int
     auto_find_batch_size: bool
     batch_size: int
+    head: TransformerHeadParameters = TransformerHeadParameters()
 
     def __post_init__(self) -> None:
         if not self.pretrained_model_path.strip():
@@ -562,6 +604,10 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     encoding = _section(resolved, "pair_encoding")
     models_parameters = _section(resolved, "models_parameters")
     transformer = _section(models_parameters, "transformer")
+    transformer_head_value = transformer.get("head", {})
+    if not isinstance(transformer_head_value, Mapping):
+        raise ValueError("config section 'transformer.head' must be a mapping")
+    transformer_head = transformer_head_value
     maxpooling = _section(models_parameters, "maxpooling")
     fusion = _section(models_parameters, "fusion")
     boosting = _section(models_parameters, "boosting")
@@ -720,6 +766,21 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     "models_parameters.transformer.auto_find_batch_size",
                 ),
                 batch_size=int(_required(transformer, "batch_size")),
+                head=TransformerHeadParameters(
+                    type=str(transformer_head.get("type", "default")),
+                    poolings=tuple(
+                        str(value)
+                        for value in transformer_head.get("poolings", ("cls",))
+                    ),
+                    mlp_hidden_dims=tuple(
+                        int(value)
+                        for value in transformer_head.get("mlp_hidden_dims", ())
+                    ),
+                    dropout=float(transformer_head.get("dropout", 0.1)),
+                    attention_hidden_dim=_optional_int(
+                        transformer_head.get("attention_hidden_dim")
+                    ),
+                ),
             ),
             maxpooling=MaxPoolingParameters(
                 vector_size=int(_required(maxpooling, "vector_size")),
@@ -950,6 +1011,7 @@ __all__ = [
     "SubmissionSettings",
     "TrainingSettings",
     "TransformerParameters",
+    "TransformerHeadParameters",
     "load_app_config",
     "load_app_config_file",
     "save_app_config",

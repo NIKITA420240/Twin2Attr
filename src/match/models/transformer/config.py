@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...pair_encoding import DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS
+from .head import PoolingHeadConfig
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,8 @@ class SequenceClassifierConfig:
     max_length_quantile: float = 0.95
     max_length_sample_size: int = 10_000
     max_length_hard_cap: int = 512
+    head_type: str = "default"
+    head_config: PoolingHeadConfig = PoolingHeadConfig()
 
     def __post_init__(self) -> None:
         if not self.model_path.strip():
@@ -74,6 +77,8 @@ class SequenceClassifierConfig:
             raise ValueError("max_length_sample_size must be positive")
         if self.max_length_hard_cap < 8:
             raise ValueError("max_length_hard_cap must be at least 8")
+        if self.head_type not in {"default", "pooling"}:
+            raise ValueError("head_type must be 'default' or 'pooling'")
 
 
 @dataclass(frozen=True)
