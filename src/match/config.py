@@ -94,6 +94,7 @@ class TransformerHeadParameters:
     mlp_hidden_dims: tuple[int, ...] = ()
     dropout: float = 0.1
     attention_hidden_dim: int | None = None
+    attention_num_heads: int = 1
 
     def __post_init__(self) -> None:
         normalized_type = self.type.strip().lower()
@@ -119,6 +120,10 @@ class TransformerHeadParameters:
         if self.attention_hidden_dim is not None and self.attention_hidden_dim < 1:
             raise ValueError(
                 "transformer.head.attention_hidden_dim must be positive or null"
+            )
+        if self.attention_num_heads < 1:
+            raise ValueError(
+                "transformer.head.attention_num_heads must be positive"
             )
         object.__setattr__(self, "type", normalized_type)
         object.__setattr__(
@@ -147,6 +152,9 @@ class TransformerParameters:
     early_stopping_patience: int
     auto_find_batch_size: bool
     batch_size: int
+    embeddings_learning_rate: float | None = None
+    head_learning_rate: float | None = None
+    layerwise_lr_decay: float = 1.0
     head: TransformerHeadParameters = TransformerHeadParameters()
 
     def __post_init__(self) -> None:
@@ -155,6 +163,15 @@ class TransformerParameters:
         if self.max_epochs < 1 or self.hpo_trials < 1:
             raise ValueError("transformer epoch and HPO counts must be positive")
         if self.learning_rate <= 0.0 or self.weight_decay < 0.0:
+            raise ValueError("transformer optimizer parameters are invalid")
+        if (
+            self.embeddings_learning_rate is not None
+            and self.embeddings_learning_rate <= 0.0
+        ):
+            raise ValueError("transformer optimizer parameters are invalid")
+        if self.head_learning_rate is not None and self.head_learning_rate <= 0.0:
+            raise ValueError("transformer optimizer parameters are invalid")
+        if not 0.0 < self.layerwise_lr_decay <= 1.0:
             raise ValueError("transformer optimizer parameters are invalid")
         if not 0.0 < self.hpo_learning_rate_min < self.hpo_learning_rate_max:
             raise ValueError("transformer HPO learning-rate bounds are invalid")
@@ -559,6 +576,19 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 max_epochs=int(_required(transformer, "max_epochs")),
                 hpo_trials=int(_required(transformer, "hpo_trials")),
                 learning_rate=float(_required(transformer, "learning_rate")),
+                embeddings_learning_rate=(
+                    None
+                    if transformer.get("embeddings_learning_rate") is None
+                    else float(transformer["embeddings_learning_rate"])
+                ),
+                head_learning_rate=(
+                    None
+                    if transformer.get("head_learning_rate") is None
+                    else float(transformer["head_learning_rate"])
+                ),
+                layerwise_lr_decay=float(
+                    transformer.get("layerwise_lr_decay", 1.0)
+                ),
                 weight_decay=float(_required(transformer, "weight_decay")),
                 hpo_learning_rate_min=float(
                     _required(transformer, "hpo_learning_rate_min")
@@ -604,6 +634,9 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     dropout=float(transformer_head.get("dropout", 0.1)),
                     attention_hidden_dim=_optional_int(
                         transformer_head.get("attention_hidden_dim")
+                    ),
+                    attention_num_heads=int(
+                        transformer_head.get("attention_num_heads", 1)
                     ),
                 ),
             ),

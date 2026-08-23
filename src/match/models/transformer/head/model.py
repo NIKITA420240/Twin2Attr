@@ -28,12 +28,17 @@ class TransformerPoolingHead(nn.Module):
                 branches[name] = AttentionPooling(
                     hidden_size,
                     config.attention_hidden_dim,
+                    config.attention_num_heads,
                 )
             else:
                 branches[name] = factories[name]()
         self.poolings = nn.ModuleDict(branches)
 
-        dimensions = [hidden_size * len(config.poolings), *config.mlp_hidden_dims]
+        pooled_width = hidden_size * sum(
+            config.attention_num_heads if name == "attention" else 1
+            for name in config.poolings
+        )
+        dimensions = [pooled_width, *config.mlp_hidden_dims]
         layers: list[nn.Module] = [nn.Dropout(config.dropout)]
         for input_dim, output_dim in zip(dimensions, dimensions[1:]):
             layers.extend(

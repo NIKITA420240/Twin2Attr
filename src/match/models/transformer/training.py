@@ -28,6 +28,7 @@ from .config import ResolvedTrainingConfig, SequenceClassifierConfig, TrainingRe
 from .head import PoolingHeadConfig
 from .metrics import compute_class_weights, compute_macro_pr_auc
 from .model import WeightedSequenceTrainer, model_factory
+from .optimizer import LearningRateMultipliers
 
 
 def _training_arguments(
@@ -175,6 +176,12 @@ def train_sequence_classifier(
         "learning_rate": config.learning_rate,
         "weight_decay": config.weight_decay,
     }
+    learning_rate_multipliers = LearningRateMultipliers.from_learning_rates(
+        embeddings_lr=config.resolved_embeddings_learning_rate,
+        backbone_lr=config.learning_rate,
+        head_lr=config.resolved_head_learning_rate,
+        layerwise_decay=config.layerwise_lr_decay,
+    )
     validation_metric = partial(
         compute_macro_pr_auc,
         categories=validation_categories,
@@ -192,6 +199,7 @@ def train_sequence_classifier(
             data_collator=collator,
             compute_metrics=validation_metric,
             class_weights=class_weights,
+            learning_rate_multipliers=learning_rate_multipliers,
         )
         best_run = hpo_trainer.hyperparameter_search(
             backend="optuna",
@@ -226,6 +234,7 @@ def train_sequence_classifier(
             )
         ],
         class_weights=class_weights,
+        learning_rate_multipliers=learning_rate_multipliers,
     )
     trainer.train()
     metrics = trainer.evaluate()
@@ -251,6 +260,14 @@ def train_sequence_classifier(
         eval_batch_size=training_arguments.per_device_eval_batch_size,
         gradient_accumulation_steps=training_arguments.gradient_accumulation_steps,
         learning_rate=best_hyperparameters["learning_rate"],
+        embeddings_learning_rate=(
+            best_hyperparameters["learning_rate"]
+            * learning_rate_multipliers.embeddings
+        ),
+        head_learning_rate=(
+            best_hyperparameters["learning_rate"] * learning_rate_multipliers.head
+        ),
+        layerwise_lr_decay=learning_rate_multipliers.layerwise_decay,
         weight_decay=best_hyperparameters["weight_decay"],
         use_field_tokens=config.use_field_tokens,
         max_attribute_value_tokens=config.max_attribute_value_tokens,
@@ -285,6 +302,9 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
         max_epochs=parameters.max_epochs,
         hpo_trials=parameters.hpo_trials,
         learning_rate=parameters.learning_rate,
+        embeddings_learning_rate=parameters.embeddings_learning_rate,
+        head_learning_rate=parameters.head_learning_rate,
+        layerwise_lr_decay=parameters.layerwise_lr_decay,
         weight_decay=parameters.weight_decay,
         hpo_learning_rate_min=parameters.hpo_learning_rate_min,
         hpo_learning_rate_max=parameters.hpo_learning_rate_max,
@@ -310,6 +330,7 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
             mlp_hidden_dims=parameters.head.mlp_hidden_dims,
             dropout=parameters.head.dropout,
             attention_hidden_dim=parameters.head.attention_hidden_dim,
+            attention_num_heads=parameters.head.attention_num_heads,
         ),
     )
 

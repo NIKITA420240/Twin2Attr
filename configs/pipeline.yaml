@@ -54,7 +54,13 @@ models_parameters:
     max_epochs: 15
     hpo_trials: 1
     # Used directly when hpo_trials=1; otherwise these are initial values.
+    # Base LR for Transformer encoder layers and the value tuned by HPO.
     learning_rate: 0.0000145034306017893
+    # Embeddings change more conservatively; the newly initialized head learns faster.
+    embeddings_learning_rate: 0.000005
+    head_learning_rate: 0.00003
+    # 1.0 keeps the same LR on every encoder layer; try 0.8 after the baseline.
+    layerwise_lr_decay: 1.0
     weight_decay: 0.0008071667762206581
     hpo_learning_rate_min: 0.000001
     hpo_learning_rate_max: 0.00005
@@ -78,6 +84,8 @@ models_parameters:
       mlp_hidden_dims: [312]
       dropout: 0.15
       attention_hidden_dim: 156
+      # Independent learned token-importance distributions, concatenated before MLP.
+      attention_num_heads: 2
 
   maxpooling:
     vector_size: 256

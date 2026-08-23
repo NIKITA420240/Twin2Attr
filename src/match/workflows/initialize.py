@@ -48,6 +48,7 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
         mlp_hidden_dims=parameters.head.mlp_hidden_dims,
         dropout=parameters.head.dropout,
         attention_hidden_dim=parameters.head.attention_hidden_dim,
+        attention_num_heads=parameters.head.attention_num_heads,
     )
 
     with workflow_logging(config, workflow_name="initialize"):
