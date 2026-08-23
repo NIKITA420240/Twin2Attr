@@ -51,7 +51,7 @@ pair_encoding:
 models_parameters:
   transformer:
     pretrained_model_path: models/rubert-tiny2
-    max_epochs: 5
+    max_epochs: 15
     hpo_trials: 1
     # Used directly when hpo_trials=1; otherwise these are initial values.
     learning_rate: 0.0000145034306017893
@@ -120,7 +120,7 @@ artifacts:
 
 features:
   ner:
-    enabled: true
+    enabled: false
     provider: word_ner
     model_dir: models/ner/rubert_tiny2_word_ner
     cluster_centers_path: models/ner/cluster_centers.pt
