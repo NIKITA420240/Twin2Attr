@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -24,6 +25,7 @@ from ...pair_encoding import (
 )
 from ...prepare_data import PreparedPair
 from ..contracts import PredictionBatch
+from .head import PoolingSequenceClassifier, PoolingSequenceClassifierConfig
 
 
 def _resolve_device(device: str | torch.device | None = None) -> torch.device:
@@ -43,7 +45,12 @@ def load_trained_classifier(
 ) -> tuple[PreTrainedTokenizerBase, PreTrainedModel]:
     target_device = _resolve_device(device)
     tokenizer = AutoTokenizer.from_pretrained(model_dir, use_fast=True)
-    model = AutoModelForSequenceClassification.from_pretrained(model_dir)
+    config_path = Path(model_dir) / "config.json"
+    config_values = json.loads(config_path.read_text(encoding="utf-8"))
+    if config_values.get("model_type") == PoolingSequenceClassifierConfig.model_type:
+        model = PoolingSequenceClassifier.from_pretrained(model_dir)
+    else:
+        model = AutoModelForSequenceClassification.from_pretrained(model_dir)
     model.to(target_device).eval()
     return tokenizer, model
 

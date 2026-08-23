@@ -69,6 +69,15 @@ models_parameters:
     auto_find_batch_size: true
     # Batch size used by predict after the trained model is loaded.
     batch_size: 256
+    head:
+      # default keeps the Hugging Face CLS head; pooling builds the branches below.
+      type: pooling
+      # Supported values: cls, mean, max, attention. Their outputs are concatenated.
+      poolings: [cls, mean, attention]
+      # Empty list gives a single linear classifier after pooling.
+      mlp_hidden_dims: [312]
+      dropout: 0.15
+      attention_hidden_dim: 156
 
   maxpooling:
     vector_size: 256

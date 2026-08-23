@@ -14,6 +14,7 @@ from transformers import (
 )
 
 from ...pair_encoding import add_pair_special_tokens
+from .head import PoolingHeadConfig, PoolingSequenceClassifier
 
 
 class WeightedSequenceTrainer(Trainer):
@@ -44,16 +45,29 @@ def model_factory(
     tokenizer: PreTrainedTokenizerBase,
     *,
     use_field_tokens: bool,
+    head_type: str = "default",
+    head_config: PoolingHeadConfig | None = None,
 ):
     def initialize_model(trial: Any | None = None) -> PreTrainedModel:
         del trial
-        model = AutoModelForSequenceClassification.from_pretrained(
-            model_path,
-            num_labels=2,
-            id2label={0: "different", 1: "match"},
-            label2id={"different": 0, "match": 1},
-            ignore_mismatched_sizes=True,
-        )
+        if head_type == "pooling":
+            model = PoolingSequenceClassifier.from_backbone_pretrained(
+                model_path,
+                head_config=head_config or PoolingHeadConfig(),
+                num_labels=2,
+                id2label={0: "different", 1: "match"},
+                label2id={"different": 0, "match": 1},
+            )
+        elif head_type == "default":
+            model = AutoModelForSequenceClassification.from_pretrained(
+                model_path,
+                num_labels=2,
+                id2label={0: "different", 1: "match"},
+                label2id={"different": 0, "match": 1},
+                ignore_mismatched_sizes=True,
+            )
+        else:
+            raise ValueError("head_type must be 'default' or 'pooling'")
         if use_field_tokens:
             add_pair_special_tokens(tokenizer, model)
         return model
