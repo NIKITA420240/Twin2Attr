@@ -87,9 +87,13 @@ def ensure_preprocessing_runtime_available(
     if not path.is_file():
         return
     solution = json.loads(path.read_text(encoding="utf-8"))
-    normalization = solution.get("normalization")
     features = solution.get("features")
-    physical = features.get("physical") if isinstance(features, dict) else None
+    feature_values = features if isinstance(features, dict) else {}
+    normalization = feature_values.get(
+        "normalization",
+        solution.get("normalization"),
+    )
+    physical = feature_values.get("physical")
     needs_preprocessing_runtime = (
         isinstance(normalization, dict)
         and bool(normalization.get("enabled", False))

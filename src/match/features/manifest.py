@@ -5,7 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping
 
-from ..config import FeatureSettings, NerSettings, PhysicalFeatureSettings
+from ..config import (
+    FeatureSettings,
+    NerSettings,
+    NormalizationSettings,
+    PhysicalFeatureSettings,
+)
 
 
 def _path(value: Any, *, root: Path, name: str) -> Path | None:
@@ -18,12 +23,44 @@ def _path(value: Any, *, root: Path, name: str) -> Path | None:
 def feature_settings_from_manifest(
     values: Mapping[str, Any],
     solution_root: Path,
+    *,
+    legacy_normalization: Mapping[str, Any] | None = None,
 ) -> FeatureSettings:
+    normalization_values = values.get("normalization")
+    normalization = (
+        normalization_values
+        if isinstance(normalization_values, Mapping)
+        else legacy_normalization or {}
+    )
     ner_values = values.get("ner")
     ner = ner_values if isinstance(ner_values, Mapping) else {}
     physical_values = values.get("physical")
     physical = physical_values if isinstance(physical_values, Mapping) else {}
     return FeatureSettings(
+        normalization=NormalizationSettings(
+            enabled=bool(normalization.get("enabled", False)),
+            source_column=str(normalization.get("source_column", "attributes")),
+            output_column=str(
+                normalization.get("output_column", "normalized_attributes")
+            ),
+            synonyms_path=_path(
+                normalization.get("synonyms_path", "data/synonyms.parquet"),
+                root=solution_root,
+                name="features.normalization.synonyms_path",
+            )
+            or solution_root / "data/synonyms.parquet",
+            unique_attributes_path=_path(
+                normalization.get(
+                    "unique_attributes_path",
+                    "data/unique_attributes.parquet",
+                ),
+                root=solution_root,
+                name="features.normalization.unique_attributes_path",
+            )
+            or solution_root / "data/unique_attributes.parquet",
+            n_jobs=int(normalization.get("n_jobs", 1)),
+            chunk_size=int(normalization.get("chunk_size", 5_000)),
+        ),
         ner=NerSettings(
             enabled=bool(ner.get("enabled", False)),
             provider=None if ner.get("provider") is None else str(ner["provider"]),

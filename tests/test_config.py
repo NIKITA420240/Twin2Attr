@@ -22,6 +22,11 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(self.config.training.model, "transformer")
         self.assertEqual(self.config.training.data_model, "base_dataset")
         self.assertEqual(self.config.inference.model, "transformer")
+        self.assertTrue(self.config.features.normalization.enabled)
+        self.assertEqual(
+            self.config.features.normalization.output_column,
+            "normalized_attributes",
+        )
         self.assertEqual(
             self.config.inference.transformer_dir,
             PROJECT_ROOT / "weights" / "rubert-tiny2",

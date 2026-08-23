@@ -14,7 +14,7 @@ from ..prepare_data import PreparedPair
 
 
 def normalization_enabled(config: AppConfig) -> bool:
-    return config.normalization.enabled
+    return config.features.normalization.enabled
 
 
 def resolve_max_length(
