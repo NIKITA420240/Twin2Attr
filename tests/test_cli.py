@@ -1,8 +1,16 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import run as run_module
-from run import _with_default_command, ensure_polars_available, parse_args
+from run import (
+    _with_default_command,
+    ensure_polars_available,
+    ensure_preprocessing_runtime_available,
+    parse_args,
+)
 
 
 class UnifiedCliTests(unittest.TestCase):
@@ -80,6 +88,53 @@ class UnifiedCliTests(unittest.TestCase):
         self.assertIn("--no-index", command)
         self.assertIn("polars==1.43.2", command)
         self.assertEqual(import_module.call_count, 2)
+
+    def test_bootstraps_bundled_preprocessing_runtime(self) -> None:
+        missing = ModuleNotFoundError("No module named 'loguru'", name="loguru")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            wheels = root / "vendor_wheels"
+            wheels.mkdir()
+            for name in (
+                "pymorphy3-2.0.6-py3-none-any.whl",
+                "pymorphy3_dicts_ru-2.4.417150.4580142-py2.py3-none-any.whl",
+                "dawg2_python-0.9.0-py3-none-any.whl",
+                "setuptools-84.0.0-py3-none-any.whl",
+                "joblib-1.5.3-py3-none-any.whl",
+                "loguru-0.7.3-py3-none-any.whl",
+                "Pint-0.25.3-py3-none-any.whl",
+                "flexcache-0.3-py3-none-any.whl",
+                "flexparser-0.4-py3-none-any.whl",
+                "platformdirs-4.11.3-py3-none-any.whl",
+                "typing_extensions-4.16.0-py3-none-any.whl",
+                "colorama-0.4.6-py2.py3-none-any.whl",
+                "win32_setctime-1.2.0-py3-none-any.whl",
+            ):
+                (wheels / name).write_bytes(b"wheel")
+            solution = root / "solution.json"
+            solution.write_text(
+                json.dumps({"normalization": {"enabled": True}}),
+                encoding="utf-8",
+            )
+            with (
+                patch.object(
+                    run_module.importlib,
+                    "import_module",
+                    side_effect=[missing, object(), object(), object(), object()],
+                ) as import_module,
+                patch.object(run_module.subprocess, "run") as install,
+                patch.object(run_module.sys, "path", list(run_module.sys.path)),
+                patch.object(run_module, "__file__", str(root / "run.py")),
+            ):
+                ensure_preprocessing_runtime_available(solution)
+
+        command = install.call_args.args[0]
+        self.assertIn("--no-index", command)
+        self.assertIn("pymorphy3==2.0.6", command)
+        self.assertIn("joblib==1.5.3", command)
+        self.assertIn("loguru==0.7.3", command)
+        self.assertIn("pint==0.25.3", command)
+        self.assertEqual(import_module.call_count, 5)
 
 
 if __name__ == "__main__":
