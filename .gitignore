@@ -1,4 +1,6 @@
-/data/
+/data/*
+!/data/synonyms.parquet
+!/data/unique_attributes.parquet
 /models/
 /.cache/
 /.hydra/
