@@ -20,9 +20,10 @@ from ._common import workflow_logging
 
 def _training_match_paths(config: AppConfig) -> TrainingMatchPaths:
     split = config.split
+    data = config.training.data
     return TrainingMatchPaths(
-        source=config.paths.train_matches,
-        validation=config.paths.validation_matches,
+        source=data.train_matches,
+        validation=data.validation_matches,
         generated_train=split.train_output_path,
         generated_validation=split.validation_output_path,
     )
@@ -41,7 +42,7 @@ def _data_split_config(config: AppConfig) -> DataSplitConfig:
 def train(config: AppConfig) -> TrainingArtifacts:
     """Prepare data, train the selected model and persist its manifest."""
     with workflow_logging(config, workflow_name="train"):
-        items = read_parquet(config.paths.items, label="items")
+        items = read_parquet(config.training.data.items, label="items")
         prepared_items = prepare_configured_items(items, config)
         items = prepared_items.frame
         attributes_column = prepared_items.attributes_column

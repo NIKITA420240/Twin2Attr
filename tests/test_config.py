@@ -15,8 +15,8 @@ class AppConfigTests(unittest.TestCase):
 
     def test_loads_resolved_typed_config(self) -> None:
         self.assertIsInstance(self.config, AppConfig)
-        self.assertIsInstance(self.config.paths.items, Path)
-        self.assertTrue(self.config.paths.items.is_absolute())
+        self.assertIsInstance(self.config.training.data.items, Path)
+        self.assertTrue(self.config.training.data.items.is_absolute())
         self.assertEqual(self.config.split.seed, self.config.runtime.seed)
         self.assertEqual(self.config.training.model, "transformer")
         self.assertEqual(self.config.inference.model, "transformer")

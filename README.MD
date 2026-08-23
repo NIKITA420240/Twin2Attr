@@ -101,15 +101,16 @@ uv run python run.py train \
 ```
 
 Разделение данных настраивается через `split`. В режиме `predefined` pipeline
-читает готовые `paths.train_matches` и `paths.validation_matches` и проверяет
-утечки. В режиме `auto` файл `paths.train_matches` считается полным набором
-размеченных пар, после чего создаётся group-aware split с сохранением
-распределения `category × target`:
+читает готовые `training.data.train_matches` и
+`training.data.validation_matches` и проверяет утечки. В режиме `auto` файл
+`training.data.train_matches` считается полным набором размеченных пар, после
+чего создаётся group-aware split с сохранением распределения
+`category × target`:
 
 ```bash
 uv run python run.py train \
-  paths.items=data/items_human.parquet \
-  paths.train_matches=data/matches.parquet \
+  training.data.items=data/items_human.parquet \
+  training.data.train_matches=data/matches.parquet \
   split.mode=auto \
   split.leakage_scope=item \
   split.validation_fraction=0.2
