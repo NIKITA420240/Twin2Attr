@@ -51,15 +51,6 @@ inference:
   fusion_path: models/twin2attr/fusion.pt
   boosting_dir: models/twin2attr/boosting
 
-normalization:
-  enabled: true
-  source_column: attributes
-  output_column: normalized_attributes
-  synonyms_path: data/synonyms.parquet
-  unique_attributes_path: data/unique_attributes.parquet
-  n_jobs: 4
-  chunk_size: 5000
-
 pair_encoding:
   use_field_tokens: true
   # null disables per-attribute value truncation.
@@ -149,6 +140,14 @@ artifacts:
   solution_path: solution.json
 
 features:
+  normalization:
+    enabled: true
+    source_column: attributes
+    output_column: normalized_attributes
+    synonyms_path: data/synonyms.parquet
+    unique_attributes_path: data/unique_attributes.parquet
+    n_jobs: 4
+    chunk_size: 5000
   ner:
     enabled: true
     provider: word_ner

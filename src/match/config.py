@@ -435,6 +435,7 @@ class PhysicalFeatureSettings:
 
 @dataclass(frozen=True, slots=True)
 class FeatureSettings:
+    normalization: NormalizationSettings
     ner: NerSettings
     physical: PhysicalFeatureSettings
 
@@ -462,7 +463,6 @@ class AppConfig:
     training: TrainingSettings
     data_model_description: DataModelDescriptionSettings
     inference: InferenceSettings
-    normalization: NormalizationSettings
     pair_encoding: PairEncodingSettings
     models_parameters: ModelsParametersSettings
     artifacts: ArtifactSettings
@@ -600,7 +600,6 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     if not isinstance(inference_value, Mapping):
         raise ValueError("config section 'inference' must be a mapping")
     inference = inference_value
-    normalization = _section(resolved, "normalization")
     encoding = _section(resolved, "pair_encoding")
     models_parameters = _section(resolved, "models_parameters")
     transformer = _section(models_parameters, "transformer")
@@ -614,6 +613,13 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     cascade = _section(models_parameters, "cascade")
     artifacts = _section(resolved, "artifacts")
     features = _section(resolved, "features")
+    normalization_value = features.get(
+        "normalization",
+        resolved.get("normalization"),
+    )
+    if not isinstance(normalization_value, Mapping):
+        raise ValueError("config section 'features.normalization' must be a mapping")
+    normalization = normalization_value
     ner = _section(features, "ner")
     physical = _section(features, "physical")
     runtime = _section(resolved, "runtime")
@@ -694,24 +700,6 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 ),
                 "inference.boosting_dir",
             ),
-        ),
-        normalization=NormalizationSettings(
-            enabled=_bool(
-                normalization.get("enabled", False),
-                "normalization.enabled",
-            ),
-            source_column=str(_required(normalization, "source_column")),
-            output_column=str(_required(normalization, "output_column")),
-            synonyms_path=_path(
-                _required(normalization, "synonyms_path"),
-                "normalization.synonyms_path",
-            ),
-            unique_attributes_path=_path(
-                _required(normalization, "unique_attributes_path"),
-                "normalization.unique_attributes_path",
-            ),
-            n_jobs=int(_required(normalization, "n_jobs")),
-            chunk_size=int(_required(normalization, "chunk_size")),
         ),
         pair_encoding=PairEncodingSettings(
             use_field_tokens=_bool(
@@ -857,6 +845,24 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             ),
         ),
         features=FeatureSettings(
+            normalization=NormalizationSettings(
+                enabled=_bool(
+                    normalization.get("enabled", False),
+                    "features.normalization.enabled",
+                ),
+                source_column=str(_required(normalization, "source_column")),
+                output_column=str(_required(normalization, "output_column")),
+                synonyms_path=_path(
+                    _required(normalization, "synonyms_path"),
+                    "features.normalization.synonyms_path",
+                ),
+                unique_attributes_path=_path(
+                    _required(normalization, "unique_attributes_path"),
+                    "features.normalization.unique_attributes_path",
+                ),
+                n_jobs=int(_required(normalization, "n_jobs")),
+                chunk_size=int(_required(normalization, "chunk_size")),
+            ),
             ner=NerSettings(
                 enabled=_bool(
                     ner.get("enabled", False),

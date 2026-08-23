@@ -90,24 +90,26 @@ def build_solution_manifest(
         solution["main_model"] = cascade.main_model
         solution["negative_threshold"] = cascade.negative_threshold
         solution["positive_threshold"] = cascade.positive_threshold
+    normalization = config.features.normalization
     normalization_solution: dict[str, object] = {
-        "enabled": config.normalization.enabled,
-        "source_column": config.normalization.source_column,
-        "output_column": config.normalization.output_column,
+        "enabled": normalization.enabled,
+        "source_column": normalization.source_column,
+        "output_column": normalization.output_column,
     }
-    if config.normalization.enabled:
+    if normalization.enabled:
         normalization_solution.update(
             {
-                "synonyms_path": map_path(config.normalization.synonyms_path),
+                "synonyms_path": map_path(normalization.synonyms_path),
                 "unique_attributes_path": map_path(
-                    config.normalization.unique_attributes_path
+                    normalization.unique_attributes_path
                 ),
-                "n_jobs": config.normalization.n_jobs,
-                "chunk_size": config.normalization.chunk_size,
+                "n_jobs": normalization.n_jobs,
+                "chunk_size": normalization.chunk_size,
             }
         )
-    solution["normalization"] = normalization_solution
-    features_solution: dict[str, object] = {}
+    features_solution: dict[str, object] = {
+        "normalization": normalization_solution,
+    }
     if config.features.ner.enabled:
         ner = config.features.ner
         if ner.model_dir is None:

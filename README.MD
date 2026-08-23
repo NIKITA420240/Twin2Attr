@@ -98,7 +98,7 @@ uv run python run.py inspect
 
 ```bash
 uv run python run.py train \
-  normalization.enabled=true \
+  features.normalization.enabled=true \
   pair_encoding.max_attribute_value_tokens=48 \
   pair_encoding.max_length=256
 ```
@@ -136,7 +136,8 @@ uv run python run.py train training.data_model=mix_dataset
 автоматически обучает Transformer, MaxPooling и объединяющий классификатор.
 `cascade` доступен только в `inference.model`: он использует уже независимо
 обученные CatBoost и Transformer и сам не обучается.
-Нормализация отдельно управляется флагом `normalization.enabled`. Например:
+Нормализация является первым этапом feature pipeline и управляется флагом
+`features.normalization.enabled`. Например:
 
 ```bash
 uv run python run.py train \
