@@ -130,6 +130,12 @@ class PoolingSequenceClassifier(PreTrainedModel):
         backbone_kwargs = dict(kwargs)
         if token_type_ids is not None:
             backbone_kwargs["token_type_ids"] = token_type_ids
+        # Pooling only needs the final contextual representation. Some
+        # pretrained configs enable these diagnostic outputs by default;
+        # returning them makes Trainer retain every layer and attention map
+        # throughout evaluation, which can exhaust GPU memory.
+        backbone_kwargs["output_hidden_states"] = False
+        backbone_kwargs["output_attentions"] = False
         outputs = self.backbone(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -144,18 +150,11 @@ class PoolingSequenceClassifier(PreTrainedModel):
             self.config.use_return_dict if return_dict is None else return_dict
         )
         if not use_return_dict:
-            optional_outputs = tuple(
-                value
-                for value in (outputs.hidden_states, outputs.attentions)
-                if value is not None
-            )
-            result = (logits, *optional_outputs)
+            result = (logits,)
             return (loss, *result) if loss is not None else result
         return SequenceClassifierOutput(
             loss=loss,
             logits=logits,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
         )
 
 

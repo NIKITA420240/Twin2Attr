@@ -116,6 +116,8 @@ class TransformerPoolingHeadTests(unittest.TestCase):
                     num_attention_heads=2,
                     intermediate_size=16,
                     max_position_embeddings=32,
+                    output_hidden_states=True,
+                    output_attentions=True,
                 )
             ).save_pretrained(checkpoint)
             default_model = model_factory(
@@ -144,6 +146,9 @@ class TransformerPoolingHeadTests(unittest.TestCase):
                 "token_type_ids": torch.tensor([[0, 0, 0, 1, 1]]),
             }
             expected = model(**inputs).logits
+            outputs = model(**inputs)
+            self.assertIsNone(outputs.hidden_states)
+            self.assertIsNone(outputs.attentions)
             self.assertTrue(
                 torch.isfinite(model(**inputs, labels=torch.tensor([1])).loss)
             )
