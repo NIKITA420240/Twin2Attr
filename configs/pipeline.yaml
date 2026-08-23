@@ -1,13 +1,14 @@
-# transformer | maxpooling | fusion
+# transformer | maxpooling | fusion | boosting
 training:
   model: transformer
 
-# transformer | maxpooling | fusion
+# transformer | maxpooling | fusion | boosting | cascade
 inference:
   model: transformer
   transformer_dir: weights/rubert-tiny2
   maxpooling_path: models/twin2attr/maxpooling.joblib
   fusion_path: models/twin2attr/fusion.pt
+  boosting_dir: models/twin2attr/boosting
 
 paths:
   items: data/items_human.parquet
@@ -94,10 +95,26 @@ models_parameters:
     learning_rate: 0.001
     weight_decay: 0.0001
 
+  boosting:
+    iterations: 500
+    depth: 8
+    learning_rate: 0.05
+    loss_function: Logloss
+    early_stopping_rounds: 50
+    # -1 lets CatBoost use all available CPU cores.
+    thread_count: -1
+
+  cascade:
+    fast_model: boosting
+    main_model: transformer
+    negative_threshold: 0.01
+    positive_threshold: 0.99
+
 artifacts:
   transformer_dir: models/twin2attr/transformer
   maxpooling_path: models/twin2attr/maxpooling.joblib
   fusion_path: models/twin2attr/fusion.pt
+  boosting_dir: models/twin2attr/boosting
   resolved_config_path: models/twin2attr/pipeline_config.yaml
   solution_path: solution.json
 

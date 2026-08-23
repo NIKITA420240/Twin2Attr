@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 from loguru import logger
 
@@ -20,6 +20,7 @@ class TrainingArtifacts:
     transformer_dir: Path | None = None
     maxpooling_path: Path | None = None
     fusion_path: Path | None = None
+    boosting_dir: Path | None = None
     resolved_config_path: Path | None = None
     solution_path: Path | None = None
     metrics: tuple[tuple[str, float], ...] = ()
@@ -35,7 +36,19 @@ class TrainingArtifacts:
             or self.fusion_path is None
         ):
             raise ValueError("fusion artifacts require all three model paths")
-        if self.predictor not in {"transformer", "maxpooling", "fusion"}:
+        if self.predictor == "boosting" and self.boosting_dir is None:
+            raise ValueError("boosting artifacts require boosting_dir")
+        if self.predictor == "cascade" and (
+            self.transformer_dir is None or self.boosting_dir is None
+        ):
+            raise ValueError("cascade artifacts require boosting and transformer paths")
+        if self.predictor not in {
+            "transformer",
+            "maxpooling",
+            "fusion",
+            "boosting",
+            "cascade",
+        }:
             raise ValueError(f"unsupported artifacts predictor: {self.predictor!r}")
 
 
@@ -66,6 +79,17 @@ def build_solution_manifest(
     if artifacts.fusion_path is not None:
         solution["fusion_path"] = map_path(artifacts.fusion_path)
         solution["fusion_batch_size"] = config.models_parameters.fusion.batch_size
+    if artifacts.boosting_dir is not None:
+        solution["boosting_directory"] = map_path(artifacts.boosting_dir)
+        solution["boosting_thread_count"] = (
+            config.models_parameters.boosting.thread_count
+        )
+    if artifacts.predictor == "cascade":
+        cascade = config.models_parameters.cascade
+        solution["fast_model"] = cascade.fast_model
+        solution["main_model"] = cascade.main_model
+        solution["negative_threshold"] = cascade.negative_threshold
+        solution["positive_threshold"] = cascade.positive_threshold
     normalization_solution: dict[str, object] = {
         "enabled": config.normalization.enabled,
         "source_column": config.normalization.source_column,

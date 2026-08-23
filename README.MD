@@ -39,8 +39,9 @@ uv run python -m build_submission
 которая попадёт в финальный архив. Эти параметры независимы: например, после
 обучения `fusion` можно собрать более компактное решение только с Transformer.
 Пути готовых весов задаются отдельно через `inference.transformer_dir`,
-`inference.maxpooling_path` и `inference.fusion_path`, поэтому сборка не зависит
-от директорий, куда training workflow сохраняет новые артефакты.
+`inference.maxpooling_path`, `inference.fusion_path` и
+`inference.boosting_dir`, поэтому сборка не зависит от директорий, куда
+training workflow сохраняет новые артефакты.
 
 Путь результата задаётся параметром `submission.output_path` и по умолчанию
 равен `dist/twin2attr_submission.zip`. В корень ZIP попадают `run.py`,
@@ -50,6 +51,8 @@ uv run python -m build_submission
 - `inference.model=transformer` — Transformer;
 - `inference.model=maxpooling` — MaxPooling;
 - `inference.model=fusion` — Transformer, MaxPooling и fusion head;
+- `inference.model=boosting` — CatBoost и сохранённая схема его фич;
+- `inference.model=cascade` — CatBoost и Transformer;
 - при включённой нормализации — оба parquet-файла правил;
 - при включённом NER — NER-модель и cluster centers;
 - physical provider не требует отдельных файлов весов.
@@ -57,6 +60,7 @@ uv run python -m build_submission
 Polars wheels из `build_submission/vendor_wheels` также автоматически
 добавляются в архив. Если Polars отсутствует в evaluator image, `run.py`
 устанавливает эти wheels во временную директорию до импорта inference-кода.
+CatBoost wheel добавляется и устанавливается только для `boosting` и `cascade`.
 
 Сборщик проверяет наличие каждого обязательного файла до создания ZIP и не
 добавляет `__pycache__`, `.cache` и промежуточные `checkpoint-*`. Конфигурацию,
@@ -116,9 +120,10 @@ uv run python run.py train \
 компонент может менее точно сохранять требуемое распределение.
 
 Итоговая модель выбирается одним параметром `training.model`. Значения
-`transformer` и `maxpooling` обучают соответствующую модель, а `fusion`
+`transformer`, `maxpooling` и `boosting` обучают соответствующую модель, а `fusion`
 автоматически обучает Transformer, MaxPooling и объединяющий классификатор.
-Модель для последующей упаковки выбирается отдельно через `inference.model`.
+`cascade` доступен только в `inference.model`: он использует уже независимо
+обученные CatBoost и Transformer и сам не обучается.
 Нормализация отдельно управляется флагом `normalization.enabled`. Например:
 
 ```bash
@@ -127,7 +132,9 @@ uv run python run.py train \
 ```
 
 Гиперпараметры лежат в `models_parameters.transformer`,
-`models_parameters.maxpooling` и `models_parameters.fusion`. Выбранный trainer
+`models_parameters.maxpooling`, `models_parameters.fusion` и
+`models_parameters.boosting`. Состав и пороги каскада задаются в
+`models_parameters.cascade`. Выбранный trainer
 возвращает единый `TrainingArtifacts`. Финальный predict запускается отдельно
 через `run.py predict`; совместимый `solution.json` создаётся после успешного
 обучения автоматически. Токенизация остаётся динамической внутри батчей.
@@ -228,12 +235,15 @@ OmegaConf используется только на границе загруз
 
 Для fusion в manifest указываются `predictor: fusion`, `maxpooling_path` и
 `fusion_path`. `metadata.json` задаёт evaluator entrypoint `python -u run.py`.
-MaxPooling также можно использовать самостоятельно, указав
-`predictor: maxpooling` и `maxpooling_path`.
+MaxPooling и Boosting также можно использовать самостоятельно, указав
+соответственно `predictor: maxpooling`/`maxpooling_path` или
+`predictor: boosting`/`boosting_directory`.
 
 Модели подключаются к workflow через небольшие интерфейсы `PairEncoder` и
 `MatchPredictor`. Transformer и MaxPooling могут извлекать признаки и делать
-предсказания, а Fusion композиционно объединяет их признаки.
+предсказания, Boosting строит свою табличную схему, Fusion объединяет
+эмбеддинги, а Cascade маршрутизирует неуверенные ответы быстрой модели в
+основную.
 
 Реализации разделены по модели и ответственности:
 
@@ -254,11 +264,18 @@ src/match/models/
 │   ├── training.py
 │   ├── predictor.py
 │   └── serialization.py
-└── fusion/
+├── fusion/
     ├── model.py
     ├── training.py
     ├── predictor.py
     └── serialization.py
+├── boosting/
+│   ├── features.py
+│   ├── training.py
+│   ├── predictor.py
+│   └── serialization.py
+└── cascade/
+    └── predictor.py
 ```
 
 `factory.py` — единственная точка выбора конкретного trainer или predictor.

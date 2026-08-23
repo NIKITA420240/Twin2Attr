@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, Sequence, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 import polars as pl
@@ -42,6 +43,19 @@ class PredictionBatch:
             self.items,
             self.matches,
             attributes_column=self.attributes_column,
+        )
+
+    def take_indices(self, indices: Sequence[int]) -> PredictionBatch:
+        """Select pair rows while keeping the shared item table unchanged."""
+        selected = [int(index) for index in indices]
+        if any(index < 0 or index >= self.matches.height for index in selected):
+            raise IndexError("prediction batch index is out of range")
+        pairs = self.prepared_pairs()
+        return PredictionBatch(
+            items=self.items,
+            matches=self.matches[selected],
+            attributes_column=self.attributes_column,
+            pairs=[pairs[index] for index in selected],
         )
 
 

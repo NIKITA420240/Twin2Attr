@@ -5,9 +5,9 @@ from dataclasses import replace
 from pathlib import Path
 from zipfile import ZipFile
 
+from build_submission.archive import build_submission_archive
 from match.config import load_app_config_file
 from match.paths import PROJECT_ROOT
-from build_submission.archive import build_submission_archive
 
 
 class SubmissionArchiveTests(unittest.TestCase):
@@ -34,6 +34,9 @@ class SubmissionArchiveTests(unittest.TestCase):
             wheels
             / "polars_runtime_32-1.43.2-cp310-abi3-manylinux_x86_64.whl"
         ).write_bytes(b"runtime")
+        (wheels / "catboost-1.2.10-cp312-cp312-manylinux_x86_64.whl").write_bytes(
+            b"catboost"
+        )
 
     def test_packages_only_selected_model_and_generates_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -72,6 +75,10 @@ class SubmissionArchiveTests(unittest.TestCase):
         self.assertEqual(solution["model_directory"], "models/transformer")
         self.assertIn("models/transformer/model.safetensors", names)
         self.assertIn("vendor_wheels/polars-1.43.2-py3-none-any.whl", names)
+        self.assertNotIn(
+            "vendor_wheels/catboost-1.2.10-cp312-cp312-manylinux_x86_64.whl",
+            names,
+        )
         self.assertNotIn("models/maxpooling.joblib", names)
         self.assertNotIn(
             "models/transformer/checkpoint-10/model.safetensors",
@@ -191,6 +198,47 @@ class SubmissionArchiveTests(unittest.TestCase):
 
             with self.assertRaisesRegex(FileNotFoundError, "Train the selected"):
                 build_submission_archive(config, project_root=root)
+
+    def test_cascade_packages_both_models_and_catboost_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._project(root)
+            transformer = root / "models" / "transformer"
+            transformer.mkdir(parents=True)
+            (transformer / "model.safetensors").write_bytes(b"transformer")
+            boosting = root / "models" / "boosting"
+            boosting.mkdir(parents=True)
+            (boosting / "model.cbm").write_bytes(b"boosting")
+            (boosting / "manifest.json").write_text("{}", encoding="utf-8")
+            config = replace(
+                self.config,
+                inference=replace(
+                    self.config.inference,
+                    model="cascade",
+                    transformer_dir=transformer,
+                    boosting_dir=boosting,
+                ),
+                submission=replace(
+                    self.config.submission,
+                    output_path=root / "submission.zip",
+                ),
+            )
+
+            result = build_submission_archive(config, project_root=root)
+
+            with ZipFile(result.path) as archive:
+                names = set(archive.namelist())
+                solution = json.loads(archive.read("solution.json"))
+
+        self.assertEqual(solution["predictor"], "cascade")
+        self.assertEqual(solution["fast_model"], "boosting")
+        self.assertEqual(solution["main_model"], "transformer")
+        self.assertIn("models/transformer/model.safetensors", names)
+        self.assertIn("models/boosting/model.cbm", names)
+        self.assertIn(
+            "vendor_wheels/catboost-1.2.10-cp312-cp312-manylinux_x86_64.whl",
+            names,
+        )
 
 
 if __name__ == "__main__":

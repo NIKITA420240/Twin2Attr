@@ -2,11 +2,12 @@
 
 import argparse
 import importlib
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
-from typing import TYPE_CHECKING, Sequence
+from collections.abc import Sequence
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from match.config import AppConfig
@@ -19,6 +20,7 @@ if str(SOURCE_ROOT) not in sys.path:
 COMMANDS = {"train", "predict", "inspect"}
 DEFAULT_CONFIG = "configs/pipeline.yaml"
 POLARS_VERSION = "1.43.2"
+CATBOOST_VERSION = "1.2.10"
 
 
 def ensure_polars_available() -> None:
@@ -65,6 +67,58 @@ def ensure_polars_available() -> None:
     sys.path.insert(0, str(install_dir))
     importlib.invalidate_caches()
     importlib.import_module("polars")
+
+
+def ensure_catboost_available(solution_path: str | Path | None = None) -> None:
+    """Install the bundled CatBoost wheel only for predictors that need it."""
+    import json
+
+    path = (
+        Path(solution_path)
+        if solution_path is not None
+        else Path(__file__).resolve().parent / "solution.json"
+    ).expanduser().resolve()
+    if not path.is_file():
+        return
+    solution = json.loads(path.read_text(encoding="utf-8"))
+    if solution.get("predictor") not in {"boosting", "cascade"}:
+        return
+    try:
+        importlib.import_module("catboost")
+        return
+    except ModuleNotFoundError as error:
+        if error.name != "catboost":
+            raise
+
+    wheels_dir = Path(__file__).resolve().parent / "vendor_wheels"
+    tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
+    wheels = sorted(wheels_dir.glob(f"catboost-*-{tag}-{tag}-*.whl"))
+    if not wheels:
+        raise RuntimeError(
+            f"CatBoost is not installed and no bundled wheel supports Python {tag}"
+        )
+    install_dir = Path(tempfile.gettempdir()) / f"twin2attr_catboost_{CATBOOST_VERSION}_{tag}"
+    install_dir.mkdir(parents=True, exist_ok=True)
+    print(f"CatBoost is absent; installing bundled wheel into {install_dir}")
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--no-index",
+            "--no-deps",
+            "--upgrade",
+            "--target",
+            str(install_dir),
+            str(wheels[-1]),
+        ],
+        check=True,
+    )
+    sys.path.insert(0, str(install_dir))
+    importlib.invalidate_caches()
+    importlib.import_module("catboost")
 
 
 def _with_default_command(arguments: Sequence[str]) -> list[str]:
@@ -152,6 +206,7 @@ def _load_workflow_config(
 def run_predict(args: argparse.Namespace) -> None:
     """Create a validated evaluator-compatible prediction CSV."""
     ensure_polars_available()
+    ensure_catboost_available(args.solution)
 
     from match.submission import create_submission
 

@@ -18,9 +18,10 @@ class TrainingSettings:
     model: str
 
     def __post_init__(self) -> None:
-        if self.model not in {"transformer", "maxpooling", "fusion"}:
+        if self.model not in {"transformer", "maxpooling", "fusion", "boosting"}:
             raise ValueError(
-                "training.model must be one of: transformer, maxpooling, fusion"
+                "training.model must be one of: transformer, maxpooling, fusion, "
+                "boosting"
             )
 
 
@@ -30,11 +31,19 @@ class InferenceSettings:
     transformer_dir: Path
     maxpooling_path: Path
     fusion_path: Path
+    boosting_dir: Path
 
     def __post_init__(self) -> None:
-        if self.model not in {"transformer", "maxpooling", "fusion"}:
+        if self.model not in {
+            "transformer",
+            "maxpooling",
+            "fusion",
+            "boosting",
+            "cascade",
+        }:
             raise ValueError(
-                "inference.model must be one of: transformer, maxpooling, fusion"
+                "inference.model must be one of: transformer, maxpooling, fusion, "
+                "boosting, cascade"
             )
 
 
@@ -152,10 +161,51 @@ class FusionParameters:
 
 
 @dataclass(frozen=True, slots=True)
+class BoostingParameters:
+    iterations: int
+    depth: int
+    learning_rate: float
+    loss_function: str
+    early_stopping_rounds: int
+    thread_count: int
+
+    def __post_init__(self) -> None:
+        if self.iterations < 1 or self.depth < 1:
+            raise ValueError("boosting iterations and depth must be positive")
+        if self.learning_rate <= 0.0:
+            raise ValueError("boosting.learning_rate must be positive")
+        if self.early_stopping_rounds < 1 or self.thread_count == 0:
+            raise ValueError(
+                "boosting early_stopping_rounds must be positive and "
+                "thread_count must not be zero"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class CascadeParameters:
+    fast_model: str
+    main_model: str
+    negative_threshold: float
+    positive_threshold: float
+
+    def __post_init__(self) -> None:
+        if self.fast_model != "boosting":
+            raise ValueError("cascade.fast_model currently must be 'boosting'")
+        if self.main_model != "transformer":
+            raise ValueError("cascade.main_model currently must be 'transformer'")
+        if not 0.0 <= self.negative_threshold < self.positive_threshold <= 1.0:
+            raise ValueError(
+                "cascade thresholds must satisfy 0 <= negative < positive <= 1"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class ModelsParametersSettings:
     transformer: TransformerParameters
     maxpooling: MaxPoolingParameters
     fusion: FusionParameters
+    boosting: BoostingParameters
+    cascade: CascadeParameters
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +213,7 @@ class ArtifactSettings:
     transformer_dir: Path
     maxpooling_path: Path
     fusion_path: Path
+    boosting_dir: Path
     resolved_config_path: Path
     solution_path: Path
 
@@ -350,6 +401,8 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     transformer = _section(models_parameters, "transformer")
     maxpooling = _section(models_parameters, "maxpooling")
     fusion = _section(models_parameters, "fusion")
+    boosting = _section(models_parameters, "boosting")
+    cascade = _section(models_parameters, "cascade")
     artifacts = _section(resolved, "artifacts")
     features = _section(resolved, "features")
     ner = _section(features, "ner")
@@ -385,6 +438,13 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     _required(artifacts, "fusion_path"),
                 ),
                 "inference.fusion_path",
+            ),
+            boosting_dir=_path(
+                inference.get(
+                    "boosting_dir",
+                    _required(artifacts, "boosting_dir"),
+                ),
+                "inference.boosting_dir",
             ),
         ),
         paths=PathSettings(
@@ -516,6 +576,26 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 learning_rate=float(_required(fusion, "learning_rate")),
                 weight_decay=float(_required(fusion, "weight_decay")),
             ),
+            boosting=BoostingParameters(
+                iterations=int(_required(boosting, "iterations")),
+                depth=int(_required(boosting, "depth")),
+                learning_rate=float(_required(boosting, "learning_rate")),
+                loss_function=str(_required(boosting, "loss_function")),
+                early_stopping_rounds=int(
+                    _required(boosting, "early_stopping_rounds")
+                ),
+                thread_count=int(_required(boosting, "thread_count")),
+            ),
+            cascade=CascadeParameters(
+                fast_model=str(_required(cascade, "fast_model")),
+                main_model=str(_required(cascade, "main_model")),
+                negative_threshold=float(
+                    _required(cascade, "negative_threshold")
+                ),
+                positive_threshold=float(
+                    _required(cascade, "positive_threshold")
+                ),
+            ),
         ),
         artifacts=ArtifactSettings(
             transformer_dir=_path(
@@ -529,6 +609,10 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             fusion_path=_path(
                 _required(artifacts, "fusion_path"),
                 "artifacts.fusion_path",
+            ),
+            boosting_dir=_path(
+                _required(artifacts, "boosting_dir"),
+                "artifacts.boosting_dir",
             ),
             resolved_config_path=_path(
                 _required(artifacts, "resolved_config_path"),
@@ -654,6 +738,8 @@ def save_app_config(config: AppConfig, path: Path) -> None:
 __all__ = [
     "AppConfig",
     "ArtifactSettings",
+    "BoostingParameters",
+    "CascadeParameters",
     "ConfigSource",
     "FeatureSettings",
     "FusionParameters",
