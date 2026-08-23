@@ -15,12 +15,32 @@ from transformers import (
 
 from ...pair_encoding import add_pair_special_tokens
 from .head import PoolingHeadConfig, PoolingSequenceClassifier
+from .optimizer import LearningRateMultipliers, build_transformer_optimizer
 
 
 class WeightedSequenceTrainer(Trainer):
-    def __init__(self, *args: Any, class_weights: torch.Tensor, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        class_weights: torch.Tensor,
+        learning_rate_multipliers: LearningRateMultipliers | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self.learning_rate_multipliers = (
+            learning_rate_multipliers or LearningRateMultipliers()
+        )
         super().__init__(*args, **kwargs)
         self.class_weights = class_weights.detach().to(dtype=torch.float32)
+
+    def create_optimizer(self) -> torch.optim.Optimizer:
+        if self.optimizer is None:
+            self.optimizer = build_transformer_optimizer(
+                self.model,
+                backbone_lr=float(self.args.learning_rate),
+                multipliers=self.learning_rate_multipliers,
+                weight_decay=float(self.args.weight_decay),
+            )
+        return self.optimizer
 
     def compute_loss(
         self,

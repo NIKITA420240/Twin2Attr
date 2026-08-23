@@ -34,6 +34,9 @@ class SequenceClassifierConfig:
     max_length_hard_cap: int = 512
     head_type: str = "default"
     head_config: PoolingHeadConfig = PoolingHeadConfig()
+    embeddings_learning_rate: float | None = None
+    head_learning_rate: float | None = None
+    layerwise_lr_decay: float = 1.0
 
     def __post_init__(self) -> None:
         if not self.model_path.strip():
@@ -44,6 +47,15 @@ class SequenceClassifierConfig:
             raise ValueError("hpo_trials must be positive")
         if self.learning_rate <= 0.0:
             raise ValueError("learning_rate must be positive")
+        if (
+            self.embeddings_learning_rate is not None
+            and self.embeddings_learning_rate <= 0.0
+        ):
+            raise ValueError("embeddings_learning_rate must be positive or None")
+        if self.head_learning_rate is not None and self.head_learning_rate <= 0.0:
+            raise ValueError("head_learning_rate must be positive or None")
+        if not 0.0 < self.layerwise_lr_decay <= 1.0:
+            raise ValueError("layerwise_lr_decay must be in (0, 1]")
         if self.weight_decay < 0.0:
             raise ValueError("weight_decay must not be negative")
         if not 0.0 < self.hpo_learning_rate_min < self.hpo_learning_rate_max:
@@ -80,6 +92,14 @@ class SequenceClassifierConfig:
         if self.head_type not in {"default", "pooling"}:
             raise ValueError("head_type must be 'default' or 'pooling'")
 
+    @property
+    def resolved_embeddings_learning_rate(self) -> float:
+        return self.embeddings_learning_rate or self.learning_rate
+
+    @property
+    def resolved_head_learning_rate(self) -> float:
+        return self.head_learning_rate or self.learning_rate
+
 
 @dataclass(frozen=True)
 class ResolvedTrainingConfig:
@@ -89,6 +109,9 @@ class ResolvedTrainingConfig:
     eval_batch_size: int
     gradient_accumulation_steps: int
     learning_rate: float
+    embeddings_learning_rate: float
+    head_learning_rate: float
+    layerwise_lr_decay: float
     weight_decay: float
     use_field_tokens: bool
     max_attribute_value_tokens: int | None

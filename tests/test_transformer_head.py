@@ -51,6 +51,35 @@ class TransformerPoolingHeadTests(unittest.TestCase):
 
         torch.testing.assert_close(pooled, torch.tensor([[2.0, 3.0]]))
 
+    def test_multi_head_attention_pooling_concatenates_head_outputs(self) -> None:
+        head = TransformerPoolingHead(
+            hidden_size=2,
+            num_labels=2,
+            config=PoolingHeadConfig(
+                poolings=("attention",),
+                dropout=0.0,
+                attention_hidden_dim=1,
+                attention_num_heads=3,
+            ),
+        )
+        hidden_states = torch.tensor(
+            [[[2.0, 3.0], [2.0, 3.0], [1000.0, 1000.0]]]
+        )
+
+        pooled = head.pool(hidden_states, torch.tensor([[1, 1, 0]]))
+
+        torch.testing.assert_close(
+            pooled,
+            torch.tensor([[2.0, 3.0, 2.0, 3.0, 2.0, 3.0]]),
+        )
+
+    def test_rejects_non_positive_attention_head_count(self) -> None:
+        with self.assertRaisesRegex(ValueError, "attention_num_heads"):
+            PoolingHeadConfig(
+                poolings=("attention",),
+                attention_num_heads=0,
+            )
+
     def test_fully_masked_input_produces_finite_zero_features(self) -> None:
         head = TransformerPoolingHead(
             hidden_size=2,
@@ -105,6 +134,7 @@ class TransformerPoolingHeadTests(unittest.TestCase):
                     mlp_hidden_dims=(8,),
                     dropout=0.0,
                     attention_hidden_dim=4,
+                    attention_num_heads=2,
                 ),
             )
             model = initialize().eval()
@@ -123,6 +153,7 @@ class TransformerPoolingHeadTests(unittest.TestCase):
             _, restored = load_trained_classifier(trained, device="cpu")
 
             self.assertEqual(restored.config.match_head_type, "pooling")
+            self.assertEqual(restored.config.head_config["attention_num_heads"], 2)
             torch.testing.assert_close(restored(**inputs).logits, expected)
             self.assertIsInstance(restored(**inputs, return_dict=False), tuple)
 
