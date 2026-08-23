@@ -70,6 +70,10 @@ class BoostingTrainer:
         validation_features = builder.transform(validation_batch)
         train_labels = _labels(data, validation=False)
         validation_labels = _labels(data, validation=True)
+        train_weights = np.asarray(
+            [pair.sample_weight for pair in data.train_pairs],
+            dtype=np.float32,
+        )
         if np.unique(train_labels).size != 2 or np.unique(validation_labels).size != 2:
             raise ValueError(
                 "boosting train and validation splits must contain both classes"
@@ -89,6 +93,7 @@ class BoostingTrainer:
         model.fit(
             train_features,
             train_labels,
+            sample_weight=train_weights,
             cat_features=list(builder.categorical_features),
             eval_set=(validation_features, validation_labels),
             early_stopping_rounds=parameters.early_stopping_rounds,

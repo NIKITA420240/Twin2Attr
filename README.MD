@@ -100,25 +100,33 @@ uv run python run.py train \
   pair_encoding.max_length=256
 ```
 
-Разделение данных настраивается через `split`. В режиме `predefined` pipeline
-читает готовые `training.data.train_matches` и
-`training.data.validation_matches` и проверяет утечки. В режиме `auto` файл
-`training.data.train_matches` считается полным набором размеченных пар, после
-чего создаётся group-aware split с сохранением распределения
-`category × target`:
+Источник данных выбирается через `training.data_model`. `base_dataset` обучается
+только на человеческой разметке и создаёт group-aware validation. Для него пути
+и параметры разделения находятся в `data_model_description.base_dataset`:
 
 ```bash
 uv run python run.py train \
-  training.data.items=data/items_human.parquet \
-  training.data.train_matches=data/matches.parquet \
-  split.mode=auto \
-  split.leakage_scope=item \
-  split.validation_fraction=0.2
+  training.data_model=base_dataset \
+  data_model_description.base_dataset.items=data/items_human.parquet \
+  data_model_description.base_dataset.matches=data/matches.parquet \
+  data_model_description.base_dataset.leakage_scope=item \
+  data_model_description.base_dataset.validation_fraction=0.2
 ```
 
 `leakage_scope=pair` не разносит одинаковые и обратные пары по разным частям.
 `leakage_scope=item` не допускает ни одного общего товара, но из-за связанных
 компонент может менее точно сохранять требуемое распределение.
+
+`mix_dataset` добавляет к human train уверенные LLM-метки, но validation всегда
+строит только из `validation_source`. Веса источников умножают loss каждого
+обучающего примера, а validation использует нейтральный вес:
+
+```bash
+uv run python run.py train training.data_model=mix_dataset
+```
+
+Настройки источников, пороги голосов и ограничение размера LLM-выборки находятся
+в `data_model_description.mix_dataset.sources`.
 
 Итоговая модель выбирается одним параметром `training.model`. Значения
 `transformer`, `maxpooling` и `boosting` обучают соответствующую модель, а `fusion`

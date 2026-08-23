@@ -1,12 +1,47 @@
 # transformer | maxpooling | fusion | boosting
 training:
   model: transformer
-  data:
+  data_model: base_dataset
+
+data_model_description:
+  base_dataset:
     items: data/items_human.parquet
-    train_matches: data/matches.parquet
-    validation_matches: data/validation_matches.parquet
-    # Optional for inspect; train_matches is used when null.
-    inspect_matches: null
+    matches: data/matches.parquet
+    validation_fraction: 0.2
+    leakage_scope: pair
+    candidate_splits: 128
+    seed: ${runtime.seed}
+
+  mix_dataset:
+    items: data/items.parquet
+    validation_source: human
+    validation_fraction: 0.2
+    leakage_scope: pair
+    candidate_splits: 128
+    seed: ${runtime.seed}
+
+    sources:
+      human:
+        matches: data/matches.parquet
+        weight: 3.0
+        max_rows: null
+        sampling_strategy: random
+        splitter:
+          splitter_type: binary
+          score_type: label
+
+      llm:
+        matches: data/matches_llm.parquet
+        weight: 1.0
+        max_rows: 750000
+        sampling_strategy: category_target_balanced
+        splitter:
+          splitter_type: binary
+          score_type: votes
+          total_votes: 9
+          negative_threshold: 2
+          positive_threshold: 7
+          uncertain_action: drop
 
 # transformer | maxpooling | fusion | boosting | cascade
 inference:
@@ -24,19 +59,6 @@ normalization:
   unique_attributes_path: data/unique_attributes.parquet
   n_jobs: 4
   chunk_size: 5000
-
-split:
-  # predefined reads training.data.validation_matches; auto splits
-  # training.data.train_matches.
-  mode: auto
-  validation_fraction: 0.2
-  # pair keeps duplicate/reversed pairs together; item keeps whole connected
-  # item components together and is stricter, but may distort stratification.
-  leakage_scope: pair
-  seed: ${runtime.seed}
-  candidate_splits: 128
-  train_output_path: artifacts/splits/train_matches.parquet
-  validation_output_path: artifacts/splits/validation_matches.parquet
 
 pair_encoding:
   use_field_tokens: true
@@ -78,7 +100,6 @@ models_parameters:
     fasttext_epochs: 10
     classifier_epochs: 50
     batch_size: 512
-    validation_fraction: 0.2
     patience: 7
     dropout: 0.2
     learning_rate: 0.001
