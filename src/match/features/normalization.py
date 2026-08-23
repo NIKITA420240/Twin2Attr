@@ -13,7 +13,6 @@ from .contracts import PreparedItems
 class NormalizationItemEnricher:
     synonyms_path: Path
     unique_attributes_path: Path
-    source_column: str = "attributes"
     output_column: str = "normalized_attributes"
     n_jobs: int = 1
     chunk_size: int = 5_000
@@ -23,7 +22,7 @@ class NormalizationItemEnricher:
             items.frame,
             self.synonyms_path,
             self.unique_attributes_path,
-            source_column=self.source_column,
+            source_column=items.attributes_column,
             output_column=self.output_column,
             n_jobs=self.n_jobs,
             chunk_size=self.chunk_size,

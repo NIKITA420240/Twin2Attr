@@ -22,7 +22,7 @@ def prepare_configured_items(
     config: AppConfig,
 ) -> PreparedItems:
     return build_feature_pipeline(config).enrich(
-        PreparedItems(items, config.features.normalization.source_column)
+        PreparedItems(items, "attributes")
     )
 
 

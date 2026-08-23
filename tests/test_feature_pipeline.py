@@ -1,13 +1,18 @@
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 import polars as pl
 
 from match.data.preprocessing import prepare_manifest_items
 from match.features.contracts import PreparedItems
+from match.features.factory import ItemEnricherFactory, build_feature_pipeline
 from match.features.normalization import NormalizationItemEnricher
 from match.features.pipeline import FeaturePipeline
+from match.config import load_app_config_file
+from match.paths import PROJECT_ROOT
 
 
 class _RecordingEnricher:
@@ -50,6 +55,44 @@ class FeaturePipelineTests(unittest.TestCase):
             ],
         )
         self.assertEqual(result.attributes_column, "physical_attributes")
+
+    def test_factory_follows_configured_execution_order(self) -> None:
+        config = load_app_config_file(PROJECT_ROOT / "configs" / "pipeline.yaml")
+        features = replace(
+            config.features,
+            execution_order=("physical", "ner", "normalization"),
+            normalization=replace(config.features.normalization, enabled=True),
+            ner=replace(config.features.ner, enabled=True),
+            physical=replace(config.features.physical, enabled=True),
+        )
+        calls = []
+
+        def create(_factory, name, _settings):
+            return _RecordingEnricher(name, calls)
+
+        with patch.object(
+            ItemEnricherFactory,
+            "create",
+            autospec=True,
+            side_effect=create,
+        ):
+            pipeline = build_feature_pipeline(replace(config, features=features))
+            result = pipeline.enrich(
+                PreparedItems(
+                    pl.DataFrame({"attributes": ["{}"]}),
+                    "attributes",
+                )
+            )
+
+        self.assertEqual(
+            calls,
+            [
+                ("physical", "attributes"),
+                ("ner", "physical_attributes"),
+                ("normalization", "ner_attributes"),
+            ],
+        )
+        self.assertEqual(result.attributes_column, "normalization_attributes")
 
     def test_normalization_enricher_updates_active_attributes_column(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

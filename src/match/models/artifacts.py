@@ -93,7 +93,6 @@ def build_solution_manifest(
     normalization = config.features.normalization
     normalization_solution: dict[str, object] = {
         "enabled": normalization.enabled,
-        "source_column": normalization.source_column,
         "output_column": normalization.output_column,
     }
     if normalization.enabled:
@@ -108,6 +107,7 @@ def build_solution_manifest(
             }
         )
     features_solution: dict[str, object] = {
+        "execution_order": list(config.features.execution_order),
         "normalization": normalization_solution,
     }
     if config.features.ner.enabled:

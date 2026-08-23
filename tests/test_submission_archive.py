@@ -214,6 +214,10 @@ class SubmissionArchiveTests(unittest.TestCase):
         self.assertIn("models/ner/model.pt", names)
         self.assertIn("models/cluster_centers.pt", names)
         self.assertNotIn("normalization", solution)
+        self.assertEqual(
+            solution["features"]["execution_order"],
+            ["normalization", "ner", "physical"],
+        )
         self.assertTrue(solution["features"]["normalization"]["enabled"])
         self.assertTrue(solution["features"]["ner"]["enabled"])
         self.assertTrue(solution["features"]["physical"]["enabled"])

@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 from .paths import resolve_project_path
 
+FEATURE_PROVIDER_NAMES = ("normalization", "ner", "physical")
+
 if TYPE_CHECKING:
     from omegaconf import DictConfig
 
@@ -176,7 +178,6 @@ class InferenceSettings:
 @dataclass(frozen=True, slots=True)
 class NormalizationSettings:
     enabled: bool
-    source_column: str
     output_column: str
     synonyms_path: Path
     unique_attributes_path: Path
@@ -435,9 +436,30 @@ class PhysicalFeatureSettings:
 
 @dataclass(frozen=True, slots=True)
 class FeatureSettings:
+    execution_order: tuple[str, ...]
     normalization: NormalizationSettings
     ner: NerSettings
     physical: PhysicalFeatureSettings
+
+    def __post_init__(self) -> None:
+        normalized = tuple(name.strip().lower() for name in self.execution_order)
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("features.execution_order must not contain duplicates")
+        expected = set(FEATURE_PROVIDER_NAMES)
+        actual = set(normalized)
+        if actual != expected:
+            details = []
+            missing = expected - actual
+            unknown = actual - expected
+            if missing:
+                details.append("missing: " + ", ".join(sorted(missing)))
+            if unknown:
+                details.append("unknown: " + ", ".join(sorted(unknown)))
+            raise ValueError(
+                "features.execution_order must contain every feature exactly once"
+                + (" (" + "; ".join(details) + ")" if details else "")
+            )
+        object.__setattr__(self, "execution_order", normalized)
 
 
 @dataclass(frozen=True, slots=True)
@@ -620,6 +642,10 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     if not isinstance(normalization_value, Mapping):
         raise ValueError("config section 'features.normalization' must be a mapping")
     normalization = normalization_value
+    execution_order = tuple(
+        str(name)
+        for name in features.get("execution_order", FEATURE_PROVIDER_NAMES)
+    )
     ner = _section(features, "ner")
     physical = _section(features, "physical")
     runtime = _section(resolved, "runtime")
@@ -845,12 +871,12 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             ),
         ),
         features=FeatureSettings(
+            execution_order=execution_order,
             normalization=NormalizationSettings(
                 enabled=_bool(
                     normalization.get("enabled", False),
                     "features.normalization.enabled",
                 ),
-                source_column=str(_required(normalization, "source_column")),
                 output_column=str(_required(normalization, "output_column")),
                 synonyms_path=_path(
                     _required(normalization, "synonyms_path"),
@@ -1002,6 +1028,7 @@ __all__ = [
     "DataModelDescriptionSettings",
     "DatasetSourceSettings",
     "DatasetSplitterSettings",
+    "FEATURE_PROVIDER_NAMES",
     "FeatureSettings",
     "FusionParameters",
     "InferenceSettings",
