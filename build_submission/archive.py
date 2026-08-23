@@ -18,6 +18,21 @@ from match.paths import PROJECT_ROOT
 _REQUIRED_PROJECT_FILES = ("run.py", "metadata.json")
 _VENDOR_WHEELS_SOURCE = PurePosixPath("build_submission/vendor_wheels")
 _VENDOR_WHEELS_TARGET = PurePosixPath("vendor_wheels")
+_PREPROCESSING_WHEEL_PATTERNS = (
+    "pymorphy3-*.whl",
+    "pymorphy3_dicts_ru-*.whl",
+    "dawg2_python-*.whl",
+    "setuptools-*.whl",
+    "joblib-*.whl",
+    "loguru-*.whl",
+    "Pint-*.whl",
+    "flexcache-*.whl",
+    "flexparser-*.whl",
+    "platformdirs-*.whl",
+    "typing_extensions-*.whl",
+    "colorama-*.whl",
+    "win32_setctime-*.whl",
+)
 _SKIPPED_DIRECTORY_NAMES = {".cache", "__pycache__"}
 _STORED_SUFFIXES = {
     ".bin",
@@ -159,6 +174,7 @@ def _collect_inputs(
     *,
     project_root: Path,
     include_catboost: bool,
+    include_preprocessing_runtime: bool,
 ) -> tuple[_ArchiveInput, ...]:
     sources = [project_root / name for name in _REQUIRED_PROJECT_FILES]
     sources.append(project_root / "src" / "match")
@@ -177,6 +193,9 @@ def _collect_inputs(
     wheels_source = project_root / Path(_VENDOR_WHEELS_SOURCE)
     _validate_polars_wheels(wheels_source)
     wheel_patterns = ["polars-*.whl", "polars_runtime_32-*.whl"]
+    if include_preprocessing_runtime:
+        _validate_preprocessing_wheels(wheels_source)
+        wheel_patterns.extend(_PREPROCESSING_WHEEL_PATTERNS)
     if include_catboost:
         _validate_catboost_wheels(wheels_source)
         wheel_patterns.append("catboost-*.whl")
@@ -211,6 +230,18 @@ def _validate_catboost_wheels(directory: Path) -> None:
         )
 
 
+def _validate_preprocessing_wheels(directory: Path) -> None:
+    missing = [
+        pattern
+        for pattern in _PREPROCESSING_WHEEL_PATTERNS
+        if not any(directory.glob(pattern))
+    ]
+    if missing:
+        raise FileNotFoundError(
+            f"bundled preprocessing wheels are missing in {directory}: {missing}"
+        )
+
+
 def _compression(path: Path) -> int:
     return ZIP_STORED if path.suffix.lower() in _STORED_SUFFIXES else ZIP_DEFLATED
 
@@ -237,6 +268,9 @@ def build_submission_archive(
         resources,
         project_root=root,
         include_catboost=artifacts.predictor in {"boosting", "cascade"},
+        include_preprocessing_runtime=(
+            config.normalization.enabled or config.features.physical.enabled
+        ),
     )
     target = Path(output_path or config.submission.output_path).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
