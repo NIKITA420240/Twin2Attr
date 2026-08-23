@@ -12,8 +12,10 @@ from match.paths import PROJECT_ROOT
 
 class SubmissionArchiveTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.config = load_app_config_file(
-            PROJECT_ROOT / "configs" / "pipeline.yaml"
+        config = load_app_config_file(PROJECT_ROOT / "configs" / "pipeline.yaml")
+        self.config = replace(
+            config,
+            normalization=replace(config.normalization, enabled=False),
         )
 
     @staticmethod
@@ -37,6 +39,28 @@ class SubmissionArchiveTests(unittest.TestCase):
         (wheels / "catboost-1.2.10-cp312-cp312-manylinux_x86_64.whl").write_bytes(
             b"catboost"
         )
+        (wheels / "pymorphy3-2.0.6-py3-none-any.whl").write_bytes(b"pymorphy3")
+        (
+            wheels
+            / "pymorphy3_dicts_ru-2.4.417150.4580142-py2.py3-none-any.whl"
+        ).write_bytes(b"dicts")
+        (wheels / "dawg2_python-0.9.0-py3-none-any.whl").write_bytes(b"dawg")
+        (wheels / "setuptools-84.0.0-py3-none-any.whl").write_bytes(b"setuptools")
+        (wheels / "joblib-1.5.3-py3-none-any.whl").write_bytes(b"joblib")
+        (wheels / "loguru-0.7.3-py3-none-any.whl").write_bytes(b"loguru")
+        (wheels / "Pint-0.25.3-py3-none-any.whl").write_bytes(b"pint")
+        (wheels / "flexcache-0.3-py3-none-any.whl").write_bytes(b"flexcache")
+        (wheels / "flexparser-0.4-py3-none-any.whl").write_bytes(b"flexparser")
+        (wheels / "platformdirs-4.11.3-py3-none-any.whl").write_bytes(
+            b"platformdirs"
+        )
+        (wheels / "typing_extensions-4.16.0-py3-none-any.whl").write_bytes(
+            b"typing-extensions"
+        )
+        (wheels / "colorama-0.4.6-py2.py3-none-any.whl").write_bytes(b"colorama")
+        (wheels / "win32_setctime-1.2.0-py3-none-any.whl").write_bytes(
+            b"win32-setctime"
+        )
 
     def test_packages_only_selected_model_and_generates_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -50,6 +74,11 @@ class SubmissionArchiveTests(unittest.TestCase):
             checkpoint.mkdir()
             (checkpoint / "model.safetensors").write_bytes(b"duplicate")
             maxpooling = root / "models" / "maxpooling.joblib"
+            synonyms = root / "data" / "synonyms.parquet"
+            synonyms.parent.mkdir(parents=True)
+            synonyms.write_bytes(b"synonyms")
+            unique = root / "data" / "unique.parquet"
+            unique.write_bytes(b"unique")
             output = root / "dist" / "submission.zip"
             config = replace(
                 self.config,
@@ -57,6 +86,12 @@ class SubmissionArchiveTests(unittest.TestCase):
                     self.config.inference,
                     transformer_dir=transformer,
                     maxpooling_path=maxpooling,
+                ),
+                normalization=replace(
+                    self.config.normalization,
+                    enabled=True,
+                    synonyms_path=synonyms,
+                    unique_attributes_path=unique,
                 ),
                 submission=replace(
                     self.config.submission,
@@ -75,6 +110,28 @@ class SubmissionArchiveTests(unittest.TestCase):
         self.assertEqual(solution["model_directory"], "models/transformer")
         self.assertIn("models/transformer/model.safetensors", names)
         self.assertIn("vendor_wheels/polars-1.43.2-py3-none-any.whl", names)
+        self.assertIn("vendor_wheels/pymorphy3-2.0.6-py3-none-any.whl", names)
+        self.assertIn(
+            "vendor_wheels/pymorphy3_dicts_ru-2.4.417150.4580142-py2.py3-none-any.whl",
+            names,
+        )
+        self.assertIn("vendor_wheels/dawg2_python-0.9.0-py3-none-any.whl", names)
+        self.assertIn("vendor_wheels/setuptools-84.0.0-py3-none-any.whl", names)
+        self.assertIn("vendor_wheels/joblib-1.5.3-py3-none-any.whl", names)
+        self.assertIn("vendor_wheels/loguru-0.7.3-py3-none-any.whl", names)
+        self.assertIn("vendor_wheels/Pint-0.25.3-py3-none-any.whl", names)
+        self.assertIn("vendor_wheels/flexcache-0.3-py3-none-any.whl", names)
+        self.assertIn("vendor_wheels/flexparser-0.4-py3-none-any.whl", names)
+        self.assertIn("vendor_wheels/platformdirs-4.11.3-py3-none-any.whl", names)
+        self.assertIn(
+            "vendor_wheels/typing_extensions-4.16.0-py3-none-any.whl",
+            names,
+        )
+        self.assertIn("vendor_wheels/colorama-0.4.6-py2.py3-none-any.whl", names)
+        self.assertIn(
+            "vendor_wheels/win32_setctime-1.2.0-py3-none-any.whl",
+            names,
+        )
         self.assertNotIn(
             "vendor_wheels/catboost-1.2.10-cp312-cp312-manylinux_x86_64.whl",
             names,
