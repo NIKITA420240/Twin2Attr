@@ -67,7 +67,7 @@ models_parameters:
     hpo_weight_decay_min: 0.0
     hpo_weight_decay_max: 0.1
     train_batch_size: 256
-    eval_batch_size: 256
+    eval_batch_size: 64
     gradient_accumulation_steps: 1
     warmup_ratio: 0.06
     max_grad_norm: 1.0
