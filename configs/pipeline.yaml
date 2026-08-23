@@ -1,6 +1,12 @@
 # transformer | maxpooling | fusion | boosting
 training:
   model: transformer
+  data:
+    items: data/items_human.parquet
+    train_matches: data/matches.parquet
+    validation_matches: data/validation_matches.parquet
+    # Optional for inspect; train_matches is used when null.
+    inspect_matches: null
 
 # transformer | maxpooling | fusion | boosting | cascade
 inference:
@@ -9,13 +15,6 @@ inference:
   maxpooling_path: models/twin2attr/maxpooling.joblib
   fusion_path: models/twin2attr/fusion.pt
   boosting_dir: models/twin2attr/boosting
-
-paths:
-  items: data/items_human.parquet
-  train_matches: data/matches.parquet
-  validation_matches: data/validation_matches.parquet
-  # Optional for inspect; train_matches is used when null.
-  inspect_matches: null
 
 normalization:
   enabled: false
@@ -27,7 +26,8 @@ normalization:
   chunk_size: 5000
 
 split:
-  # predefined reads paths.validation_matches; auto splits paths.train_matches.
+  # predefined reads training.data.validation_matches; auto splits
+  # training.data.train_matches.
   mode: auto
   validation_fraction: 0.2
   # pair keeps duplicate/reversed pairs together; item keeps whole connected

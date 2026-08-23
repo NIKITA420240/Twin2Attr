@@ -14,8 +14,17 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
+class TrainingDataSettings:
+    items: Path
+    train_matches: Path
+    validation_matches: Path
+    inspect_matches: Path | None
+
+
+@dataclass(frozen=True, slots=True)
 class TrainingSettings:
     model: str
+    data: TrainingDataSettings
 
     def __post_init__(self) -> None:
         if self.model not in {"transformer", "maxpooling", "fusion", "boosting"}:
@@ -45,14 +54,6 @@ class InferenceSettings:
                 "inference.model must be one of: transformer, maxpooling, fusion, "
                 "boosting, cascade"
             )
-
-
-@dataclass(frozen=True, slots=True)
-class PathSettings:
-    items: Path
-    train_matches: Path
-    validation_matches: Path
-    inspect_matches: Path | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,7 +314,6 @@ class SubmissionSettings:
 class AppConfig:
     training: TrainingSettings
     inference: InferenceSettings
-    paths: PathSettings
     normalization: NormalizationSettings
     split: SplitSettings
     pair_encoding: PairEncodingSettings
@@ -389,11 +389,11 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         raise ValueError("application config must be a mapping")
 
     training = _section(resolved, "training")
+    training_data = _section(training, "data")
     inference_value = resolved.get("inference", training)
     if not isinstance(inference_value, Mapping):
         raise ValueError("config section 'inference' must be a mapping")
     inference = inference_value
-    paths = _section(resolved, "paths")
     normalization = _section(resolved, "normalization")
     split = _section(resolved, "split")
     encoding = _section(resolved, "pair_encoding")
@@ -415,7 +415,26 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     submission = submission_value
 
     return AppConfig(
-        training=TrainingSettings(model=str(_required(training, "model"))),
+        training=TrainingSettings(
+            model=str(_required(training, "model")),
+            data=TrainingDataSettings(
+                items=_path(
+                    _required(training_data, "items"),
+                    "training.data.items",
+                ),
+                train_matches=_path(
+                    _required(training_data, "train_matches"),
+                    "training.data.train_matches",
+                ),
+                validation_matches=_path(
+                    _required(training_data, "validation_matches"),
+                    "training.data.validation_matches",
+                ),
+                inspect_matches=_optional_path(
+                    training_data.get("inspect_matches")
+                ),
+            ),
+        ),
         inference=InferenceSettings(
             model=str(_required(inference, "model")),
             transformer_dir=_path(
@@ -446,18 +465,6 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 ),
                 "inference.boosting_dir",
             ),
-        ),
-        paths=PathSettings(
-            items=_path(_required(paths, "items"), "paths.items"),
-            train_matches=_path(
-                _required(paths, "train_matches"),
-                "paths.train_matches",
-            ),
-            validation_matches=_path(
-                _required(paths, "validation_matches"),
-                "paths.validation_matches",
-            ),
-            inspect_matches=_optional_path(paths.get("inspect_matches")),
         ),
         normalization=NormalizationSettings(
             enabled=_bool(
@@ -750,11 +757,11 @@ __all__ = [
     "NerSettings",
     "NormalizationSettings",
     "PairEncodingSettings",
-    "PathSettings",
     "PhysicalFeatureSettings",
     "RuntimeSettings",
     "SplitSettings",
     "SubmissionSettings",
+    "TrainingDataSettings",
     "TrainingSettings",
     "TransformerParameters",
     "load_app_config",

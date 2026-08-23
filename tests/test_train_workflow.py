@@ -17,10 +17,15 @@ class TrainWorkflowConfigTests(unittest.TestCase):
         )
         self.config = replace(
             config,
-            paths=replace(
-                config.paths,
-                train_matches=PROJECT_ROOT / "data" / "train.parquet",
-                validation_matches=PROJECT_ROOT / "data" / "validation.parquet",
+            training=replace(
+                config.training,
+                data=replace(
+                    config.training.data,
+                    train_matches=PROJECT_ROOT / "data" / "train.parquet",
+                    validation_matches=(
+                        PROJECT_ROOT / "data" / "validation.parquet"
+                    ),
+                ),
             ),
             split=replace(
                 config.split,
