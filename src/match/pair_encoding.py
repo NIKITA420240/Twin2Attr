@@ -104,6 +104,37 @@ def _require_pair_special_tokens(tokenizer: PreTrainedTokenizerBase) -> None:
             )
 
 
+def _pair_special_token_count(tokenizer: PreTrainedTokenizerBase) -> int:
+    """Return the pair-token overhead across Transformers tokenizer APIs.
+
+    Transformers v5 tokenizer backends may omit the legacy pair-builder
+    methods and may not retain pair post-processor metadata. In that case a
+    BERT tokenizer still has an unambiguous ``[CLS] A [SEP] B [SEP]`` layout.
+    """
+    build_inputs = getattr(tokenizer, "build_inputs_with_special_tokens", None)
+    if callable(build_inputs):
+        return int(tokenizer.num_special_tokens_to_add(pair=True))
+
+    reported_count = int(tokenizer.num_special_tokens_to_add(pair=True))
+    if reported_count == 3:
+        return reported_count
+
+    cls_token_id = getattr(tokenizer, "cls_token_id", None)
+    sep_token_id = getattr(tokenizer, "sep_token_id", None)
+    cls_token = getattr(tokenizer, "cls_token", None)
+    sep_token = getattr(tokenizer, "sep_token", None)
+    uses_bert_tokens = cls_token in (None, "[CLS]") and sep_token in (
+        None,
+        "[SEP]",
+    )
+    if cls_token_id is not None and sep_token_id is not None and uses_bert_tokens:
+        return 3
+    raise ValueError(
+        "tokenizer without build_inputs_with_special_tokens must use "
+        "the BERT [CLS] A [SEP] B [SEP] layout"
+    )
+
+
 def _encode_card_sections(
     tokenizer: PreTrainedTokenizerBase,
     card: PreparedCard,
@@ -270,7 +301,7 @@ def encode_prepared_pair(
         tokenizer,
         pair,
         max_length=max_length,
-        special_token_count=tokenizer.num_special_tokens_to_add(pair=True),
+        special_token_count=_pair_special_token_count(tokenizer),
         use_field_tokens=use_field_tokens,
         max_attribute_value_tokens=max_attribute_value_tokens,
     )
@@ -299,7 +330,7 @@ class PairEncodingCollator:
         self.use_field_tokens = use_field_tokens
         self.max_attribute_value_tokens = max_attribute_value_tokens
         self.include_labels = include_labels
-        self.special_token_count = tokenizer.num_special_tokens_to_add(pair=True)
+        self.special_token_count = _pair_special_token_count(tokenizer)
         if max_length <= self.special_token_count:
             raise ValueError("max_length must leave room for pair content after special tokens")
 
@@ -361,7 +392,7 @@ def infer_pair_max_length(
     else:
         sample = pairs
 
-    special_token_count = tokenizer.num_special_tokens_to_add(pair=True)
+    special_token_count = _pair_special_token_count(tokenizer)
     lengths = np.fromiter(
         (
             _encode_card_sections(

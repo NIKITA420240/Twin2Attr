@@ -5,7 +5,7 @@ training:
 # transformer | maxpooling | fusion | boosting | cascade
 inference:
   model: transformer
-  transformer_dir: models/twin2attr/transformer
+  transformer_dir: weights/cross-encoder-russian-msmarco
   maxpooling_path: models/twin2attr/maxpooling.joblib
   fusion_path: models/twin2attr/fusion.pt
   boosting_dir: models/twin2attr/boosting
@@ -50,7 +50,7 @@ pair_encoding:
 
 models_parameters:
   transformer:
-    pretrained_model_path: weights/distilrubert-small-cased-conversational
+    pretrained_model_path: weights/сross-encoder-russian-msmarco
     max_epochs: 15
     hpo_trials: 1
     # Used directly when hpo_trials=1; otherwise these are initial values.
