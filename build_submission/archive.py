@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Iterable
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 from match.config import AppConfig
@@ -14,7 +14,6 @@ from match.models.artifacts import (
     build_solution_manifest,
 )
 from match.paths import PROJECT_ROOT
-
 
 _REQUIRED_PROJECT_FILES = ("run.py", "metadata.json")
 _VENDOR_WHEELS_SOURCE = PurePosixPath("build_submission/vendor_wheels")
@@ -63,6 +62,17 @@ def _selected_artifacts(config: AppConfig) -> TrainingArtifacts:
             maxpooling_path=config.inference.maxpooling_path,
             fusion_path=config.inference.fusion_path,
         )
+    if predictor == "boosting":
+        return TrainingArtifacts(
+            predictor=predictor,
+            boosting_dir=config.inference.boosting_dir,
+        )
+    if predictor == "cascade":
+        return TrainingArtifacts(
+            predictor=predictor,
+            transformer_dir=config.inference.transformer_dir,
+            boosting_dir=config.inference.boosting_dir,
+        )
     raise ValueError(f"unsupported submission predictor: {predictor!r}")
 
 
@@ -86,6 +96,7 @@ def _required_resources(
         artifacts.transformer_dir,
         artifacts.maxpooling_path,
         artifacts.fusion_path,
+        artifacts.boosting_dir,
     ):
         if path is not None:
             resources.append(path)
@@ -147,6 +158,7 @@ def _collect_inputs(
     resources: Iterable[Path],
     *,
     project_root: Path,
+    include_catboost: bool,
 ) -> tuple[_ArchiveInput, ...]:
     sources = [project_root / name for name in _REQUIRED_PROJECT_FILES]
     sources.append(project_root / "src" / "match")
@@ -164,8 +176,14 @@ def _collect_inputs(
             entries[entry.archive_path] = entry
     wheels_source = project_root / Path(_VENDOR_WHEELS_SOURCE)
     _validate_polars_wheels(wheels_source)
-    for entry in _files_for_path(wheels_source, _VENDOR_WHEELS_TARGET):
-        entries[entry.archive_path] = entry
+    wheel_patterns = ["polars-*.whl", "polars_runtime_32-*.whl"]
+    if include_catboost:
+        _validate_catboost_wheels(wheels_source)
+        wheel_patterns.append("catboost-*.whl")
+    for pattern in wheel_patterns:
+        for wheel in sorted(wheels_source.glob(pattern)):
+            entry = _ArchiveInput(wheel, _VENDOR_WHEELS_TARGET / wheel.name)
+            entries[entry.archive_path] = entry
     return tuple(entries[name] for name in sorted(entries, key=str))
 
 
@@ -183,6 +201,13 @@ def _validate_polars_wheels(directory: Path) -> None:
     if missing:
         raise FileNotFoundError(
             f"bundled Polars wheels are missing in {directory}: {missing}"
+        )
+
+
+def _validate_catboost_wheels(directory: Path) -> None:
+    if not any(directory.glob("catboost-*.whl")):
+        raise FileNotFoundError(
+            f"bundled CatBoost wheel is missing in {directory}"
         )
 
 
@@ -208,7 +233,11 @@ def build_submission_archive(
         artifacts,
         map_path=lambda path: str(_archive_path(path, project_root=root)),
     )
-    inputs = _collect_inputs(resources, project_root=root)
+    inputs = _collect_inputs(
+        resources,
+        project_root=root,
+        include_catboost=artifacts.predictor in {"boosting", "cascade"},
+    )
     target = Path(output_path or config.submission.output_path).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.tmp")

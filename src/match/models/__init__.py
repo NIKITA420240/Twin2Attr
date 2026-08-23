@@ -4,6 +4,9 @@ from importlib import import_module
 from typing import Any
 
 _EXPORTS = {
+    "BoostingPredictor": (".boosting.predictor", "BoostingPredictor"),
+    "BoostingTrainer": (".boosting.training", "BoostingTrainer"),
+    "CascadePredictor": (".cascade.predictor", "CascadePredictor"),
     "FusionPredictor": (".fusion.predictor", "FusionPredictor"),
     "FusionTrainer": (".fusion.training", "FusionTrainer"),
     "MatchPredictor": (".contracts", "MatchPredictor"),

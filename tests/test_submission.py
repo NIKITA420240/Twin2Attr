@@ -101,6 +101,54 @@ class PredictorLoadingTests(unittest.TestCase):
             device=None,
         )
 
+    def test_composes_cascade_from_boosting_and_transformer(self) -> None:
+        boosting = object()
+        transformer = object()
+        cascade = object()
+        with (
+            patch(
+                "match.models.boosting.predictor.BoostingPredictor.load",
+                return_value=boosting,
+            ) as load_boosting,
+            patch(
+                "match.models.transformer.predictor.TransformerPredictor.load",
+                return_value=transformer,
+            ) as load_transformer,
+            patch(
+                "match.models.cascade.predictor.CascadePredictor",
+                return_value=cascade,
+            ) as create_cascade,
+        ):
+            result = build_predictor(
+                {
+                    "predictor": "cascade",
+                    "fast_model": "boosting",
+                    "main_model": "transformer",
+                    "boosting_directory": "models/boosting",
+                    "model_directory": "models/transformer",
+                    "negative_threshold": 0.02,
+                    "positive_threshold": 0.98,
+                },
+                self.root,
+            )
+
+        self.assertIs(result, cascade)
+        load_boosting.assert_called_once_with(
+            self.root / "models" / "boosting",
+            thread_count=-1,
+        )
+        load_transformer.assert_called_once_with(
+            self.root / "models" / "transformer",
+            batch_size=64,
+            device=None,
+        )
+        create_cascade.assert_called_once_with(
+            boosting,
+            transformer,
+            negative_threshold=0.02,
+            positive_threshold=0.98,
+        )
+
     def test_rejects_unknown_predictor(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unsupported predictor"):
             build_predictor({"predictor": "unknown"}, self.root)

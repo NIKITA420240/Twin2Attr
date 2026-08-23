@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any
 
 from .contracts import MatchPredictor, ModelTrainer
 
@@ -32,6 +33,10 @@ def build_trainer(config: AppConfig) -> ModelTrainer:
             transformer=TransformerTrainer(config),
             maxpooling=MaxPoolingTrainer(config),
         )
+    if config.training.model == "boosting":
+        from .boosting.training import BoostingTrainer
+
+        return BoostingTrainer(config)
     raise ValueError(f"Unsupported training model: {config.training.model!r}")
 
 
@@ -96,6 +101,52 @@ def build_predictor(
             maxpooling=maxpooling,
             batch_size=int(solution.get("fusion_batch_size", 512)),
             device=device,
+        )
+    if predictor_name == "boosting":
+        from .boosting.predictor import BoostingPredictor
+
+        return BoostingPredictor.load(
+            _artifact_path(
+                solution.get("boosting_directory"),
+                root=solution_root,
+                name="boosting_directory",
+            ),
+            thread_count=int(solution.get("boosting_thread_count", -1)),
+        )
+    if predictor_name == "cascade":
+        from .boosting.predictor import BoostingPredictor
+        from .cascade.predictor import CascadePredictor
+        from .transformer.predictor import TransformerPredictor
+
+        fast_name = str(solution.get("fast_model", "boosting"))
+        main_name = str(solution.get("main_model", "transformer"))
+        if fast_name != "boosting" or main_name != "transformer":
+            raise ValueError(
+                "current cascade supports fast_model='boosting' and "
+                "main_model='transformer'"
+            )
+        fast_model = BoostingPredictor.load(
+            _artifact_path(
+                solution.get("boosting_directory"),
+                root=solution_root,
+                name="boosting_directory",
+            ),
+            thread_count=int(solution.get("boosting_thread_count", -1)),
+        )
+        main_model = TransformerPredictor.load(
+            _artifact_path(
+                solution.get("model_directory"),
+                root=solution_root,
+                name="model_directory",
+            ),
+            batch_size=int(solution.get("batch_size", 64)),
+            device=device,
+        )
+        return CascadePredictor(
+            fast_model,
+            main_model,
+            negative_threshold=float(solution.get("negative_threshold", 0.01)),
+            positive_threshold=float(solution.get("positive_threshold", 0.99)),
         )
     raise ValueError(f"Unsupported predictor in solution.json: {predictor_name!r}")
 
