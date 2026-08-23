@@ -52,7 +52,7 @@ inference:
   boosting_dir: models/twin2attr/boosting
 
 normalization:
-  enabled: false
+  enabled: true
   source_column: attributes
   output_column: normalized_attributes
   synonyms_path: data/synonyms.parquet
@@ -72,12 +72,12 @@ pair_encoding:
 
 models_parameters:
   transformer:
-    pretrained_model_path: models/rubert-base-cased
+    pretrained_model_path: models/rubert-tiny2
     max_epochs: 5
     hpo_trials: 1
     # Used directly when hpo_trials=1; otherwise these are initial values.
-    learning_rate: 0.00000651546924074236
-    weight_decay: 0.06357496988887383
+    learning_rate: 0.0000145034306017893
+    weight_decay: 0.0008071667762206581
     hpo_learning_rate_min: 0.000001
     hpo_learning_rate_max: 0.00005
     hpo_weight_decay_min: 0.0
@@ -141,7 +141,7 @@ artifacts:
 
 features:
   ner:
-    enabled: false
+    enabled: true
     provider: word_ner
     model_dir: models/ner/rubert_tiny2_word_ner
     cluster_centers_path: models/ner/cluster_centers.pt
