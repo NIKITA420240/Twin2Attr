@@ -330,6 +330,10 @@ class PairEncodingCollator:
                     raise ValueError("a batch cannot mix labeled and unlabeled pairs")
             else:
                 batch["labels"] = torch.tensor(labels, dtype=torch.long)
+                batch["sample_weights"] = torch.tensor(
+                    [pair.sample_weight for pair in pairs],
+                    dtype=torch.float32,
+                )
         return batch
 
 

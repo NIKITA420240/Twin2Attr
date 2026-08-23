@@ -42,6 +42,7 @@ class PreparedPair:
     right: PreparedCard
     label: int | None
     category: str
+    sample_weight: float = 1.0
 
 
 def _parse_attributes(raw: Any, *, item_id: Any) -> tuple[AttributePair, ...]:
@@ -124,6 +125,7 @@ def prepare_pairs(
     left_id_column: str = "id1",
     right_id_column: str = "id2",
     label_column: str = "target",
+    weight_column: str = "sample_weight",
 ) -> list[PreparedPair]:
     """Build structured training or inference pairs without tokenization.
 
@@ -148,6 +150,9 @@ def prepare_pairs(
     selected_columns = [left_id_column, right_id_column]
     if has_labels:
         selected_columns.append(label_column)
+    has_weights = weight_column in matches.columns
+    if has_weights:
+        selected_columns.append(weight_column)
 
     pairs: list[PreparedPair] = []
     for row in matches.select(selected_columns).iter_rows():
@@ -165,12 +170,17 @@ def prepare_pairs(
             if raw_label is None or raw_label not in (0, 1, False, True):
                 raise ValueError("target labels must contain only 0 and 1")
             label = int(raw_label)
+        raw_weight = row[-1] if has_weights else 1.0
+        sample_weight = float(raw_weight)
+        if not sample_weight > 0.0:
+            raise ValueError("sample weights must be positive")
         pairs.append(
             PreparedPair(
                 left=left,
                 right=right,
                 label=label,
                 category=left.category,
+                sample_weight=sample_weight,
             )
         )
     return pairs

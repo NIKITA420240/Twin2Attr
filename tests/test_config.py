@@ -15,10 +15,12 @@ class AppConfigTests(unittest.TestCase):
 
     def test_loads_resolved_typed_config(self) -> None:
         self.assertIsInstance(self.config, AppConfig)
-        self.assertIsInstance(self.config.training.data.items, Path)
-        self.assertTrue(self.config.training.data.items.is_absolute())
-        self.assertEqual(self.config.split.seed, self.config.runtime.seed)
+        base = self.config.data_model_description.base_dataset
+        self.assertIsInstance(base.items, Path)
+        self.assertTrue(base.items.is_absolute())
+        self.assertEqual(base.seed, self.config.runtime.seed)
         self.assertEqual(self.config.training.model, "transformer")
+        self.assertEqual(self.config.training.data_model, "base_dataset")
         self.assertEqual(self.config.inference.model, "transformer")
         self.assertEqual(
             self.config.inference.transformer_dir,
@@ -33,12 +35,39 @@ class AppConfigTests(unittest.TestCase):
     def test_applies_overrides_before_creating_typed_config(self) -> None:
         config = load_app_config_file(
             PROJECT_ROOT / "configs" / "pipeline.yaml",
-            ["runtime.seed=99", "training.model=fusion"],
+            [
+                "runtime.seed=99",
+                "training.model=fusion",
+                "training.data_model=mix_dataset",
+            ],
         )
 
         self.assertEqual(config.runtime.seed, 99)
-        self.assertEqual(config.split.seed, 99)
+        self.assertEqual(config.data_model_description.base_dataset.seed, 99)
         self.assertEqual(config.training.model, "fusion")
+        self.assertEqual(config.training.data_model, "mix_dataset")
+
+    def test_loads_mixed_dataset_sources(self) -> None:
+        mixed = self.config.data_model_description.mix_dataset
+
+        self.assertEqual(mixed.validation_source, "human")
+        self.assertEqual(mixed.validation_fraction, 0.2)
+        self.assertEqual([source.name for source in mixed.sources], ["human", "llm"])
+        llm = mixed.sources[1]
+        self.assertEqual(llm.weight, 1.0)
+        self.assertEqual(llm.max_rows, 750_000)
+        self.assertEqual(llm.splitter.total_votes, 9)
+        self.assertEqual(llm.splitter.negative_threshold, 2)
+        self.assertEqual(llm.splitter.positive_threshold, 7)
+
+    def test_rejects_fractional_vote_threshold(self) -> None:
+        with self.assertRaisesRegex(ValueError, "whole vote counts"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                [
+                    "data_model_description.mix_dataset.sources.llm.splitter.negative_threshold=2.5"
+                ],
+            )
 
     def test_applies_transformer_optimizer_overrides(self) -> None:
         config = load_app_config_file(

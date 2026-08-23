@@ -52,10 +52,17 @@ def prepare_training_data(
 ) -> TrainingData:
     """Create aligned train and validation pairs without reading any files."""
     train_size = train_matches.height
+    def selected(frame: pl.DataFrame) -> pl.DataFrame:
+        if "sample_weight" not in frame.columns:
+            frame = frame.with_columns(
+                pl.lit(1.0).cast(pl.Float32).alias("sample_weight")
+            )
+        return frame.select("id1", "id2", "target", "sample_weight")
+
     combined_matches = pl.concat(
         [
-            train_matches.select("id1", "id2", "target"),
-            validation_matches.select("id1", "id2", "target"),
+            selected(train_matches),
+            selected(validation_matches),
         ],
         how="vertical_relaxed",
     )

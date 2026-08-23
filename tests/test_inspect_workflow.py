@@ -1,7 +1,7 @@
 import unittest
 from contextlib import nullcontext
 from types import SimpleNamespace
-from unittest.mock import ANY, patch
+from unittest.mock import ANY, Mock, patch
 
 from match.config import load_app_config_file
 from match.paths import PROJECT_ROOT
@@ -16,6 +16,11 @@ class InspectWorkflowTests(unittest.TestCase):
         items = object()
         matches = object()
         pairs = [object(), object()]
+        data_model = Mock()
+        data_model.load_inspection_frames.return_value = SimpleNamespace(
+            items=items,
+            matches=matches,
+        )
 
         with (
             patch(
@@ -30,9 +35,9 @@ class InspectWorkflowTests(unittest.TestCase):
                 ),
             ),
             patch(
-                "match.workflows.inspect.read_parquet",
-                side_effect=[items, matches],
-            ) as read_parquet,
+                "match.workflows.inspect.build_data_model",
+                return_value=data_model,
+            ),
             patch(
                 "match.workflows.inspect.prepare_pair_rows",
                 return_value=pairs,
@@ -45,7 +50,7 @@ class InspectWorkflowTests(unittest.TestCase):
             result = inspect_max_length(config)
 
         self.assertEqual(result, 256)
-        self.assertEqual(read_parquet.call_count, 2)
+        data_model.load_inspection_frames.assert_called_once_with()
         prepare_pair_rows.assert_called_once_with(
             items,
             matches,
