@@ -61,6 +61,9 @@ Polars wheels из `build_submission/vendor_wheels` также автомати�
 добавляются в архив. Если Polars отсутствует в evaluator image, `run.py`
 устанавливает эти wheels во временную директорию до импорта inference-кода.
 CatBoost wheel добавляется и устанавливается только для `boosting` и `cascade`.
+При включённой нормализации или physical provider сборщик аналогично добавляет
+полный runtime предобработки: `pymorphy3`, русские словари, `joblib`, `loguru`,
+`pint` и их офлайн-зависимости.
 
 Сборщик проверяет наличие каждого обязательного файла до создания ZIP и не
 добавляет `__pycache__`, `.cache` и промежуточные `checkpoint-*`. Конфигурацию,
