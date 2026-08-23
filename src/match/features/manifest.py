@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ..config import (
+    FEATURE_PROVIDER_NAMES,
     FeatureSettings,
     NerSettings,
     NormalizationSettings,
@@ -37,9 +38,12 @@ def feature_settings_from_manifest(
     physical_values = values.get("physical")
     physical = physical_values if isinstance(physical_values, Mapping) else {}
     return FeatureSettings(
+        execution_order=tuple(
+            str(name)
+            for name in values.get("execution_order", FEATURE_PROVIDER_NAMES)
+        ),
         normalization=NormalizationSettings(
             enabled=bool(normalization.get("enabled", False)),
-            source_column=str(normalization.get("source_column", "attributes")),
             output_column=str(
                 normalization.get("output_column", "normalized_attributes")
             ),

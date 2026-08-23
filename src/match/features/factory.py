@@ -54,7 +54,6 @@ class ItemEnricherFactory:
         return NormalizationItemEnricher(
             synonyms_path=settings.synonyms_path,
             unique_attributes_path=settings.unique_attributes_path,
-            source_column=settings.source_column,
             output_column=settings.output_column,
             n_jobs=settings.n_jobs,
             chunk_size=settings.chunk_size,
@@ -109,18 +108,17 @@ def _pipeline(
     device: str | None,
 ) -> FeaturePipeline:
     factory = ItemEnricherFactory(device=device)
-    # Feature order is application behavior: normalize the source attributes,
-    # then add semantic and deterministic values extracted from the item name.
-    configured = (
-        ("normalization", settings.normalization),
-        ("ner", settings.ner),
-        ("physical", settings.physical),
-    )
+    # The validated order is application behavior and defines merge precedence.
+    configured = {
+        "normalization": settings.normalization,
+        "ner": settings.ner,
+        "physical": settings.physical,
+    }
     return FeaturePipeline(
         tuple(
-            factory.create(name, provider_settings)
-            for name, provider_settings in configured
-            if provider_settings.enabled
+            factory.create(name, configured[name])
+            for name in settings.execution_order
+            if configured[name].enabled
         )
     )
 

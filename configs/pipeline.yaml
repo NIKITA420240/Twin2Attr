@@ -140,9 +140,14 @@ artifacts:
   solution_path: solution.json
 
 features:
+  # Every stage must occur exactly once; enabled controls whether it runs.
+  execution_order:
+    - normalization
+    - ner
+    - physical
+
   normalization:
     enabled: true
-    source_column: attributes
     output_column: normalized_attributes
     synonyms_path: data/synonyms.parquet
     unique_attributes_path: data/unique_attributes.parquet

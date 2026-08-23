@@ -24,6 +24,10 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(self.config.inference.model, "transformer")
         self.assertTrue(self.config.features.normalization.enabled)
         self.assertEqual(
+            self.config.features.execution_order,
+            ("normalization", "ner", "physical"),
+        )
+        self.assertEqual(
             self.config.features.normalization.output_column,
             "normalized_attributes",
         )
@@ -112,6 +116,23 @@ class AppConfigTests(unittest.TestCase):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
                 ["models_parameters.transformer.learning_rate=0"],
+            )
+
+    def test_rejects_incomplete_feature_execution_order(self) -> None:
+        with self.assertRaisesRegex(ValueError, "every feature exactly once"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                ["features.execution_order=[normalization,ner]"],
+            )
+
+    def test_rejects_duplicate_feature_execution_order(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must not contain duplicates"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                [
+                    "features.execution_order="
+                    "[normalization,ner,physical,normalization]"
+                ],
             )
 
     def test_loads_disabled_ner_settings_without_artifacts(self) -> None:
