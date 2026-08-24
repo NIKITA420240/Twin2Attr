@@ -130,29 +130,42 @@ class UnifiedCliTests(unittest.TestCase):
             ):
                 (wheels / name).write_bytes(b"wheel")
             solution = root / "solution.json"
-            solution.write_text(
-                json.dumps({"normalization": {"enabled": True}}),
-                encoding="utf-8",
+            manifests = (
+                {"features": {"normalization": {"enabled": True}}},
+                {"normalization": {"enabled": True}},
             )
-            with (
-                patch.object(
-                    run_module.importlib,
-                    "import_module",
-                    side_effect=[missing, object(), object(), object(), object()],
-                ) as import_module,
-                patch.object(run_module.subprocess, "run") as install,
-                patch.object(run_module.sys, "path", list(run_module.sys.path)),
-                patch.object(run_module, "__file__", str(root / "run.py")),
-            ):
-                ensure_preprocessing_runtime_available(solution)
+            for manifest in manifests:
+                with self.subTest(manifest=manifest):
+                    solution.write_text(json.dumps(manifest), encoding="utf-8")
+                    with (
+                        patch.object(
+                            run_module.importlib,
+                            "import_module",
+                            side_effect=[
+                                missing,
+                                object(),
+                                object(),
+                                object(),
+                                object(),
+                            ],
+                        ) as import_module,
+                        patch.object(run_module.subprocess, "run") as install,
+                        patch.object(
+                            run_module.sys,
+                            "path",
+                            list(run_module.sys.path),
+                        ),
+                        patch.object(run_module, "__file__", str(root / "run.py")),
+                    ):
+                        ensure_preprocessing_runtime_available(solution)
 
-        command = install.call_args.args[0]
-        self.assertIn("--no-index", command)
-        self.assertIn("pymorphy3==2.0.6", command)
-        self.assertIn("joblib==1.5.3", command)
-        self.assertIn("loguru==0.7.3", command)
-        self.assertIn("pint==0.25.3", command)
-        self.assertEqual(import_module.call_count, 5)
+                    command = install.call_args.args[0]
+                    self.assertIn("--no-index", command)
+                    self.assertIn("pymorphy3==2.0.6", command)
+                    self.assertIn("joblib==1.5.3", command)
+                    self.assertIn("loguru==0.7.3", command)
+                    self.assertIn("pint==0.25.3", command)
+                    self.assertEqual(import_module.call_count, 5)
 
 
 if __name__ == "__main__":

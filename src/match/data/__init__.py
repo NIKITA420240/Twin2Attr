@@ -3,10 +3,7 @@
 from importlib import import_module
 from typing import Any
 
-
 _EXPORTS = {
-    "TrainingMatchPaths": (".loading", "TrainingMatchPaths"),
-    "load_training_matches": (".loading", "load_training_matches"),
     "read_parquet": (".loading", "read_parquet"),
     "TrainingData": (".preparation", "TrainingData"),
     "prepare_pair_rows": (".preparation", "prepare_pair_rows"),

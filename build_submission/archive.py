@@ -115,11 +115,12 @@ def _required_resources(
     ):
         if path is not None:
             resources.append(path)
-    if config.normalization.enabled:
+    normalization = config.features.normalization
+    if normalization.enabled:
         resources.extend(
             (
-                config.normalization.synonyms_path,
-                config.normalization.unique_attributes_path,
+                normalization.synonyms_path,
+                normalization.unique_attributes_path,
             )
         )
     if config.features.ner.enabled:
@@ -337,7 +338,8 @@ def build_submission_archive(
         project_root=root,
         include_catboost=artifacts.predictor in {"boosting", "cascade"},
         include_preprocessing_runtime=(
-            config.normalization.enabled or config.features.physical.enabled
+            config.features.normalization.enabled
+            or config.features.physical.enabled
         ),
     )
     target = Path(output_path or config.submission.output_path).expanduser().resolve()

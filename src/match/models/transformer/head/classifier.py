@@ -130,10 +130,8 @@ class PoolingSequenceClassifier(PreTrainedModel):
         backbone_kwargs = dict(kwargs)
         if token_type_ids is not None:
             backbone_kwargs["token_type_ids"] = token_type_ids
-        # Pooling only needs the final contextual representation. Some
-        # pretrained configs enable these diagnostic outputs by default;
-        # returning them makes Trainer retain every layer and attention map
-        # throughout evaluation, which can exhaust GPU memory.
+        # The pooling head only consumes the final contextual representation.
+        # Disable diagnostic tensors even when the pretrained config enables them.
         backbone_kwargs["output_hidden_states"] = False
         backbone_kwargs["output_attentions"] = False
         outputs = self.backbone(

@@ -51,12 +51,16 @@ class WeightedSequenceTrainer(Trainer):
     ) -> torch.Tensor | tuple[torch.Tensor, Any]:
         del num_items_in_batch
         labels = inputs.pop("labels")
+        sample_weights = inputs.pop("sample_weights")
         outputs = model(**inputs)
-        loss = F.cross_entropy(
+        losses = F.cross_entropy(
             outputs.logits,
             labels,
             weight=self.class_weights.to(outputs.logits.device),
+            reduction="none",
         )
+        weights = sample_weights.to(outputs.logits.device)
+        loss = torch.sum(losses * weights) / torch.sum(weights)
         return (loss, outputs) if return_outputs else loss
 
 

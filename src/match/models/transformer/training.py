@@ -4,24 +4,25 @@ from __future__ import annotations
 
 import inspect
 import json
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 import torch
 from loguru import logger
 from transformers import AutoTokenizer, EarlyStoppingCallback, TrainingArguments
 
+from ...config import AppConfig
+from ...data import TrainingData
 from ...pair_encoding import (
     PairEncodingCollator,
     PreparedPairDataset,
     add_pair_special_tokens,
     infer_pair_max_length,
 )
-from ...config import AppConfig
-from ...data import TrainingData
 from ...prepare_data import PreparedPair
 from ..artifacts import TrainingArtifacts
 from .config import ResolvedTrainingConfig, SequenceClassifierConfig, TrainingResult
@@ -137,7 +138,10 @@ def train_sequence_classifier(
         int(train_counts[0]),
         int(train_counts[1]),
     )
-    class_weights = compute_class_weights(train_labels)
+    class_weights = compute_class_weights(
+        train_labels,
+        [pair.sample_weight for pair in train_pairs],
+    )
     logger.info("Class weights [different, match]: {}", class_weights.tolist())
 
     output_path = Path(output_dir).resolve()
