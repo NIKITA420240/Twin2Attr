@@ -22,6 +22,7 @@ from ...pair_encoding import (
     PreparedPairDataset,
     add_pair_special_tokens,
     infer_pair_max_length,
+    pair_special_token_ids,
 )
 from ...prepare_data import PreparedPair
 from ..artifacts import TrainingArtifacts
@@ -149,6 +150,11 @@ def train_sequence_classifier(
     tokenizer = AutoTokenizer.from_pretrained(config.model_path)
     if config.use_field_tokens:
         add_pair_special_tokens(tokenizer)
+        if config.train_new_token_embeddings_only:
+            logger.info(
+                "Word-embedding updates restricted to field token ids: {}",
+                pair_special_token_ids(tokenizer),
+            )
     max_length = config.max_length
     if max_length is None:
         max_length = infer_pair_max_length(
@@ -174,6 +180,8 @@ def train_sequence_classifier(
         config.model_path,
         tokenizer,
         use_field_tokens=config.use_field_tokens,
+        train_new_token_embeddings_only=config.train_new_token_embeddings_only,
+        train_last_n_layers=config.train_last_n_layers,
         head_type=config.head_type,
         head_config=config.head_config,
     )
@@ -269,6 +277,8 @@ def train_sequence_classifier(
             best_hyperparameters["learning_rate"]
             * learning_rate_multipliers.embeddings
         ),
+        train_new_token_embeddings_only=config.train_new_token_embeddings_only,
+        train_last_n_layers=config.train_last_n_layers,
         head_learning_rate=(
             best_hyperparameters["learning_rate"] * learning_rate_multipliers.head
         ),
@@ -308,6 +318,8 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
         hpo_trials=parameters.hpo_trials,
         learning_rate=parameters.learning_rate,
         embeddings_learning_rate=parameters.embeddings_learning_rate,
+        train_new_token_embeddings_only=parameters.train_new_token_embeddings_only,
+        train_last_n_layers=parameters.train_last_n_layers,
         head_learning_rate=parameters.head_learning_rate,
         layerwise_lr_decay=parameters.layerwise_lr_decay,
         weight_decay=parameters.weight_decay,

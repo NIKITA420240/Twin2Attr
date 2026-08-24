@@ -35,6 +35,8 @@ class SequenceClassifierConfig:
     head_type: str = "default"
     head_config: PoolingHeadConfig = PoolingHeadConfig()
     embeddings_learning_rate: float | None = None
+    train_new_token_embeddings_only: bool = False
+    train_last_n_layers: int | None = None
     head_learning_rate: float | None = None
     layerwise_lr_decay: float = 1.0
 
@@ -91,6 +93,12 @@ class SequenceClassifierConfig:
             raise ValueError("max_length_hard_cap must be at least 8")
         if self.head_type not in {"default", "pooling"}:
             raise ValueError("head_type must be 'default' or 'pooling'")
+        if self.train_new_token_embeddings_only and not self.use_field_tokens:
+            raise ValueError(
+                "train_new_token_embeddings_only requires use_field_tokens"
+            )
+        if self.train_last_n_layers is not None and self.train_last_n_layers < 1:
+            raise ValueError("train_last_n_layers must be positive or None")
 
     @property
     def resolved_embeddings_learning_rate(self) -> float:
@@ -110,6 +118,8 @@ class ResolvedTrainingConfig:
     gradient_accumulation_steps: int
     learning_rate: float
     embeddings_learning_rate: float
+    train_new_token_embeddings_only: bool
+    train_last_n_layers: int | None
     head_learning_rate: float
     layerwise_lr_decay: float
     weight_decay: float

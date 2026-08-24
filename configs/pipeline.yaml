@@ -52,7 +52,7 @@ inference:
   boosting_dir: models/twin2attr/boosting
 
 pair_encoding:
-  use_field_tokens: false
+  use_field_tokens: true
   # null disables per-attribute value truncation.
   max_attribute_value_tokens: 32
   # null lets the training data determine the limit.
@@ -63,25 +63,28 @@ pair_encoding:
 
 models_parameters:
   transformer:
-    pretrained_model_path: weights/cross-encoder-russian-msmarco
-    max_epochs: 15
+    pretrained_model_path: models/mmarco-mMiniLMv2-L12-H384-v1
+    max_epochs: 8
     hpo_trials: 1
     # Used directly when hpo_trials=1; otherwise these are initial values.
     # Base LR for Transformer encoder layers and the value tuned by HPO.
-    learning_rate: 0.0000145034306017893
+    learning_rate: 1.0e-5
     # Embeddings change more conservatively; the newly initialized head learns faster.
-    embeddings_learning_rate: 0.000005
-    head_learning_rate: 0.00003
-    # 1.0 keeps the same LR on every encoder layer; try 0.8 after the baseline.
-    layerwise_lr_decay: 1.0
-    weight_decay: 0.0008071667762206581
+    embeddings_learning_rate: 1.0e-6
+    # false restores full-vocabulary fine-tuning; true updates only [KEY]/[VAL].
+    train_new_token_embeddings_only: false
+    # null restores fine-tuning of every encoder layer.
+    train_last_n_layers: null
+    head_learning_rate: 1.0e-4
+    layerwise_lr_decay: 0.90
+    weight_decay: 0.01
     hpo_learning_rate_min: 0.000001
     hpo_learning_rate_max: 0.00005
     hpo_weight_decay_min: 0.0
     hpo_weight_decay_max: 0.1
-    train_batch_size: 256
+    train_batch_size: 64
     eval_batch_size: 64
-    gradient_accumulation_steps: 1
+    gradient_accumulation_steps: 4
     warmup_ratio: 0.06
     max_grad_norm: 1.0
     early_stopping_patience: 2
@@ -94,11 +97,11 @@ models_parameters:
       # Supported values: cls, mean, max, attention. Their outputs are concatenated.
       poolings: [cls, attention]
       # Empty list gives a single linear classifier after pooling.
-      mlp_hidden_dims: [312]
+      mlp_hidden_dims: [384]
       dropout: 0.15
-      attention_hidden_dim: 156
+      attention_hidden_dim: 192
       # Independent learned token-importance distributions, concatenated before MLP.
-      attention_num_heads: 2
+      attention_num_heads: 1
 
   maxpooling:
     vector_size: 256
