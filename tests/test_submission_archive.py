@@ -12,10 +12,19 @@ from match.paths import PROJECT_ROOT
 
 class SubmissionArchiveTests(unittest.TestCase):
     def setUp(self) -> None:
-        config = load_app_config_file(PROJECT_ROOT / "configs" / "pipeline.yaml")
+        config = load_app_config_file(
+            PROJECT_ROOT / "configs" / "pipeline.yaml"
+        )
         self.config = replace(
             config,
-            normalization=replace(config.normalization, enabled=False),
+            features=replace(
+                config.features,
+                normalization=replace(
+                    config.features.normalization,
+                    enabled=False,
+                ),
+                ner=replace(config.features.ner, enabled=False),
+            ),
         )
 
     @staticmethod
@@ -102,11 +111,14 @@ class SubmissionArchiveTests(unittest.TestCase):
                     transformer_dir=transformer,
                     maxpooling_path=maxpooling,
                 ),
-                normalization=replace(
-                    self.config.normalization,
-                    enabled=True,
-                    synonyms_path=synonyms,
-                    unique_attributes_path=unique,
+                features=replace(
+                    self.config.features,
+                    normalization=replace(
+                        self.config.features.normalization,
+                        enabled=True,
+                        synonyms_path=synonyms,
+                        unique_attributes_path=unique,
+                    ),
                 ),
                 submission=replace(
                     self.config.submission,
@@ -179,14 +191,14 @@ class SubmissionArchiveTests(unittest.TestCase):
                     self.config.inference,
                     transformer_dir=transformer,
                 ),
-                normalization=replace(
-                    self.config.normalization,
-                    enabled=True,
-                    synonyms_path=synonyms,
-                    unique_attributes_path=unique,
-                ),
                 features=replace(
                     self.config.features,
+                    normalization=replace(
+                        self.config.features.normalization,
+                        enabled=True,
+                        synonyms_path=synonyms,
+                        unique_attributes_path=unique,
+                    ),
                     ner=replace(
                         self.config.features.ner,
                         enabled=True,
@@ -214,7 +226,12 @@ class SubmissionArchiveTests(unittest.TestCase):
         self.assertIn("data/unique.parquet", names)
         self.assertIn("models/ner/model.pt", names)
         self.assertIn("models/cluster_centers.pt", names)
-        self.assertTrue(solution["normalization"]["enabled"])
+        self.assertNotIn("normalization", solution)
+        self.assertEqual(
+            solution["features"]["execution_order"],
+            ["normalization", "ner", "physical"],
+        )
+        self.assertTrue(solution["features"]["normalization"]["enabled"])
         self.assertTrue(solution["features"]["ner"]["enabled"])
         self.assertTrue(solution["features"]["physical"]["enabled"])
 

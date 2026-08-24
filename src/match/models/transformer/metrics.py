@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 import torch
@@ -10,16 +11,26 @@ from sklearn.metrics import average_precision_score
 from transformers import EvalPrediction
 
 
-def compute_class_weights(labels: Sequence[int]) -> torch.Tensor:
+def compute_class_weights(
+    labels: Sequence[int],
+    sample_weights: Sequence[float] | None = None,
+) -> torch.Tensor:
     label_array = np.asarray(labels, dtype=np.int64)
     if label_array.ndim != 1 or label_array.size == 0:
         raise ValueError("labels must be a non-empty one-dimensional sequence")
     if not set(np.unique(label_array)).issubset({0, 1}):
         raise ValueError("labels must contain only 0 and 1")
-    counts = np.bincount(label_array, minlength=2)
+    weights_array = (
+        np.ones(label_array.size, dtype=np.float64)
+        if sample_weights is None
+        else np.asarray(sample_weights, dtype=np.float64)
+    )
+    if weights_array.shape != label_array.shape or np.any(weights_array <= 0.0):
+        raise ValueError("sample_weights must be positive and aligned with labels")
+    counts = np.bincount(label_array, weights=weights_array, minlength=2)
     if np.any(counts == 0):
         raise ValueError("both classes must be present in training labels")
-    weights = label_array.size / (2.0 * counts.astype(np.float64))
+    weights = weights_array.sum() / (2.0 * counts.astype(np.float64))
     return torch.tensor(weights, dtype=torch.float32)
 
 

@@ -114,36 +114,46 @@ uv run python run.py inspect
 
 ```bash
 uv run python run.py train \
-  normalization.enabled=true \
+  features.normalization.enabled=true \
   pair_encoding.max_attribute_value_tokens=48 \
   pair_encoding.max_length=256
 ```
 
-Разделение данных настраивается через `split`. В режиме `predefined` pipeline
-читает готовые `paths.train_matches` и `paths.validation_matches` и проверяет
-утечки. В режиме `auto` файл `paths.train_matches` считается полным набором
-размеченных пар, после чего создаётся group-aware split с сохранением
-распределения `category × target`:
+Источник данных выбирается через `training.data_model`. `base_dataset` обучается
+только на человеческой разметке и создаёт group-aware validation. Для него пути
+и параметры разделения находятся в `data_model_description.base_dataset`:
 
 ```bash
 uv run python run.py train \
-  paths.items=data/items_human.parquet \
-  paths.train_matches=data/matches.parquet \
-  split.mode=auto \
-  split.leakage_scope=item \
-  split.validation_fraction=0.2
+  training.data_model=base_dataset \
+  data_model_description.base_dataset.items=data/items_human.parquet \
+  data_model_description.base_dataset.matches=data/matches.parquet \
+  data_model_description.base_dataset.leakage_scope=item \
+  data_model_description.base_dataset.validation_fraction=0.2
 ```
 
 `leakage_scope=pair` не разносит одинаковые и обратные пары по разным частям.
 `leakage_scope=item` не допускает ни одного общего товара, но из-за связанных
 компонент может менее точно сохранять требуемое распределение.
 
+`mix_dataset` добавляет к human train уверенные LLM-метки, но validation всегда
+строит только из `validation_source`. Веса источников умножают loss каждого
+обучающего примера, а validation использует нейтральный вес:
+
+```bash
+uv run python run.py train training.data_model=mix_dataset
+```
+
+Настройки источников, пороги голосов и ограничение размера LLM-выборки находятся
+в `data_model_description.mix_dataset.sources`.
+
 Итоговая модель выбирается одним параметром `training.model`. Значения
 `transformer`, `maxpooling` и `boosting` обучают соответствующую модель, а `fusion`
 автоматически обучает Transformer, MaxPooling и объединяющий классификатор.
 `cascade` доступен только в `inference.model`: он использует уже независимо
 обученные CatBoost и Transformer и сам не обучается.
-Нормализация отдельно управляется флагом `normalization.enabled`. Например:
+Нормализация является первым этапом feature pipeline и управляется флагом
+`features.normalization.enabled`. Например:
 
 ```bash
 uv run python run.py train \
@@ -232,9 +242,20 @@ features:
     chunk_size: 10000
 ```
 
-Если включены оба провайдера, порядок по умолчанию выглядит так:
-`normalization → NER → physical → model`. Исходные атрибуты карточки на каждом
-шаге имеют приоритет над автоматически извлечёнными значениями.
+Порядок этапов задаётся явно в `features.execution_order`:
+
+```yaml
+features:
+  execution_order:
+    - normalization
+    - ner
+    - physical
+```
+
+Каждый известный этап должен встретиться ровно один раз, а `enabled` определяет,
+будет ли он запущен. Порядок также задаёт приоритет автоматически извлечённых
+значений: результат более раннего этапа не заменяется более поздним при
+`merge_policy: missing_only`.
 
 OmegaConf используется только на границе загрузки YAML и dotlist overrides.
 Внутри workflow передаётся неизменяемый типизированный `AppConfig`, поэтому

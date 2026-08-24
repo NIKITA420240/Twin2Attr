@@ -10,6 +10,7 @@ from ..config import (
     AppConfig,
     FeatureSettings,
     NerSettings,
+    NormalizationSettings,
     PhysicalFeatureSettings,
 )
 from .contracts import ItemEnricher
@@ -26,8 +27,12 @@ class ItemEnricherFactory:
     def create(
         self,
         provider: str,
-        settings: NerSettings | PhysicalFeatureSettings,
+        settings: NormalizationSettings | NerSettings | PhysicalFeatureSettings,
     ) -> ItemEnricher:
+        if provider == "normalization":
+            if not isinstance(settings, NormalizationSettings):
+                raise TypeError("normalization factory requires NormalizationSettings")
+            return self._create_normalization(settings)
         if provider == "ner":
             if not isinstance(settings, NerSettings):
                 raise TypeError("NER factory requires NerSettings")
@@ -39,6 +44,20 @@ class ItemEnricherFactory:
                 )
             return self._create_physical(settings)
         raise ValueError(f"Unsupported feature provider: {provider!r}")
+
+    @staticmethod
+    def _create_normalization(
+        settings: NormalizationSettings,
+    ) -> ItemEnricher:
+        from .normalization import NormalizationItemEnricher
+
+        return NormalizationItemEnricher(
+            synonyms_path=settings.synonyms_path,
+            unique_attributes_path=settings.unique_attributes_path,
+            output_column=settings.output_column,
+            n_jobs=settings.n_jobs,
+            chunk_size=settings.chunk_size,
+        )
 
     def _create_ner(self, settings: NerSettings) -> ItemEnricher:
         from .ner.enrichment import NerItemEnricher
@@ -89,17 +108,17 @@ def _pipeline(
     device: str | None,
 ) -> FeaturePipeline:
     factory = ItemEnricherFactory(device=device)
-    # Feature order is part of application behavior: semantic extraction first,
-    # deterministic physical values second.
-    configured = (
-        ("ner", settings.ner),
-        ("physical", settings.physical),
-    )
+    # The validated order is application behavior and defines merge precedence.
+    configured = {
+        "normalization": settings.normalization,
+        "ner": settings.ner,
+        "physical": settings.physical,
+    }
     return FeaturePipeline(
         tuple(
-            factory.create(name, provider_settings)
-            for name, provider_settings in configured
-            if provider_settings.enabled
+            factory.create(name, configured[name])
+            for name in settings.execution_order
+            if configured[name].enabled
         )
     )
 
@@ -116,9 +135,17 @@ def build_manifest_feature_pipeline(
     solution_root: Path,
 ) -> FeaturePipeline:
     values = solution.get("features")
-    if not isinstance(values, Mapping):
-        return FeaturePipeline()
-    features = feature_settings_from_manifest(values, solution_root)
+    feature_values = values if isinstance(values, Mapping) else {}
+    legacy_normalization = solution.get("normalization")
+    features = feature_settings_from_manifest(
+        feature_values,
+        solution_root,
+        legacy_normalization=(
+            legacy_normalization
+            if isinstance(legacy_normalization, Mapping)
+            else None
+        ),
+    )
     return _pipeline(
         features,
         device=None if solution.get("device") is None else str(solution["device"]),

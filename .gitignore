@@ -1,7 +1,9 @@
 /data/*
 !/data/synonyms.parquet
 !/data/unique_attributes.parquet
-/models/
+/models/*
+!/models/ner/
+!/models/ner/**
 /.cache/
 /.hydra/
 /outputs/

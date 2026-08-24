@@ -3,25 +3,153 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .paths import resolve_project_path
+
+FEATURE_PROVIDER_NAMES = ("normalization", "ner", "physical")
 
 if TYPE_CHECKING:
     from omegaconf import DictConfig
 
 
 @dataclass(frozen=True, slots=True)
+class DatasetSplitterSettings:
+    splitter_type: str
+    score_type: str
+    total_votes: int | None
+    negative_threshold: float
+    positive_threshold: float
+    uncertain_action: str
+
+    def __post_init__(self) -> None:
+        if self.splitter_type != "binary":
+            raise ValueError("splitter_type currently must be 'binary'")
+        if self.score_type not in {"label", "votes"}:
+            raise ValueError("score_type must be one of: label, votes")
+        if self.score_type == "votes":
+            if self.total_votes is None or self.total_votes < 1:
+                raise ValueError("votes splitter requires positive total_votes")
+            if not (
+                self.negative_threshold.is_integer()
+                and self.positive_threshold.is_integer()
+            ):
+                raise ValueError("vote thresholds must contain whole vote counts")
+            if not (
+                0
+                <= self.negative_threshold
+                < self.positive_threshold
+                <= self.total_votes
+            ):
+                raise ValueError(
+                    "vote thresholds must satisfy 0 <= negative < positive "
+                    "<= total_votes"
+                )
+        elif self.total_votes is not None:
+            raise ValueError("label splitter must not define total_votes")
+        if self.uncertain_action != "drop":
+            raise ValueError("uncertain_action currently must be 'drop'")
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetSourceSettings:
+    name: str
+    matches: Path
+    weight: float
+    max_rows: int | None
+    sampling_strategy: str
+    splitter: DatasetSplitterSettings
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("dataset source name must not be empty")
+        if self.weight <= 0.0:
+            raise ValueError("dataset source weight must be positive")
+        if self.max_rows is not None and self.max_rows < 1:
+            raise ValueError("dataset source max_rows must be positive or null")
+        if self.sampling_strategy not in {"random", "category_target_balanced"}:
+            raise ValueError(
+                "sampling_strategy must be random or category_target_balanced"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class BaseDatasetSettings:
+    items: Path
+    matches: Path
+    validation_fraction: float
+    leakage_scope: str
+    candidate_splits: int
+    seed: int
+
+    def __post_init__(self) -> None:
+        _validate_data_split_settings(
+            self.validation_fraction,
+            self.leakage_scope,
+            self.candidate_splits,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MixedDatasetSettings:
+    items: Path
+    sources: tuple[DatasetSourceSettings, ...]
+    validation_source: str
+    validation_fraction: float
+    leakage_scope: str
+    candidate_splits: int
+    seed: int
+
+    def __post_init__(self) -> None:
+        _validate_data_split_settings(
+            self.validation_fraction,
+            self.leakage_scope,
+            self.candidate_splits,
+        )
+        names = [source.name for source in self.sources]
+        if len(self.sources) < 2:
+            raise ValueError("mix_dataset requires at least two sources")
+        if len(names) != len(set(names)):
+            raise ValueError("mix_dataset source names must be unique")
+        if self.validation_source not in names:
+            raise ValueError("validation_source must name a configured source")
+
+
+@dataclass(frozen=True, slots=True)
+class DataModelDescriptionSettings:
+    base_dataset: BaseDatasetSettings
+    mix_dataset: MixedDatasetSettings
+
+
+def _validate_data_split_settings(
+    validation_fraction: float,
+    leakage_scope: str,
+    candidate_splits: int,
+) -> None:
+    if not 0.0 < validation_fraction < 1.0:
+        raise ValueError("validation_fraction must be between zero and one")
+    if leakage_scope not in {"none", "pair", "item"}:
+        raise ValueError("leakage_scope must be one of: none, pair, item")
+    if candidate_splits < 1:
+        raise ValueError("candidate_splits must be positive")
+
+
+@dataclass(frozen=True, slots=True)
 class TrainingSettings:
     model: str
+    data_model: str
 
     def __post_init__(self) -> None:
         if self.model not in {"transformer", "maxpooling", "fusion", "boosting"}:
             raise ValueError(
                 "training.model must be one of: transformer, maxpooling, fusion, "
                 "boosting"
+            )
+        if self.data_model not in {"base_dataset", "mix_dataset"}:
+            raise ValueError(
+                "training.data_model must be one of: base_dataset, mix_dataset"
             )
 
 
@@ -48,33 +176,13 @@ class InferenceSettings:
 
 
 @dataclass(frozen=True, slots=True)
-class PathSettings:
-    items: Path
-    train_matches: Path
-    validation_matches: Path
-    inspect_matches: Path | None
-
-
-@dataclass(frozen=True, slots=True)
 class NormalizationSettings:
     enabled: bool
-    source_column: str
     output_column: str
     synonyms_path: Path
     unique_attributes_path: Path
     n_jobs: int
     chunk_size: int
-
-
-@dataclass(frozen=True, slots=True)
-class SplitSettings:
-    mode: str
-    validation_fraction: float
-    leakage_scope: str
-    seed: int
-    candidate_splits: int
-    train_output_path: Path
-    validation_output_path: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,7 +308,6 @@ class MaxPoolingParameters:
     fasttext_epochs: int
     classifier_epochs: int
     batch_size: int
-    validation_fraction: float
     patience: int
     dropout: float
     learning_rate: float
@@ -346,8 +453,30 @@ class PhysicalFeatureSettings:
 
 @dataclass(frozen=True, slots=True)
 class FeatureSettings:
+    execution_order: tuple[str, ...]
+    normalization: NormalizationSettings
     ner: NerSettings
     physical: PhysicalFeatureSettings
+
+    def __post_init__(self) -> None:
+        normalized = tuple(name.strip().lower() for name in self.execution_order)
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("features.execution_order must not contain duplicates")
+        expected = set(FEATURE_PROVIDER_NAMES)
+        actual = set(normalized)
+        if actual != expected:
+            details = []
+            missing = expected - actual
+            unknown = actual - expected
+            if missing:
+                details.append("missing: " + ", ".join(sorted(missing)))
+            if unknown:
+                details.append("unknown: " + ", ".join(sorted(unknown)))
+            raise ValueError(
+                "features.execution_order must contain every feature exactly once"
+                + (" (" + "; ".join(details) + ")" if details else "")
+            )
+        object.__setattr__(self, "execution_order", normalized)
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,10 +500,8 @@ class SubmissionSettings:
 @dataclass(frozen=True, slots=True)
 class AppConfig:
     training: TrainingSettings
+    data_model_description: DataModelDescriptionSettings
     inference: InferenceSettings
-    paths: PathSettings
-    normalization: NormalizationSettings
-    split: SplitSettings
     pair_encoding: PairEncodingSettings
     models_parameters: ModelsParametersSettings
     artifacts: ArtifactSettings
@@ -436,6 +563,62 @@ def _bool(value: Any, name: str) -> bool:
     raise ValueError(f"config value {name!r} must be a boolean")
 
 
+def _dataset_splitter(
+    values: Mapping[str, Any],
+) -> DatasetSplitterSettings:
+    score_type = str(values.get("score_type", "label"))
+    total_votes = _optional_int(values.get("total_votes"))
+    return DatasetSplitterSettings(
+        splitter_type=str(values.get("splitter_type", "binary")),
+        score_type=score_type,
+        total_votes=total_votes,
+        negative_threshold=float(values.get("negative_threshold", 0)),
+        positive_threshold=float(values.get("positive_threshold", 1)),
+        uncertain_action=str(values.get("uncertain_action", "drop")),
+    )
+
+
+def _dataset_source(
+    name: str,
+    values: Mapping[str, Any],
+) -> DatasetSourceSettings:
+    splitter = values.get("splitter", {})
+    if not isinstance(splitter, Mapping):
+        raise ValueError(
+            f"data_model_description.mix_dataset.sources.{name}.splitter "
+            "must be a mapping"
+        )
+    prefix = f"data_model_description.mix_dataset.sources.{name}"
+    return DatasetSourceSettings(
+        name=name,
+        matches=_path(_required(values, "matches"), f"{prefix}.matches"),
+        weight=float(values.get("weight", 1.0)),
+        max_rows=_optional_int(values.get("max_rows")),
+        sampling_strategy=str(values.get("sampling_strategy", "random")),
+        splitter=_dataset_splitter(splitter),
+    )
+
+
+def _dataset_sources(values: Any) -> tuple[DatasetSourceSettings, ...]:
+    if isinstance(values, Mapping):
+        entries = values.items()
+    elif isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
+        normalized: list[tuple[str, Mapping[str, Any]]] = []
+        for value in values:
+            if not isinstance(value, Mapping):
+                raise ValueError("mix_dataset sources must contain mappings")
+            normalized.append((str(_required(value, "name")), value))
+        entries = normalized
+    else:
+        raise ValueError("mix_dataset sources must be a mapping or sequence")
+    sources: list[DatasetSourceSettings] = []
+    for name, source in entries:
+        if not isinstance(source, Mapping):
+            raise ValueError(f"mix_dataset source {name!r} must be a mapping")
+        sources.append(_dataset_source(str(name), source))
+    return tuple(sources)
+
+
 def load_app_config(config: ConfigSource) -> AppConfig:
     """Resolve OmegaConf values once and return immutable typed settings."""
     from omegaconf import DictConfig, OmegaConf
@@ -448,13 +631,14 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         raise ValueError("application config must be a mapping")
 
     training = _section(resolved, "training")
+    data_model_description = _section(resolved, "data_model_description")
+    base_dataset = _section(data_model_description, "base_dataset")
+    mix_dataset = _section(data_model_description, "mix_dataset")
+    mix_sources = _required(mix_dataset, "sources")
     inference_value = resolved.get("inference", training)
     if not isinstance(inference_value, Mapping):
         raise ValueError("config section 'inference' must be a mapping")
     inference = inference_value
-    paths = _section(resolved, "paths")
-    normalization = _section(resolved, "normalization")
-    split = _section(resolved, "split")
     encoding = _section(resolved, "pair_encoding")
     models_parameters = _section(resolved, "models_parameters")
     transformer = _section(models_parameters, "transformer")
@@ -468,6 +652,17 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     cascade = _section(models_parameters, "cascade")
     artifacts = _section(resolved, "artifacts")
     features = _section(resolved, "features")
+    normalization_value = features.get(
+        "normalization",
+        resolved.get("normalization"),
+    )
+    if not isinstance(normalization_value, Mapping):
+        raise ValueError("config section 'features.normalization' must be a mapping")
+    normalization = normalization_value
+    execution_order = tuple(
+        str(name)
+        for name in features.get("execution_order", FEATURE_PROVIDER_NAMES)
+    )
     ner = _section(features, "ner")
     physical = _section(features, "physical")
     runtime = _section(resolved, "runtime")
@@ -478,7 +673,46 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     submission = submission_value
 
     return AppConfig(
-        training=TrainingSettings(model=str(_required(training, "model"))),
+        training=TrainingSettings(
+            model=str(_required(training, "model")),
+            data_model=str(_required(training, "data_model")),
+        ),
+        data_model_description=DataModelDescriptionSettings(
+            base_dataset=BaseDatasetSettings(
+                items=_path(
+                    _required(base_dataset, "items"),
+                    "data_model_description.base_dataset.items",
+                ),
+                matches=_path(
+                    _required(base_dataset, "matches"),
+                    "data_model_description.base_dataset.matches",
+                ),
+                validation_fraction=float(
+                    _required(base_dataset, "validation_fraction")
+                ),
+                leakage_scope=str(_required(base_dataset, "leakage_scope")),
+                candidate_splits=int(
+                    base_dataset.get("candidate_splits", 128)
+                ),
+                seed=int(base_dataset.get("seed", _required(runtime, "seed"))),
+            ),
+            mix_dataset=MixedDatasetSettings(
+                items=_path(
+                    _required(mix_dataset, "items"),
+                    "data_model_description.mix_dataset.items",
+                ),
+                sources=_dataset_sources(mix_sources),
+                validation_source=str(
+                    _required(mix_dataset, "validation_source")
+                ),
+                validation_fraction=float(
+                    _required(mix_dataset, "validation_fraction")
+                ),
+                leakage_scope=str(_required(mix_dataset, "leakage_scope")),
+                candidate_splits=int(mix_dataset.get("candidate_splits", 128)),
+                seed=int(mix_dataset.get("seed", _required(runtime, "seed"))),
+            ),
+        ),
         inference=InferenceSettings(
             model=str(_required(inference, "model")),
             transformer_dir=_path(
@@ -508,51 +742,6 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     _required(artifacts, "boosting_dir"),
                 ),
                 "inference.boosting_dir",
-            ),
-        ),
-        paths=PathSettings(
-            items=_path(_required(paths, "items"), "paths.items"),
-            train_matches=_path(
-                _required(paths, "train_matches"),
-                "paths.train_matches",
-            ),
-            validation_matches=_path(
-                _required(paths, "validation_matches"),
-                "paths.validation_matches",
-            ),
-            inspect_matches=_optional_path(paths.get("inspect_matches")),
-        ),
-        normalization=NormalizationSettings(
-            enabled=_bool(
-                normalization.get("enabled", False),
-                "normalization.enabled",
-            ),
-            source_column=str(_required(normalization, "source_column")),
-            output_column=str(_required(normalization, "output_column")),
-            synonyms_path=_path(
-                _required(normalization, "synonyms_path"),
-                "normalization.synonyms_path",
-            ),
-            unique_attributes_path=_path(
-                _required(normalization, "unique_attributes_path"),
-                "normalization.unique_attributes_path",
-            ),
-            n_jobs=int(_required(normalization, "n_jobs")),
-            chunk_size=int(_required(normalization, "chunk_size")),
-        ),
-        split=SplitSettings(
-            mode=str(_required(split, "mode")),
-            validation_fraction=float(_required(split, "validation_fraction")),
-            leakage_scope=str(_required(split, "leakage_scope")),
-            seed=int(_required(split, "seed")),
-            candidate_splits=int(_required(split, "candidate_splits")),
-            train_output_path=_path(
-                _required(split, "train_output_path"),
-                "split.train_output_path",
-            ),
-            validation_output_path=_path(
-                _required(split, "validation_output_path"),
-                "split.validation_output_path",
             ),
         ),
         pair_encoding=PairEncodingSettings(
@@ -650,9 +839,6 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     _required(maxpooling, "classifier_epochs")
                 ),
                 batch_size=int(_required(maxpooling, "batch_size")),
-                validation_fraction=float(
-                    _required(maxpooling, "validation_fraction")
-                ),
                 patience=int(_required(maxpooling, "patience")),
                 dropout=float(_required(maxpooling, "dropout")),
                 learning_rate=float(_required(maxpooling, "learning_rate")),
@@ -718,6 +904,24 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             ),
         ),
         features=FeatureSettings(
+            execution_order=execution_order,
+            normalization=NormalizationSettings(
+                enabled=_bool(
+                    normalization.get("enabled", False),
+                    "features.normalization.enabled",
+                ),
+                output_column=str(_required(normalization, "output_column")),
+                synonyms_path=_path(
+                    _required(normalization, "synonyms_path"),
+                    "features.normalization.synonyms_path",
+                ),
+                unique_attributes_path=_path(
+                    _required(normalization, "unique_attributes_path"),
+                    "features.normalization.unique_attributes_path",
+                ),
+                n_jobs=int(_required(normalization, "n_jobs")),
+                chunk_size=int(_required(normalization, "chunk_size")),
+            ),
             ner=NerSettings(
                 enabled=_bool(
                     ner.get("enabled", False),
@@ -812,8 +1016,26 @@ def load_app_config_file(
 def _serializable(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
+    if isinstance(value, MixedDatasetSettings):
+        serialized = {
+            field.name: _serializable(getattr(value, field.name))
+            for field in fields(value)
+            if field.name != "sources"
+        }
+        serialized["sources"] = {
+            source.name: {
+                field.name: _serializable(getattr(source, field.name))
+                for field in fields(source)
+                if field.name != "name"
+            }
+            for source in value.sources
+        }
+        return serialized
     if is_dataclass(value):
-        return {key: _serializable(item) for key, item in asdict(value).items()}
+        return {
+            field.name: _serializable(getattr(value, field.name))
+            for field in fields(value)
+        }
     if isinstance(value, Mapping):
         return {key: _serializable(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -832,22 +1054,26 @@ def save_app_config(config: AppConfig, path: Path) -> None:
 __all__ = [
     "AppConfig",
     "ArtifactSettings",
+    "BaseDatasetSettings",
     "BoostingParameters",
     "CascadeParameters",
     "ConfigSource",
+    "DataModelDescriptionSettings",
+    "DatasetSourceSettings",
+    "DatasetSplitterSettings",
+    "FEATURE_PROVIDER_NAMES",
     "FeatureSettings",
     "FusionParameters",
     "InferenceSettings",
     "LoggingSettings",
     "MaxPoolingParameters",
+    "MixedDatasetSettings",
     "ModelsParametersSettings",
     "NerSettings",
     "NormalizationSettings",
     "PairEncodingSettings",
-    "PathSettings",
     "PhysicalFeatureSettings",
     "RuntimeSettings",
-    "SplitSettings",
     "SubmissionSettings",
     "TrainingSettings",
     "TransformerParameters",

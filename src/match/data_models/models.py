@@ -1,0 +1,216 @@
+"""Concrete base and mixed training-data recipes."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from time import perf_counter
+
+import polars as pl
+from loguru import logger
+
+from ..config import (
+    BaseDatasetSettings,
+    DatasetSourceSettings,
+    DatasetSplitterSettings,
+    MixedDatasetSettings,
+)
+from ..data import read_parquet
+from ..data_split import DataSplitConfig, split_matches, validate_predefined_split
+from .contracts import InspectionFrames, LoadedTrainingSplits
+from .preparation import prepare_source_matches
+
+
+def _split_config(
+    *,
+    validation_fraction: float,
+    leakage_scope: str,
+    seed: int,
+    candidate_splits: int,
+) -> DataSplitConfig:
+    return DataSplitConfig(
+        validation_fraction=validation_fraction,
+        leakage_scope=leakage_scope,
+        seed=seed,
+        candidate_splits=candidate_splits,
+    )
+
+
+def _base_source(path: Path) -> DatasetSourceSettings:
+    return DatasetSourceSettings(
+        name="base",
+        matches=path,
+        weight=1.0,
+        max_rows=None,
+        sampling_strategy="random",
+        splitter=DatasetSplitterSettings(
+            splitter_type="binary",
+            score_type="label",
+            total_votes=None,
+            negative_threshold=0,
+            positive_threshold=1,
+            uncertain_action="drop",
+        ),
+    )
+
+
+def _item_lookup(path: Path, *, label: str) -> pl.DataFrame:
+    return read_parquet(path, label=label, columns=("id", "category"))
+
+
+def _selected_items(
+    path: Path,
+    *match_frames: pl.DataFrame,
+) -> pl.DataFrame:
+    started_at = perf_counter()
+    required_ids = pl.concat(
+        [
+            frame.select(pl.col(column).alias("id"))
+            for frame in match_frames
+            for column in ("id1", "id2")
+        ]
+    ).unique()
+    items = (
+        pl.scan_parquet(path)
+        .join(required_ids.lazy(), on="id", how="inner")
+        .collect(engine="streaming")
+    )
+    if items.height != required_ids.height:
+        raise ValueError(
+            f"items file is missing {required_ids.height - items.height} selected ids"
+        )
+    logger.info(
+        "Loaded selected items: path={!s}, rows={}, elapsed_seconds={:.3f}",
+        path,
+        items.height,
+        perf_counter() - started_at,
+    )
+    return items
+
+
+@dataclass(frozen=True, slots=True)
+class BaseDatasetModel:
+    settings: BaseDatasetSettings
+
+    def _load_matches(self) -> tuple[pl.DataFrame, pl.DataFrame]:
+        item_lookup = _item_lookup(
+            self.settings.items,
+            label="base dataset item lookup",
+        )
+        matches = read_parquet(self.settings.matches, label="base dataset matches")
+        return item_lookup, prepare_source_matches(
+            item_lookup,
+            matches,
+            _base_source(self.settings.matches),
+            seed=self.settings.seed,
+        )
+
+    def load_training_splits(self) -> LoadedTrainingSplits:
+        item_lookup, matches = self._load_matches()
+        result = split_matches(
+            item_lookup,
+            matches,
+            _split_config(
+                validation_fraction=self.settings.validation_fraction,
+                leakage_scope=self.settings.leakage_scope,
+                seed=self.settings.seed,
+                candidate_splits=self.settings.candidate_splits,
+            ),
+        )
+        validation = result.validation_matches.with_columns(
+            pl.lit(1.0).cast(pl.Float32).alias("sample_weight")
+        )
+        items = _selected_items(
+            self.settings.items,
+            result.train_matches,
+            validation,
+        )
+        return LoadedTrainingSplits(items, result.train_matches, validation)
+
+    def load_inspection_frames(self) -> InspectionFrames:
+        _, matches = self._load_matches()
+        items = _selected_items(self.settings.items, matches)
+        return InspectionFrames(items, matches)
+
+
+@dataclass(frozen=True, slots=True)
+class MixedDatasetModel:
+    settings: MixedDatasetSettings
+
+    def _source(self, name: str) -> DatasetSourceSettings:
+        return next(source for source in self.settings.sources if source.name == name)
+
+    def _load_source(
+        self,
+        items: pl.DataFrame,
+        source: DatasetSourceSettings,
+    ) -> pl.DataFrame:
+        matches = read_parquet(
+            source.matches,
+            label=f"{source.name} dataset matches",
+        )
+        return prepare_source_matches(
+            items,
+            matches,
+            source,
+            seed=self.settings.seed,
+        )
+
+    def load_training_splits(self) -> LoadedTrainingSplits:
+        item_lookup = _item_lookup(
+            self.settings.items,
+            label="mixed dataset item lookup",
+        )
+        prepared = {
+            source.name: self._load_source(item_lookup, source)
+            for source in self.settings.sources
+        }
+        validation_source = prepared.pop(self.settings.validation_source)
+        split = split_matches(
+            item_lookup,
+            validation_source,
+            _split_config(
+                validation_fraction=self.settings.validation_fraction,
+                leakage_scope=self.settings.leakage_scope,
+                seed=self.settings.seed,
+                candidate_splits=self.settings.candidate_splits,
+            ),
+        )
+        train_parts = [split.train_matches, *prepared.values()]
+        train_matches = pl.concat(train_parts, how="vertical_relaxed")
+        validation_matches = split.validation_matches.with_columns(
+            pl.lit(1.0).cast(pl.Float32).alias("sample_weight")
+        )
+        validate_predefined_split(
+            item_lookup,
+            train_matches,
+            validation_matches,
+            leakage_scope=self.settings.leakage_scope,
+        )
+        logger.info(
+            "Built mixed dataset: train_rows={}, validation_rows={}, sources={}",
+            train_matches.height,
+            validation_matches.height,
+            [source.name for source in self.settings.sources],
+        )
+        items = _selected_items(
+            self.settings.items,
+            train_matches,
+            validation_matches,
+        )
+        return LoadedTrainingSplits(items, train_matches, validation_matches)
+
+    def load_inspection_frames(self) -> InspectionFrames:
+        item_lookup = _item_lookup(
+            self.settings.items,
+            label="mixed dataset item lookup",
+        )
+        source = self._source(self.settings.validation_source)
+        matches = self._load_source(item_lookup, source)
+        return InspectionFrames(
+            _selected_items(self.settings.items, matches),
+            matches,
+        )
+
+
+__all__ = ["BaseDatasetModel", "MixedDatasetModel"]

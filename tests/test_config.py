@@ -15,18 +15,29 @@ class AppConfigTests(unittest.TestCase):
 
     def test_loads_resolved_typed_config(self) -> None:
         self.assertIsInstance(self.config, AppConfig)
-        self.assertIsInstance(self.config.paths.items, Path)
-        self.assertTrue(self.config.paths.items.is_absolute())
-        self.assertEqual(self.config.split.seed, self.config.runtime.seed)
+        base = self.config.data_model_description.base_dataset
+        self.assertIsInstance(base.items, Path)
+        self.assertTrue(base.items.is_absolute())
+        self.assertEqual(base.seed, self.config.runtime.seed)
         self.assertEqual(self.config.training.model, "transformer")
+        self.assertEqual(self.config.training.data_model, "base_dataset")
         self.assertEqual(self.config.inference.model, "transformer")
+        self.assertTrue(self.config.features.normalization.enabled)
+        self.assertEqual(
+            self.config.features.execution_order,
+            ("normalization", "ner", "physical"),
+        )
+        self.assertEqual(
+            self.config.features.normalization.output_column,
+            "normalized_attributes",
+        )
         self.assertEqual(
             self.config.inference.transformer_dir,
-            PROJECT_ROOT / "models" / "twin2attr" / "transformer",
+            PROJECT_ROOT / "weights" / "cross-encoder-russian-msmarco",
         )
         self.assertEqual(
             self.config.models_parameters.transformer.pretrained_model_path,
-            "weights/distilrubert-small-cased-conversational",
+            "weights/cross-encoder-russian-msmarco",
         )
         self.assertFalse(self.config.pair_encoding.use_field_tokens)
         self.assertIsInstance(
@@ -38,12 +49,39 @@ class AppConfigTests(unittest.TestCase):
     def test_applies_overrides_before_creating_typed_config(self) -> None:
         config = load_app_config_file(
             PROJECT_ROOT / "configs" / "pipeline.yaml",
-            ["runtime.seed=99", "training.model=fusion"],
+            [
+                "runtime.seed=99",
+                "training.model=fusion",
+                "training.data_model=mix_dataset",
+            ],
         )
 
         self.assertEqual(config.runtime.seed, 99)
-        self.assertEqual(config.split.seed, 99)
+        self.assertEqual(config.data_model_description.base_dataset.seed, 99)
         self.assertEqual(config.training.model, "fusion")
+        self.assertEqual(config.training.data_model, "mix_dataset")
+
+    def test_loads_mixed_dataset_sources(self) -> None:
+        mixed = self.config.data_model_description.mix_dataset
+
+        self.assertEqual(mixed.validation_source, "human")
+        self.assertEqual(mixed.validation_fraction, 0.2)
+        self.assertEqual([source.name for source in mixed.sources], ["human", "llm"])
+        llm = mixed.sources[1]
+        self.assertEqual(llm.weight, 1.0)
+        self.assertEqual(llm.max_rows, 750_000)
+        self.assertEqual(llm.splitter.total_votes, 9)
+        self.assertEqual(llm.splitter.negative_threshold, 2)
+        self.assertEqual(llm.splitter.positive_threshold, 7)
+
+    def test_rejects_fractional_vote_threshold(self) -> None:
+        with self.assertRaisesRegex(ValueError, "whole vote counts"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                [
+                    "data_model_description.mix_dataset.sources.llm.splitter.negative_threshold=2.5"
+                ],
+            )
 
     def test_applies_transformer_optimizer_overrides(self) -> None:
         config = load_app_config_file(
@@ -92,8 +130,29 @@ class AppConfigTests(unittest.TestCase):
                 ["models_parameters.transformer.learning_rate=0"],
             )
 
+    def test_rejects_incomplete_feature_execution_order(self) -> None:
+        with self.assertRaisesRegex(ValueError, "every feature exactly once"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                ["features.execution_order=[normalization,ner]"],
+            )
+
+    def test_rejects_duplicate_feature_execution_order(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must not contain duplicates"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                [
+                    "features.execution_order="
+                    "[normalization,ner,physical,normalization]"
+                ],
+            )
+
     def test_loads_disabled_ner_settings_without_artifacts(self) -> None:
-        ner = self.config.features.ner
+        config = load_app_config_file(
+            PROJECT_ROOT / "configs" / "pipeline.yaml",
+            ["features.ner.enabled=false"],
+        )
+        ner = config.features.ner
 
         self.assertFalse(ner.enabled)
         self.assertEqual(ner.provider, "word_ner")

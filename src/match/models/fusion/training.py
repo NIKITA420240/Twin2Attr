@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Sequence
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Sequence
 
 import numpy as np
 import torch
 from loguru import logger
 from sklearn.metrics import average_precision_score
-from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from ...config import AppConfig
@@ -90,6 +89,7 @@ def train_fusion_classifier(
     train_cls_embeddings: np.ndarray,
     train_maxpooling_embeddings: np.ndarray,
     train_labels: Sequence[int],
+    train_weights: Sequence[float],
     validation_cls_embeddings: np.ndarray,
     validation_maxpooling_embeddings: np.ndarray,
     validation_labels: Sequence[int],
@@ -118,6 +118,9 @@ def train_fusion_classifier(
         name="train_labels",
         expected_rows=len(train_cls),
     )
+    weights = np.asarray(train_weights, dtype=np.float32)
+    if weights.shape != train_targets.shape or np.any(weights <= 0.0):
+        raise ValueError("train_weights must be positive and aligned with labels")
     validation_targets = _binary_labels(
         validation_labels,
         name="validation_labels",
@@ -141,6 +144,7 @@ def train_fusion_classifier(
         torch.from_numpy(train_cls),
         torch.from_numpy(train_maxpooling),
         torch.from_numpy(train_targets.astype(np.float32)),
+        torch.from_numpy(weights),
     )
     validation_dataset = TensorDataset(
         torch.from_numpy(validation_cls),
@@ -160,10 +164,11 @@ def train_fusion_classifier(
         shuffle=False,
         pin_memory=target_device.type == "cuda",
     )
-    negative_count = int(np.sum(train_targets == 0))
-    positive_count = int(np.sum(train_targets == 1))
-    criterion = nn.BCEWithLogitsLoss(
-        pos_weight=torch.tensor(negative_count / positive_count, device=target_device)
+    negative_count = float(weights[train_targets == 0].sum())
+    positive_count = float(weights[train_targets == 1].sum())
+    positive_weight = torch.tensor(
+        negative_count / positive_count,
+        device=target_device,
     )
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -177,12 +182,19 @@ def train_fusion_classifier(
     for epoch in range(1, config.max_epochs + 1):
         model.train()
         loss_sum = 0.0
-        for cls_batch, maxpooling_batch, label_batch in train_loader:
+        for cls_batch, maxpooling_batch, label_batch, weight_batch in train_loader:
             cls_batch = cls_batch.to(target_device, non_blocking=True)
             maxpooling_batch = maxpooling_batch.to(target_device, non_blocking=True)
             label_batch = label_batch.to(target_device, non_blocking=True)
+            weight_batch = weight_batch.to(target_device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
-            loss = criterion(model(cls_batch, maxpooling_batch), label_batch)
+            losses = torch.nn.functional.binary_cross_entropy_with_logits(
+                model(cls_batch, maxpooling_batch),
+                label_batch,
+                pos_weight=positive_weight,
+                reduction="none",
+            )
+            loss = torch.sum(losses * weight_batch) / torch.sum(weight_batch)
             loss.backward()
             optimizer.step()
             loss_sum += loss.item() * len(label_batch)
@@ -282,6 +294,7 @@ class FusionTrainer:
             transformer.encode(train_batch),
             maxpooling.encode(train_batch),
             [int(pair.label) for pair in data.train_pairs],
+            [pair.sample_weight for pair in data.train_pairs],
             transformer.encode(validation_batch),
             maxpooling.encode(validation_batch),
             [int(pair.label) for pair in data.validation_pairs],

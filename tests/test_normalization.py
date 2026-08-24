@@ -5,7 +5,7 @@ from pathlib import Path
 
 import polars as pl
 
-from match import normalize_attributes
+from match import normalize_attributes, normalize_physical_attributes
 
 
 class NormalizeAttributesTests(unittest.TestCase):
@@ -73,6 +73,20 @@ class NormalizeAttributesTests(unittest.TestCase):
         self.assertEqual(normalized["длина упаковки, мм"], "100")
         self.assertEqual(normalized["ширина упаковки, мм"], "200")
         self.assertEqual(normalized["высота упаковки, мм"], "300")
+
+    def test_preserves_non_finite_physical_values(self) -> None:
+        for value in ("nan", "inf", "-inf"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    normalize_physical_attributes({"Ширина, см": value}),
+                    {"Ширина, см": value},
+                )
+
+    def test_preserves_value_when_unit_conversion_overflows(self) -> None:
+        self.assertEqual(
+            normalize_physical_attributes({"Ширина, м": "1e308"}),
+            {"Ширина, м": "1e308"},
+        )
 
     def test_loads_synonyms_from_parquet(self) -> None:
         raw = json.dumps({"Ширь товара": "10"}, ensure_ascii=False)
