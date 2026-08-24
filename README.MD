@@ -78,8 +78,24 @@ uv run python -m build_submission \
 ```
 
 Если модель ещё не обучена, команда завершится ошибкой с путём отсутствующего
-артефакта. Базовый `rubert-base-cased` содержит предобученные веса языка, но не
-обученную голову мэтчинга, поэтому не является заменой результата `train`.
+артефакта. Сырой pretrained checkpoint содержит языковые веса, но не обученную
+голову мэтчинга, поэтому не является заменой результата `train`.
+Для Transformer сборщик также проверяет classification architecture, сохранённые
+`match_*` настройки и специальные токены, чтобы не упаковать сырой language model.
+
+Для быстрой технической проверки новой архитектуры можно создать совместимый
+артефакт без обучения:
+
+```powershell
+uv run python run.py initialize
+```
+
+Команда читает `models_parameters.transformer.pretrained_model_path`, создаёт
+голову из `models_parameters.transformer.head` и сохраняет результат в
+`artifacts.transformer_dir`. Артефакт помечается `match_initialized_only=true`
+и файлом `initialization_metadata.json`: его предсказания случайны, поэтому он
+не годится для итогового score. При `pair_encoding.max_length=null` используется
+значение 128.
 
 ## Обучение и диагностика
 

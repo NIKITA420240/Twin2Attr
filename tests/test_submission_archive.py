@@ -71,14 +71,29 @@ class SubmissionArchiveTests(unittest.TestCase):
             b"win32-setctime"
         )
 
+    @staticmethod
+    def _trained_transformer(root: Path) -> Path:
+        transformer = root / "models" / "transformer"
+        transformer.mkdir(parents=True)
+        (transformer / "config.json").write_text(
+            json.dumps(
+                {
+                    "architectures": ["BertForSequenceClassification"],
+                    "id2label": {"0": "different", "1": "match"},
+                    "match_max_length": 32,
+                    "match_use_field_tokens": False,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (transformer / "model.safetensors").write_bytes(b"weights")
+        return transformer
+
     def test_packages_only_selected_model_and_generates_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._project(root)
-            transformer = root / "models" / "transformer"
-            transformer.mkdir(parents=True)
-            (transformer / "config.json").write_text("{}", encoding="utf-8")
-            (transformer / "model.safetensors").write_bytes(b"weights")
+            transformer = self._trained_transformer(root)
             checkpoint = transformer / "checkpoint-10"
             checkpoint.mkdir()
             (checkpoint / "model.safetensors").write_bytes(b"duplicate")
@@ -159,9 +174,7 @@ class SubmissionArchiveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._project(root)
-            transformer = root / "models" / "transformer"
-            transformer.mkdir(parents=True)
-            (transformer / "config.json").write_text("{}", encoding="utf-8")
+            transformer = self._trained_transformer(root)
             ner_dir = root / "models" / "ner"
             ner_dir.mkdir(parents=True)
             (ner_dir / "model.pt").write_bytes(b"ner")
@@ -273,13 +286,37 @@ class SubmissionArchiveTests(unittest.TestCase):
             with self.assertRaisesRegex(FileNotFoundError, "Train the selected"):
                 build_submission_archive(config, project_root=root)
 
+    def test_rejects_raw_pretrained_transformer(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._project(root)
+            transformer = root / "models" / "raw-transformer"
+            transformer.mkdir(parents=True)
+            (transformer / "config.json").write_text(
+                json.dumps({"model_type": "distilbert"}),
+                encoding="utf-8",
+            )
+            (transformer / "pytorch_model.bin").write_bytes(b"pretrained")
+            config = replace(
+                self.config,
+                inference=replace(
+                    self.config.inference,
+                    transformer_dir=transformer,
+                ),
+                submission=replace(
+                    self.config.submission,
+                    output_path=root / "submission.zip",
+                ),
+            )
+
+            with self.assertRaisesRegex(ValueError, "trained Twin2Attr classifier"):
+                build_submission_archive(config, project_root=root)
+
     def test_cascade_packages_both_models_and_catboost_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._project(root)
-            transformer = root / "models" / "transformer"
-            transformer.mkdir(parents=True)
-            (transformer / "model.safetensors").write_bytes(b"transformer")
+            transformer = self._trained_transformer(root)
             boosting = root / "models" / "boosting"
             boosting.mkdir(parents=True)
             (boosting / "model.cbm").write_bytes(b"boosting")

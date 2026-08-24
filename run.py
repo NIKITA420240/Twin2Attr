@@ -17,7 +17,7 @@ SOURCE_ROOT = Path(__file__).resolve().parent / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-COMMANDS = {"train", "predict", "inspect"}
+COMMANDS = {"train", "predict", "inspect", "initialize"}
 DEFAULT_CONFIG = "configs/pipeline.yaml"
 POLARS_VERSION = "1.43.2"
 CATBOOST_VERSION = "1.2.10"
@@ -259,6 +259,12 @@ def build_parser() -> argparse.ArgumentParser:
     train = commands.add_parser("train", help="Train configured model stages")
     _add_config_arguments(train)
 
+    initialize = commands.add_parser(
+        "initialize",
+        help="Save an inference artifact with an untrained Transformer head",
+    )
+    _add_config_arguments(initialize)
+
     inspect = commands.add_parser(
         "inspect",
         help="Inspect pair lengths without training or prediction",
@@ -338,6 +344,18 @@ def run_train(args: argparse.Namespace) -> None:
     train(config)
 
 
+def run_initialize(args: argparse.Namespace) -> None:
+    """Create a Transformer inference artifact without fitting it."""
+    from match.workflows.initialize import initialize
+
+    config = _load_workflow_config(args.config, args.overrides)
+    artifacts = initialize(config)
+    print(
+        "Untrained Transformer artifact initialized at "
+        f"{artifacts.transformer_dir}"
+    )
+
+
 def run_inspect(args: argparse.Namespace) -> None:
     """Inspect the configured data and print the recommended pair length."""
     from match.workflows.inspect import inspect_max_length
@@ -359,6 +377,10 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if args.command == "train":
         run_train(args)
+        return
+
+    if args.command == "initialize":
+        run_initialize(args)
         return
 
     if args.command == "inspect":

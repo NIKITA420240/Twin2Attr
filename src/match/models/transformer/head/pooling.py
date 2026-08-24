@@ -46,13 +46,21 @@ class MaxPooling(nn.Module):
 
 
 class AttentionPooling(nn.Module):
-    def __init__(self, hidden_size: int, attention_hidden_dim: int | None) -> None:
+    def __init__(
+        self,
+        hidden_size: int,
+        attention_hidden_dim: int | None,
+        num_heads: int = 1,
+    ) -> None:
         super().__init__()
+        if num_heads < 1:
+            raise ValueError("num_heads must be positive")
         inner_size = attention_hidden_dim or max(1, hidden_size // 2)
+        self.num_heads = num_heads
         self.score = nn.Sequential(
             nn.Linear(hidden_size, inner_size),
             nn.Tanh(),
-            nn.Linear(inner_size, 1),
+            nn.Linear(inner_size, num_heads),
         )
 
     def forward(
@@ -60,13 +68,19 @@ class AttentionPooling(nn.Module):
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor,
     ) -> torch.Tensor:
-        scores = self.score(hidden_states).squeeze(-1)
+        scores = self.score(hidden_states)
+        mask = attention_mask.to(dtype=torch.bool).unsqueeze(-1)
         scores = scores.masked_fill(
-            ~attention_mask.to(dtype=torch.bool),
+            ~mask,
             torch.finfo(scores.dtype).min,
         )
-        weights = torch.softmax(scores, dim=-1)
-        pooled = torch.bmm(weights.unsqueeze(1), hidden_states).squeeze(1)
+        weights = torch.softmax(scores.float(), dim=1)
+        weights = weights * mask.to(dtype=weights.dtype)
+        weights = weights / weights.sum(dim=1, keepdim=True).clamp_min(
+            torch.finfo(weights.dtype).eps
+        )
+        weights = weights.to(dtype=hidden_states.dtype)
+        pooled = torch.einsum("blk,blh->bkh", weights, hidden_states).flatten(1)
         return torch.where(
             attention_mask.any(dim=1, keepdim=True),
             pooled,

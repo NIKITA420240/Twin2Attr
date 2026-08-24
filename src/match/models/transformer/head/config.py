@@ -16,6 +16,7 @@ class PoolingHeadConfig:
     mlp_hidden_dims: tuple[int, ...] = ()
     dropout: float = 0.1
     attention_hidden_dim: int | None = None
+    attention_num_heads: int = 1
 
     def __post_init__(self) -> None:
         normalized = tuple(pooling.strip().lower() for pooling in self.poolings)
@@ -35,6 +36,8 @@ class PoolingHeadConfig:
             raise ValueError("Transformer head dropout must be in [0, 1)")
         if self.attention_hidden_dim is not None and self.attention_hidden_dim < 1:
             raise ValueError("attention_hidden_dim must be positive or None")
+        if self.attention_num_heads < 1:
+            raise ValueError("attention_num_heads must be positive")
         object.__setattr__(self, "poolings", normalized)
 
     def to_dict(self) -> dict[str, object]:
@@ -43,6 +46,7 @@ class PoolingHeadConfig:
             "mlp_hidden_dims": list(self.mlp_hidden_dims),
             "dropout": self.dropout,
             "attention_hidden_dim": self.attention_hidden_dim,
+            "attention_num_heads": self.attention_num_heads,
         }
 
     @classmethod
@@ -58,6 +62,7 @@ class PoolingHeadConfig:
                 if values.get("attention_hidden_dim") is None
                 else int(values["attention_hidden_dim"])
             ),
+            attention_num_heads=int(values.get("attention_num_heads", 1)),
         )
 
 
