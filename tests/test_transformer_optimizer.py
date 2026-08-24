@@ -6,6 +6,8 @@ from torch import nn
 from match.models.transformer.optimizer import (
     LearningRateMultipliers,
     build_transformer_optimizer,
+    freeze_backbone_except_last_layers,
+    restrict_word_embedding_updates,
 )
 
 
@@ -52,6 +54,9 @@ class FakeModel(nn.Module):
     @property
     def base_model(self) -> nn.Module:
         return self.backbone
+
+    def get_input_embeddings(self) -> nn.Embedding:
+        return self.backbone.embeddings.word_embeddings
 
 
 class FakeDistilModel(FakeModel):
@@ -132,6 +137,49 @@ class TransformerOptimizerTests(unittest.TestCase):
         group_names = {group["group_name"] for group in optimizer.param_groups}
         self.assertIn("backbone.layer.0.decay", group_names)
         self.assertIn("backbone.layer.1.decay", group_names)
+
+    def test_updates_only_selected_word_embedding_rows(self) -> None:
+        model = FakeModel()
+        restrict_word_embedding_updates(model, [14, 15])
+        optimizer = build_transformer_optimizer(
+            model,
+            backbone_lr=1e-5,
+            multipliers=LearningRateMultipliers(embeddings=0.5),
+            weight_decay=0.01,
+        )
+        embeddings = model.get_input_embeddings().weight
+        before = embeddings.detach().clone()
+
+        embeddings.sum().backward()
+        optimizer.step()
+
+        torch.testing.assert_close(embeddings[:14], before[:14], rtol=0.0, atol=0.0)
+        self.assertFalse(torch.equal(embeddings[14:], before[14:]))
+        restricted_group = next(
+            group
+            for group in optimizer.param_groups
+            if group["group_name"] == "new_token_embeddings.no_decay"
+        )
+        self.assertEqual(restricted_group["lr"], 5e-6)
+        self.assertEqual(restricted_group["weight_decay"], 0.0)
+
+    def test_trains_only_last_backbone_layers_and_requested_word_embeddings(self) -> None:
+        model = FakeModel()
+
+        trainable_layer_ids = freeze_backbone_except_last_layers(
+            model,
+            2,
+            train_input_word_embeddings=True,
+        )
+
+        self.assertEqual(trainable_layer_ids, (1, 2))
+        self.assertTrue(model.get_input_embeddings().weight.requires_grad)
+        self.assertFalse(model.backbone.embeddings.LayerNorm.weight.requires_grad)
+        self.assertFalse(model.backbone.encoder.layer[0].weight.requires_grad)
+        self.assertTrue(model.backbone.encoder.layer[1].weight.requires_grad)
+        self.assertTrue(model.backbone.encoder.layer[2].weight.requires_grad)
+        self.assertFalse(model.backbone.pooler.weight.requires_grad)
+        self.assertTrue(model.head.weight.requires_grad)
 
 
 if __name__ == "__main__":

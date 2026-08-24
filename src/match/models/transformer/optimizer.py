@@ -11,6 +11,8 @@ from transformers import PreTrainedModel
 
 
 NamedParameters = Iterable[tuple[str, nn.Parameter]]
+_TRAINABLE_TOKEN_IDS_ATTRIBUTE = "_match_trainable_token_ids"
+_GRADIENT_MASK_HANDLE_ATTRIBUTE = "_match_gradient_mask_handle"
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +59,40 @@ def _encoder_layers(backbone: nn.Module) -> Sequence[nn.Module]:
     raise AttributeError(
         "unsupported Transformer backbone: expected encoder.layer or transformer.layer"
     )
+
+
+def freeze_backbone_except_last_layers(
+    model: PreTrainedModel,
+    last_n_layers: int,
+    *,
+    train_input_word_embeddings: bool = False,
+) -> tuple[int, ...]:
+    """Freeze the backbone except its last encoder layers and optional word rows."""
+    if last_n_layers < 1:
+        raise ValueError("last_n_layers must be positive")
+    backbone = model.base_model
+    encoder_layers = _encoder_layers(backbone)
+    layer_count = len(encoder_layers)
+    if last_n_layers > layer_count:
+        raise ValueError(
+            f"cannot train last {last_n_layers} layers of a {layer_count}-layer backbone"
+        )
+
+    for parameter in backbone.parameters():
+        parameter.requires_grad_(False)
+
+    first_trainable_layer = layer_count - last_n_layers
+    for layer in encoder_layers[first_trainable_layer:]:
+        for parameter in layer.parameters():
+            parameter.requires_grad_(True)
+
+    if train_input_word_embeddings:
+        embeddings = model.get_input_embeddings()
+        if embeddings is None or not hasattr(embeddings, "weight"):
+            raise ValueError("model does not expose trainable input embeddings")
+        embeddings.weight.requires_grad_(True)
+
+    return tuple(range(first_trainable_layer, layer_count))
 
 
 def _uses_weight_decay(parameter_name: str) -> bool:
@@ -107,6 +143,77 @@ def _append_groups(
         )
 
 
+def restrict_word_embedding_updates(
+    model: PreTrainedModel,
+    token_ids: Sequence[int],
+) -> None:
+    """Restrict word-embedding optimizer updates to selected vocabulary rows.
+
+    The embedding matrix remains a standard Hugging Face parameter, so saved
+    checkpoints need no custom loading code. ``build_transformer_optimizer``
+    reads the marker installed here and disables weight decay for this matrix.
+    A post-accumulation hook masks non-selected rows before gradient clipping.
+    """
+    embeddings = model.get_input_embeddings()
+    if embeddings is None or not hasattr(embeddings, "weight"):
+        raise ValueError("model does not expose trainable input embeddings")
+    weight = embeddings.weight
+    normalized_ids = tuple(sorted({int(token_id) for token_id in token_ids}))
+    if not normalized_ids:
+        raise ValueError("at least one trainable token id is required")
+    vocabulary_size = int(weight.shape[0])
+    if normalized_ids[0] < 0 or normalized_ids[-1] >= vocabulary_size:
+        raise ValueError("trainable token id is outside the model vocabulary")
+    setattr(weight, _TRAINABLE_TOKEN_IDS_ATTRIBUTE, normalized_ids)
+
+    previous_handle = getattr(weight, _GRADIENT_MASK_HANDLE_ATTRIBUTE, None)
+    if previous_handle is not None:
+        previous_handle.remove()
+
+    def mask_after_accumulation(parameter: nn.Parameter) -> None:
+        _mask_unselected_embedding_gradients(parameter, normalized_ids)
+
+    handle = weight.register_post_accumulate_grad_hook(mask_after_accumulation)
+    setattr(weight, _GRADIENT_MASK_HANDLE_ATTRIBUTE, handle)
+
+
+def _restricted_token_ids(parameter: nn.Parameter) -> tuple[int, ...] | None:
+    value = getattr(parameter, _TRAINABLE_TOKEN_IDS_ATTRIBUTE, None)
+    return None if value is None else tuple(int(token_id) for token_id in value)
+
+
+def _mask_unselected_embedding_gradients(
+    parameter: nn.Parameter,
+    token_ids: tuple[int, ...],
+) -> None:
+    gradient = parameter.grad
+    if gradient is None:
+        return
+    if gradient.is_sparse:
+        raise RuntimeError("restricted embedding updates require dense gradients")
+    indices = torch.tensor(token_ids, device=gradient.device, dtype=torch.long)
+    selected_gradients = gradient.index_select(0, indices).clone()
+    gradient.zero_()
+    gradient.index_copy_(0, indices, selected_gradients)
+
+
+def _install_final_embedding_gradient_mask(
+    optimizer: torch.optim.Optimizer,
+    parameter: nn.Parameter,
+    token_ids: tuple[int, ...],
+) -> None:
+    """Reapply the row mask after any distributed gradient synchronization."""
+
+    def mask_before_step(
+        _optimizer: torch.optim.Optimizer,
+        _args: tuple[object, ...],
+        _kwargs: dict[str, object],
+    ) -> None:
+        _mask_unselected_embedding_gradients(parameter, token_ids)
+
+    optimizer.register_step_pre_hook(mask_before_step)
+
+
 def build_transformer_optimizer(
     model: PreTrainedModel,
     *,
@@ -144,13 +251,49 @@ def build_transformer_optimizer(
             claimed.append((name, parameter))
         return claimed
 
-    _append_groups(
-        groups,
-        claim(embeddings.named_parameters(prefix="backbone.embeddings")),
-        learning_rate=backbone_lr * multipliers.embeddings,
-        weight_decay=weight_decay,
-        group_name="embeddings",
+    embedding_parameters = list(
+        embeddings.named_parameters(prefix="backbone.embeddings")
     )
+    input_embeddings = model.get_input_embeddings()
+    if input_embeddings is None or not hasattr(input_embeddings, "weight"):
+        raise AttributeError("Transformer backbone has no word-embedding weight")
+    word_embedding_weight = input_embeddings.weight
+    trainable_token_ids = _restricted_token_ids(word_embedding_weight)
+    if trainable_token_ids is None:
+        _append_groups(
+            groups,
+            claim(embedding_parameters),
+            learning_rate=backbone_lr * multipliers.embeddings,
+            weight_decay=weight_decay,
+            group_name="embeddings",
+        )
+    else:
+        other_embedding_parameters = [
+            (name, parameter)
+            for name, parameter in embedding_parameters
+            if id(parameter) != id(word_embedding_weight)
+        ]
+        _append_groups(
+            groups,
+            claim(other_embedding_parameters),
+            learning_rate=backbone_lr * multipliers.embeddings,
+            weight_decay=weight_decay,
+            group_name="embeddings",
+        )
+        claimed_word_embeddings = claim(
+            [("backbone.embeddings.word_embeddings.weight", word_embedding_weight)]
+        )
+        if len(claimed_word_embeddings) != 1:
+            raise RuntimeError("word-embedding weight is not trainable")
+        groups.append(
+            {
+                "params": [word_embedding_weight],
+                "lr": backbone_lr * multipliers.embeddings,
+                # Decoupled AdamW decay would alter frozen vocabulary rows.
+                "weight_decay": 0.0,
+                "group_name": "new_token_embeddings.no_decay",
+            }
+        )
 
     layer_count = len(encoder_layers)
     for layer_index, layer in enumerate(encoder_layers):
@@ -205,7 +348,14 @@ def build_transformer_optimizer(
             f"{len(assigned_ids - trainable_ids)} unexpected"
         )
 
-    return torch.optim.AdamW(groups)
+    optimizer = torch.optim.AdamW(groups)
+    if trainable_token_ids is not None:
+        _install_final_embedding_gradient_mask(
+            optimizer,
+            word_embedding_weight,
+            trainable_token_ids,
+        )
+    return optimizer
 
 
 def optimizer_group_summary(
@@ -227,5 +377,7 @@ def optimizer_group_summary(
 __all__ = [
     "LearningRateMultipliers",
     "build_transformer_optimizer",
+    "freeze_backbone_except_last_layers",
     "optimizer_group_summary",
+    "restrict_word_embedding_updates",
 ]

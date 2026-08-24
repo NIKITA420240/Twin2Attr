@@ -261,6 +261,8 @@ class TransformerParameters:
     auto_find_batch_size: bool
     batch_size: int
     embeddings_learning_rate: float | None = None
+    train_new_token_embeddings_only: bool = False
+    train_last_n_layers: int | None = None
     head_learning_rate: float | None = None
     layerwise_lr_decay: float = 1.0
     head: TransformerHeadParameters = TransformerHeadParameters()
@@ -280,6 +282,8 @@ class TransformerParameters:
         if self.head_learning_rate is not None and self.head_learning_rate <= 0.0:
             raise ValueError("transformer optimizer parameters are invalid")
         if not 0.0 < self.layerwise_lr_decay <= 1.0:
+            raise ValueError("transformer optimizer parameters are invalid")
+        if self.train_last_n_layers is not None and self.train_last_n_layers < 1:
             raise ValueError("transformer optimizer parameters are invalid")
         if not 0.0 < self.hpo_learning_rate_min < self.hpo_learning_rate_max:
             raise ValueError("transformer HPO learning-rate bounds are invalid")
@@ -769,6 +773,13 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     None
                     if transformer.get("embeddings_learning_rate") is None
                     else float(transformer["embeddings_learning_rate"])
+                ),
+                train_new_token_embeddings_only=_bool(
+                    transformer.get("train_new_token_embeddings_only", False),
+                    "models_parameters.transformer.train_new_token_embeddings_only",
+                ),
+                train_last_n_layers=_optional_int(
+                    transformer.get("train_last_n_layers")
                 ),
                 head_learning_rate=(
                     None

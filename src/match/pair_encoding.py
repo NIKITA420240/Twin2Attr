@@ -21,6 +21,7 @@ __all__ = [
     "add_pair_special_tokens",
     "encode_prepared_pair",
     "infer_pair_max_length",
+    "pair_special_token_ids",
     "serialize_card",
     "serialize_pair",
 ]
@@ -70,6 +71,22 @@ def add_pair_special_tokens(
     return added_count
 
 
+def pair_special_token_ids(
+    tokenizer: PreTrainedTokenizerBase,
+) -> tuple[int, ...]:
+    """Return the single vocabulary id assigned to each pair field token."""
+    token_ids: list[int] = []
+    for token in PAIR_SPECIAL_TOKENS:
+        encoded = tokenizer.encode(token, add_special_tokens=False)
+        if len(encoded) != 1 or tokenizer.convert_ids_to_tokens(encoded[0]) != token:
+            raise ValueError(
+                f"tokenizer does not contain {token!r}; call "
+                "add_pair_special_tokens(tokenizer, model) first"
+            )
+        token_ids.append(int(encoded[0]))
+    return tuple(token_ids)
+
+
 def serialize_card(
     card: PreparedCard,
     *,
@@ -95,13 +112,7 @@ def serialize_pair(
 
 
 def _require_pair_special_tokens(tokenizer: PreTrainedTokenizerBase) -> None:
-    for token in PAIR_SPECIAL_TOKENS:
-        token_ids = tokenizer.encode(token, add_special_tokens=False)
-        if len(token_ids) != 1 or tokenizer.convert_ids_to_tokens(token_ids[0]) != token:
-            raise ValueError(
-                f"tokenizer does not contain {token!r}; call "
-                "add_pair_special_tokens(tokenizer, model) first"
-            )
+    pair_special_token_ids(tokenizer)
 
 
 def _pair_special_token_count(tokenizer: PreTrainedTokenizerBase) -> int:

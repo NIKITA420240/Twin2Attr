@@ -37,9 +37,15 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             self.config.models_parameters.transformer.pretrained_model_path,
-            "weights/cross-encoder-russian-msmarco",
+            "weights/mmarco-mMiniLMv2-L12-H384-v1",
         )
-        self.assertFalse(self.config.pair_encoding.use_field_tokens)
+        self.assertTrue(self.config.pair_encoding.use_field_tokens)
+        self.assertFalse(
+            self.config.models_parameters.transformer.train_new_token_embeddings_only
+        )
+        self.assertIsNone(
+            self.config.models_parameters.transformer.train_last_n_layers
+        )
         self.assertIsInstance(
             self.config.pair_encoding.max_attribute_value_tokens,
             int,
@@ -90,6 +96,8 @@ class AppConfigTests(unittest.TestCase):
                 "models_parameters.transformer.hpo_trials=1",
                 "models_parameters.transformer.learning_rate=0.00001",
                 "models_parameters.transformer.embeddings_learning_rate=0.000005",
+                "models_parameters.transformer.train_new_token_embeddings_only=true",
+                "models_parameters.transformer.train_last_n_layers=3",
                 "models_parameters.transformer.head_learning_rate=0.00003",
                 "models_parameters.transformer.layerwise_lr_decay=0.8",
                 "models_parameters.transformer.train_batch_size=16",
@@ -101,6 +109,8 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(parameters.hpo_trials, 1)
         self.assertEqual(parameters.learning_rate, 1e-5)
         self.assertEqual(parameters.embeddings_learning_rate, 5e-6)
+        self.assertTrue(parameters.train_new_token_embeddings_only)
+        self.assertEqual(parameters.train_last_n_layers, 3)
         self.assertEqual(parameters.head_learning_rate, 3e-5)
         self.assertEqual(parameters.layerwise_lr_decay, 0.8)
         self.assertEqual(parameters.train_batch_size, 16)
@@ -110,10 +120,10 @@ class AppConfigTests(unittest.TestCase):
         head = self.config.models_parameters.transformer.head
 
         self.assertEqual(head.type, "pooling")
-        self.assertEqual(head.poolings, ("cls", "mean", "attention"))
-        self.assertEqual(head.mlp_hidden_dims, (312,))
-        self.assertEqual(head.attention_hidden_dim, 156)
-        self.assertEqual(head.attention_num_heads, 2)
+        self.assertEqual(head.poolings, ("cls", "attention"))
+        self.assertEqual(head.mlp_hidden_dims, (384,))
+        self.assertEqual(head.attention_hidden_dim, 192)
+        self.assertEqual(head.attention_num_heads, 1)
 
     def test_can_select_original_transformer_head(self) -> None:
         config = load_app_config_file(
@@ -128,6 +138,13 @@ class AppConfigTests(unittest.TestCase):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
                 ["models_parameters.transformer.learning_rate=0"],
+            )
+
+    def test_rejects_non_positive_trainable_layer_count(self) -> None:
+        with self.assertRaisesRegex(ValueError, "optimizer parameters"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                ["models_parameters.transformer.train_last_n_layers=0"],
             )
 
     def test_rejects_incomplete_feature_execution_order(self) -> None:

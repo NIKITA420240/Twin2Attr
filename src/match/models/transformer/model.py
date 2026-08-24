@@ -13,9 +13,14 @@ from transformers import (
     Trainer,
 )
 
-from ...pair_encoding import add_pair_special_tokens
+from ...pair_encoding import add_pair_special_tokens, pair_special_token_ids
 from .head import PoolingHeadConfig, PoolingSequenceClassifier
-from .optimizer import LearningRateMultipliers, build_transformer_optimizer
+from .optimizer import (
+    LearningRateMultipliers,
+    build_transformer_optimizer,
+    freeze_backbone_except_last_layers,
+    restrict_word_embedding_updates,
+)
 
 
 class WeightedSequenceTrainer(Trainer):
@@ -69,6 +74,8 @@ def model_factory(
     tokenizer: PreTrainedTokenizerBase,
     *,
     use_field_tokens: bool,
+    train_new_token_embeddings_only: bool = False,
+    train_last_n_layers: int | None = None,
     head_type: str = "default",
     head_config: PoolingHeadConfig | None = None,
 ):
@@ -94,6 +101,17 @@ def model_factory(
             raise ValueError("head_type must be 'default' or 'pooling'")
         if use_field_tokens:
             add_pair_special_tokens(tokenizer, model)
+            if train_new_token_embeddings_only:
+                restrict_word_embedding_updates(
+                    model,
+                    pair_special_token_ids(tokenizer),
+                )
+        if train_last_n_layers is not None:
+            freeze_backbone_except_last_layers(
+                model,
+                train_last_n_layers,
+                train_input_word_embeddings=train_new_token_embeddings_only,
+            )
         return model
 
     return initialize_model
