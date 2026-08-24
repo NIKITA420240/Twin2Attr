@@ -263,6 +263,7 @@ class TransformerParameters:
     embeddings_learning_rate: float | None = None
     train_new_token_embeddings_only: bool = False
     train_last_n_layers: int | None = None
+    lr_scheduler_type: str = "linear"
     head_learning_rate: float | None = None
     layerwise_lr_decay: float = 1.0
     head: TransformerHeadParameters = TransformerHeadParameters()
@@ -285,6 +286,10 @@ class TransformerParameters:
             raise ValueError("transformer optimizer parameters are invalid")
         if self.train_last_n_layers is not None and self.train_last_n_layers < 1:
             raise ValueError("transformer optimizer parameters are invalid")
+        if self.lr_scheduler_type not in {"linear", "cosine"}:
+            raise ValueError(
+                "transformer.lr_scheduler_type must be 'linear' or 'cosine'"
+            )
         if not 0.0 < self.hpo_learning_rate_min < self.hpo_learning_rate_max:
             raise ValueError("transformer HPO learning-rate bounds are invalid")
         if not 0.0 <= self.hpo_weight_decay_min < self.hpo_weight_decay_max:
@@ -780,6 +785,9 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 ),
                 train_last_n_layers=_optional_int(
                     transformer.get("train_last_n_layers")
+                ),
+                lr_scheduler_type=str(
+                    transformer.get("lr_scheduler_type", "linear")
                 ),
                 head_learning_rate=(
                     None
