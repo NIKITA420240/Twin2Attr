@@ -37,6 +37,7 @@ class SequenceClassifierConfig:
     embeddings_learning_rate: float | None = None
     train_new_token_embeddings_only: bool = False
     train_last_n_layers: int | None = None
+    lr_scheduler_type: str = "linear"
     head_learning_rate: float | None = None
     layerwise_lr_decay: float = 1.0
 
@@ -99,6 +100,8 @@ class SequenceClassifierConfig:
             )
         if self.train_last_n_layers is not None and self.train_last_n_layers < 1:
             raise ValueError("train_last_n_layers must be positive or None")
+        if self.lr_scheduler_type not in {"linear", "cosine"}:
+            raise ValueError("lr_scheduler_type must be 'linear' or 'cosine'")
 
     @property
     def resolved_embeddings_learning_rate(self) -> float:
@@ -126,6 +129,7 @@ class ResolvedTrainingConfig:
     use_field_tokens: bool
     max_attribute_value_tokens: int | None
     warmup_ratio: float
+    lr_scheduler_type: str
     gradient_clip_norm: float
     early_stopping_patience: int
     auto_find_batch_size: bool

@@ -37,14 +37,19 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             self.config.models_parameters.transformer.pretrained_model_path,
-            "weights/mmarco-mMiniLMv2-L12-H384-v1",
+            "models/mmarco-mMiniLMv2-L12-H384-v1",
         )
         self.assertTrue(self.config.pair_encoding.use_field_tokens)
-        self.assertFalse(
+        self.assertTrue(
             self.config.models_parameters.transformer.train_new_token_embeddings_only
         )
-        self.assertIsNone(
-            self.config.models_parameters.transformer.train_last_n_layers
+        self.assertEqual(
+            self.config.models_parameters.transformer.train_last_n_layers,
+            3,
+        )
+        self.assertEqual(
+            self.config.models_parameters.transformer.lr_scheduler_type,
+            "cosine",
         )
         self.assertIsInstance(
             self.config.pair_encoding.max_attribute_value_tokens,
@@ -98,6 +103,7 @@ class AppConfigTests(unittest.TestCase):
                 "models_parameters.transformer.embeddings_learning_rate=0.000005",
                 "models_parameters.transformer.train_new_token_embeddings_only=true",
                 "models_parameters.transformer.train_last_n_layers=3",
+                "models_parameters.transformer.lr_scheduler_type=cosine",
                 "models_parameters.transformer.head_learning_rate=0.00003",
                 "models_parameters.transformer.layerwise_lr_decay=0.8",
                 "models_parameters.transformer.train_batch_size=16",
@@ -111,6 +117,7 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(parameters.embeddings_learning_rate, 5e-6)
         self.assertTrue(parameters.train_new_token_embeddings_only)
         self.assertEqual(parameters.train_last_n_layers, 3)
+        self.assertEqual(parameters.lr_scheduler_type, "cosine")
         self.assertEqual(parameters.head_learning_rate, 3e-5)
         self.assertEqual(parameters.layerwise_lr_decay, 0.8)
         self.assertEqual(parameters.train_batch_size, 16)
@@ -145,6 +152,13 @@ class AppConfigTests(unittest.TestCase):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
                 ["models_parameters.transformer.train_last_n_layers=0"],
+            )
+
+    def test_rejects_unknown_lr_scheduler(self) -> None:
+        with self.assertRaisesRegex(ValueError, "lr_scheduler_type"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                ["models_parameters.transformer.lr_scheduler_type=cyclic"],
             )
 
     def test_rejects_incomplete_feature_execution_order(self) -> None:

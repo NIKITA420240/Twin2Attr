@@ -68,15 +68,14 @@ models_parameters:
     hpo_trials: 1
     # Used directly when hpo_trials=1; otherwise these are initial values.
     # Base LR for Transformer encoder layers and the value tuned by HPO.
-    learning_rate: 1.0e-5
-    # Embeddings change more conservatively; the newly initialized head learns faster.
+    learning_rate: 3.0e-5
+    # Only the newly added [KEY]/[VAL] rows use this embedding LR.
     embeddings_learning_rate: 1.0e-6
-    # false restores full-vocabulary fine-tuning; true updates only [KEY]/[VAL].
-    train_new_token_embeddings_only: false
-    # null restores fine-tuning of every encoder layer.
-    train_last_n_layers: null
-    head_learning_rate: 1.0e-4
-    layerwise_lr_decay: 0.90
+    train_new_token_embeddings_only: true
+    # Freeze the rest of the backbone and fine-tune only its three highest layers.
+    train_last_n_layers: 3
+    head_learning_rate: 1.0e-3
+    layerwise_lr_decay: 1.0
     weight_decay: 0.01
     hpo_learning_rate_min: 0.000001
     hpo_learning_rate_max: 0.00005
@@ -86,6 +85,8 @@ models_parameters:
     eval_batch_size: 64
     gradient_accumulation_steps: 4
     warmup_ratio: 0.06
+    # Supported values: linear, cosine.
+    lr_scheduler_type: cosine
     max_grad_norm: 1.0
     early_stopping_patience: 2
     auto_find_batch_size: true
