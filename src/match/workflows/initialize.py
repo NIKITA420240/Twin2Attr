@@ -1,0 +1,106 @@
+"""Create an inference-ready Transformer artifact without fitting it."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import replace
+
+from loguru import logger
+from transformers import AutoTokenizer
+
+from ..config import AppConfig, save_app_config
+from ..models.artifacts import TrainingArtifacts, save_solution_manifest
+from ..models.transformer.head import PoolingHeadConfig
+from ..models.transformer.model import model_factory
+from ._common import workflow_logging
+
+
+DEFAULT_INITIALIZED_MAX_LENGTH = 128
+
+
+def _initialization_max_length(config: AppConfig) -> int:
+    configured = config.pair_encoding.max_length
+    if configured is not None:
+        return configured
+    return min(DEFAULT_INITIALIZED_MAX_LENGTH, config.pair_encoding.hard_cap)
+
+
+def initialize(config: AppConfig) -> TrainingArtifacts:
+    """Initialize and save the configured Transformer with an untrained head."""
+    if config.training.model != "transformer":
+        raise ValueError(
+            "initialize supports only training.model=transformer; "
+            f"got {config.training.model!r}"
+        )
+
+    output_path = config.artifacts.transformer_dir.resolve()
+    if output_path.exists() and any(output_path.iterdir()):
+        raise FileExistsError(
+            f"Transformer artifact directory is not empty: {output_path}. "
+            "Move it away or choose another artifacts.transformer_dir."
+        )
+
+    parameters = config.models_parameters.transformer
+    encoding = config.pair_encoding
+    max_length = _initialization_max_length(config)
+    head_config = PoolingHeadConfig(
+        poolings=parameters.head.poolings,
+        mlp_hidden_dims=parameters.head.mlp_hidden_dims,
+        dropout=parameters.head.dropout,
+        attention_hidden_dim=parameters.head.attention_hidden_dim,
+        attention_num_heads=parameters.head.attention_num_heads,
+    )
+
+    with workflow_logging(config, workflow_name="initialize"):
+        logger.warning(
+            "Initializing Transformer artifact without training; classifier "
+            "predictions will be random"
+        )
+        tokenizer = AutoTokenizer.from_pretrained(parameters.pretrained_model_path)
+        model = model_factory(
+            parameters.pretrained_model_path,
+            tokenizer,
+            use_field_tokens=encoding.use_field_tokens,
+            head_type=parameters.head.type,
+            head_config=head_config,
+        )()
+        model.config.match_max_length = max_length
+        model.config.match_use_field_tokens = encoding.use_field_tokens
+        model.config.match_max_attribute_value_tokens = (
+            encoding.max_attribute_value_tokens
+        )
+        model.config.match_initialized_only = True
+
+        output_path.mkdir(parents=True, exist_ok=True)
+        model.save_pretrained(output_path)
+        tokenizer.save_pretrained(output_path)
+        metadata = {
+            "trained": False,
+            "warning": "Classifier head is initialized but has not been trained.",
+            "source_model": parameters.pretrained_model_path,
+            "head_type": parameters.head.type,
+            "head_config": head_config.to_dict(),
+            "max_length": max_length,
+            "use_field_tokens": encoding.use_field_tokens,
+            "max_attribute_value_tokens": encoding.max_attribute_value_tokens,
+        }
+        (output_path / "initialization_metadata.json").write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        artifacts = TrainingArtifacts(
+            predictor="transformer",
+            transformer_dir=output_path,
+        )
+        save_app_config(config, config.artifacts.resolved_config_path)
+        solution_path = save_solution_manifest(config, artifacts)
+        logger.info("Initialized Transformer artifact saved to {!s}", output_path)
+        return replace(
+            artifacts,
+            resolved_config_path=config.artifacts.resolved_config_path,
+            solution_path=solution_path,
+        )
+
+
+__all__ = ["DEFAULT_INITIALIZED_MAX_LENGTH", "initialize"]

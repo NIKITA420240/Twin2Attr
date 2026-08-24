@@ -39,6 +39,32 @@ class TransformersV5BertTokenizer(FakeTokenizer):
     model_input_names = ["input_ids", "token_type_ids", "attention_mask"]
 
 
+class TransformersV5BertTokenizerWithMissingPairMetadata(
+    TransformersV5BertTokenizer
+):
+    """V5 backend that does not report the BERT pair special-token layout."""
+
+    def num_special_tokens_to_add(self, *, pair=False):
+        return 2
+
+
+class TransformersV5XLMRobertaTokenizer(FakeTokenizer):
+    """Minimal v5-style XLM-R tokenizer without legacy pair builders."""
+
+    cls_token = "<s>"
+    sep_token = "</s>"
+    cls_token_id = 0
+    sep_token_id = 2
+    model_input_names = ["input_ids", "attention_mask"]
+
+    def encode(self, text, *, add_special_tokens=False):
+        del add_special_tokens
+        return list(range(10, 10 + len(text.split())))
+
+    def num_special_tokens_to_add(self, *, pair=False):
+        return 4 if pair else 2
+
+
 def _card(item_id: int, name: str, category: str = "category") -> PreparedCard:
     return PreparedCard(item_id, name, category, ())
 
@@ -106,6 +132,30 @@ class SequenceClassifierModelTests(unittest.TestCase):
             len(encoded["input_ids"]),
         )
         self.assertIn(1, encoded["token_type_ids"])
+
+    def test_encodes_bert_pair_when_v5_backend_misses_pair_metadata(self) -> None:
+        encoded = encode_prepared_pair(
+            TransformersV5BertTokenizerWithMissingPairMetadata(),
+            _pair(1, "left name", 2, "right name", 1),
+            max_length=32,
+            use_field_tokens=False,
+        )
+
+        self.assertEqual(encoded["input_ids"][0], 101)
+        self.assertEqual(encoded["input_ids"].count(102), 2)
+        self.assertLessEqual(len(encoded["input_ids"]), 32)
+
+    def test_encodes_xlm_roberta_pair_without_v5_pair_builder(self) -> None:
+        encoded = encode_prepared_pair(
+            TransformersV5XLMRobertaTokenizer(),
+            _pair(1, "left name", 2, "right name", 1),
+            max_length=32,
+            use_field_tokens=False,
+        )
+
+        self.assertEqual(encoded["input_ids"][0], 0)
+        self.assertEqual(encoded["input_ids"].count(2), 3)
+        self.assertLessEqual(len(encoded["input_ids"]), 32)
 
     def test_balanced_class_weights_give_rare_class_more_weight(self) -> None:
         weights = compute_class_weights([0, 0, 0, 1])

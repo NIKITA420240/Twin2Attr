@@ -33,8 +33,13 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             self.config.inference.transformer_dir,
-            PROJECT_ROOT / "weights" / "rubert-tiny2",
+            PROJECT_ROOT / "models" / "twin2attr" / "transformer",
         )
+        self.assertEqual(
+            self.config.models_parameters.transformer.pretrained_model_path,
+            "weights/cross-encoder-russian-msmarco",
+        )
+        self.assertFalse(self.config.pair_encoding.use_field_tokens)
         self.assertIsInstance(
             self.config.pair_encoding.max_attribute_value_tokens,
             int,
@@ -84,6 +89,9 @@ class AppConfigTests(unittest.TestCase):
             [
                 "models_parameters.transformer.hpo_trials=1",
                 "models_parameters.transformer.learning_rate=0.00001",
+                "models_parameters.transformer.embeddings_learning_rate=0.000005",
+                "models_parameters.transformer.head_learning_rate=0.00003",
+                "models_parameters.transformer.layerwise_lr_decay=0.8",
                 "models_parameters.transformer.train_batch_size=16",
                 "models_parameters.transformer.gradient_accumulation_steps=4",
             ],
@@ -92,6 +100,9 @@ class AppConfigTests(unittest.TestCase):
         parameters = config.models_parameters.transformer
         self.assertEqual(parameters.hpo_trials, 1)
         self.assertEqual(parameters.learning_rate, 1e-5)
+        self.assertEqual(parameters.embeddings_learning_rate, 5e-6)
+        self.assertEqual(parameters.head_learning_rate, 3e-5)
+        self.assertEqual(parameters.layerwise_lr_decay, 0.8)
         self.assertEqual(parameters.train_batch_size, 16)
         self.assertEqual(parameters.gradient_accumulation_steps, 4)
 
@@ -102,6 +113,7 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(head.poolings, ("cls", "mean", "attention"))
         self.assertEqual(head.mlp_hidden_dims, (312,))
         self.assertEqual(head.attention_hidden_dim, 156)
+        self.assertEqual(head.attention_num_heads, 2)
 
     def test_can_select_original_transformer_head(self) -> None:
         config = load_app_config_file(

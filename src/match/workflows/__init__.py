@@ -5,6 +5,7 @@ from typing import Any
 
 
 _EXPORTS = {
+    "initialize": (".initialize", "initialize"),
     "inspect_max_length": (".inspect", "inspect_max_length"),
     "train": (".train", "train"),
 }
