@@ -33,7 +33,7 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             self.config.inference.transformer_dir,
-            PROJECT_ROOT / "models" / "twin2attr" / "transformer",
+            PROJECT_ROOT / "weights" / "cross-encoder-russian-msmarco",
         )
         self.assertEqual(
             self.config.models_parameters.transformer.pretrained_model_path,
@@ -110,7 +110,7 @@ class AppConfigTests(unittest.TestCase):
         head = self.config.models_parameters.transformer.head
 
         self.assertEqual(head.type, "pooling")
-        self.assertEqual(head.poolings, ("cls", "mean", "attention"))
+        self.assertEqual(head.poolings, ("cls", "attention"))
         self.assertEqual(head.mlp_hidden_dims, (312,))
         self.assertEqual(head.attention_hidden_dim, 156)
         self.assertEqual(head.attention_num_heads, 2)
