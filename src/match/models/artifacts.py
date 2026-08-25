@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,10 +54,7 @@ class TrainingArtifacts:
 
 
 def _manifest_path(path: Path, *, root: Path) -> str:
-    try:
-        return str(path.relative_to(root))
-    except ValueError:
-        return str(path)
+    return os.path.relpath(path, root)
 
 
 def build_solution_manifest(

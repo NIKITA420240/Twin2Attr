@@ -102,6 +102,22 @@ uv run python run.py initialize
 Основной конфиг находится в `configs/pipeline.yaml`. В нём задаются пути,
 нормализация, токены полей, ограничения длины и параметры обучения.
 
+Каждый train-запуск обязан получить имя эксперимента от пользователя. Имя не
+версионируется автоматически: перед новым экспериментом его нужно поменять.
+
+```bash
+export EXPERIMENT_NAME=mmarco-l12-human-last3-special-tokens
+```
+
+Все сгенерированные модели, checkpoints, resolved-конфиг, `solution.json`,
+`experiment.json` и лог сохраняются в `experiments/$EXPERIMENT_NAME/`. После
+успешного обучения строка добавляется в `experiments/experiments.csv`. Если имя
+использовать повторно, папка эксперимента будет перезаписана, а в CSV появится
+ещё одна строка — уникальность имени контролирует пользователь. В карточку
+эксперимента записываются размеры train/validation и стабильный hash точного
+набора validation-пар, поэтому одинаковость split можно проверить без сохранения
+отдельных parquet-файлов.
+
 ```bash
 # Обучение
 uv run python run.py train
@@ -185,9 +201,11 @@ uv run python run.py train \
 из диапазонов `hpo_learning_rate_min/max` и `hpo_weight_decay_min/max`.
 Поле `batch_size` относится только к финальному Transformer-инференсу.
 
-Пути Transformer, MaxPooling, Fusion, resolved-конфига и `solution.json`
-задаются отдельно в секции `artifacts`. NER по умолчанию выключен, пока в
-решение не добавлены его артефакты.
+Базовые пути Transformer, MaxPooling, Fusion, resolved-конфига и `solution.json`
+задаются в секции `artifacts`. При запуске `run.py train` они автоматически
+перенаправляются внутрь текущего `experiments/$EXPERIMENT_NAME`. Общие входные
+данные, pretrained-модели и NER-артефакты не копируются в каждый эксперимент;
+`solution.json` ссылается на них относительными путями.
 
 NER работает как опциональный item-enricher перед выбранной моделью. Он
 извлекает из `name` бренд, тип, модель, материал, цвет, размер, назначение и
