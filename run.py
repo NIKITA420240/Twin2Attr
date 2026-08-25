@@ -2,6 +2,7 @@
 
 import argparse
 import importlib
+import os
 import subprocess
 import sys
 import tempfile
@@ -335,13 +336,29 @@ def run_predict(args: argparse.Namespace) -> None:
 
 def run_train(args: argparse.Namespace) -> None:
     """Load the training configuration and execute its explicit workflow."""
+    from match.experiments import configure_experiment
     from match.workflows.train import train
 
+    experiment_name = os.environ.get("EXPERIMENT_NAME")
+    if experiment_name is None:
+        raise ValueError("EXPERIMENT_NAME environment variable is required")
     config = _load_workflow_config(
         args.config,
         args.overrides,
     )
-    train(config)
+    config, experiment_dir, registry_path = configure_experiment(
+        config,
+        experiment_name,
+    )
+    artifacts = train(
+        config,
+        experiment_name=experiment_name,
+        experiment_registry_path=registry_path,
+    )
+    print(
+        f"Experiment {experiment_name!r} saved to {experiment_dir}; "
+        f"predictor={artifacts.predictor}"
+    )
 
 
 def run_initialize(args: argparse.Namespace) -> None:

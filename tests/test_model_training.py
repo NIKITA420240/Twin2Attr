@@ -132,6 +132,43 @@ class ModelTrainingStrategyTests(unittest.TestCase):
         self.assertTrue(physical["normalize_units"])
         self.assertEqual(physical["enriched_column"], "feature_attributes")
 
+    def test_solution_manifest_uses_relative_paths_for_shared_resources(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            experiment = root / "experiments" / "baseline"
+            config = replace(
+                self.config,
+                features=replace(
+                    self.config.features,
+                    normalization=replace(
+                        self.config.features.normalization,
+                        synonyms_path=root / "data" / "synonyms.parquet",
+                        unique_attributes_path=(
+                            root / "data" / "unique_attributes.parquet"
+                        ),
+                    ),
+                ),
+                artifacts=replace(
+                    self.config.artifacts,
+                    transformer_dir=experiment / "models" / "transformer",
+                    solution_path=experiment / "solution.json",
+                ),
+            )
+            artifacts = TrainingArtifacts(
+                predictor="transformer",
+                transformer_dir=config.artifacts.transformer_dir,
+            )
+
+            output_path = save_solution_manifest(config, artifacts)
+            solution = json.loads(output_path.read_text(encoding="utf-8"))
+
+        normalization = solution["features"]["normalization"]
+        self.assertEqual(
+            normalization["synonyms_path"],
+            "../../data/synonyms.parquet",
+        )
+        self.assertFalse(Path(normalization["synonyms_path"]).is_absolute())
+
 
 if __name__ == "__main__":
     unittest.main()
