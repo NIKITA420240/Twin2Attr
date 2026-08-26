@@ -98,7 +98,8 @@ uv run python run.py initialize
 `model_description.transformer.artifact_dir`. Артефакт помечается
 `match_initialized_only=true`
 и файлом `initialization_metadata.json`: его предсказания случайны, поэтому он
-не годится для итогового score. При `pair_encoding.max_length=null` используется
+не годится для итогового score. При
+`model_description.transformer.pair_encoding.max_length=null` используется
 значение 128.
 
 ## Обучение и диагностика
@@ -128,15 +129,60 @@ uv run python run.py train
 
 # Только безопасно оценить max_length, ничего не обучая и не сохраняя
 uv run python run.py inspect
+
+# Посчитать важность атрибутов по attention pooling обученного Transformer
+uv run python run.py analyze
 ```
+
+Режим `analyze` не обучает и не изменяет модель. Он загружает Transformer из
+`model_description.transformer.artifact_dir`, один раз инференсит выборку и
+агрегирует attention-веса по исходным именам атрибутов обеих карточек. Для
+каждого появления атрибута используется средний attention по его токенам,
+умноженный на фактическую длину последовательности: так оценка не уменьшается
+только из-за более длинной карточки. Затем значения усредняются по примерам.
+
+Настройки анализа разделены на выбор режима и описание самого анализатора:
+
+```yaml
+analysis:
+  analysis_model: attribute_importance
+  data_model: base_dataset
+
+analysis_models:
+  attribute_importance:
+    model: transformer
+    output_dir: analysis/attribute_importance
+    # null означает анализ всей выбранной выборки
+    sample_size: null
+    group_by_category: true
+    min_occurrences: 30
+    score_type: normalized_mean_attention
+    output_file: attribute_importance.parquet
+    metadata_file: attribute_importance_metadata.json
+```
+
+При `group_by_category=true` итог содержит глобальные оценки и оценки внутри
+категорий. Если пара «категория + атрибут» встретилась менее
+`min_occurrences` раз, для неё используется глобальная оценка атрибута. В
+Parquet также записываются количество наблюдений и доля секций, не попавших в
+Transformer из-за ограничения длины; рядом сохраняется JSON с параметрами
+расчёта. `sample_size: null` отключает ограничение и анализирует всю выборку;
+положительное число оставляет возможность сделать быстрый пробный расчёт.
+
+Для анализа нужна уже обученная наша pooling-голова с `attention` в
+`model_description.transformer.head.poolings`. Обычный
+`BertForSequenceClassification`, модель только после `initialize` или голова
+без attention будут отклонены с явной ошибкой. `max_length` и правила
+токенизации читаются из сохранённого Transformer-артефакта, поэтому отдельно
+дообучать модель для анализа не требуется.
 
 Поля можно переопределять через Hydra/OmegaConf dotlist:
 
 ```bash
 uv run python run.py train \
   features.normalization.enabled=true \
-  pair_encoding.max_attribute_value_tokens=48 \
-  pair_encoding.max_length=256
+  model_description.transformer.pair_encoding.max_attribute_value_tokens=48 \
+  model_description.transformer.pair_encoding.max_length=256
 ```
 
 Источник данных выбирается через `training.data_model`. `base_dataset` обучается

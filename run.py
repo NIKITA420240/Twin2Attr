@@ -18,7 +18,7 @@ SOURCE_ROOT = Path(__file__).resolve().parent / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-COMMANDS = {"train", "predict", "inspect", "initialize"}
+COMMANDS = {"train", "predict", "inspect", "initialize", "analyze"}
 DEFAULT_CONFIG = "configs/pipeline.yaml"
 POLARS_VERSION = "1.43.2"
 CATBOOST_VERSION = "1.2.10"
@@ -279,6 +279,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_config_arguments(inspect)
 
+    analyze = commands.add_parser(
+        "analyze",
+        help="Calculate configured offline model statistics",
+    )
+    _add_config_arguments(analyze)
+
     predict = commands.add_parser("predict", help="Create evaluator-compatible CSV")
     predict.add_argument(
         "--items_path",
@@ -410,6 +416,18 @@ def run_inspect(args: argparse.Namespace) -> None:
     print(f"Recommended max_length: {result}")
 
 
+def run_analyze(args: argparse.Namespace) -> None:
+    """Calculate and persist configured offline model statistics."""
+    from match.workflows.analyze import analyze
+
+    config = _load_workflow_config(args.config, args.overrides)
+    result = analyze(config)
+    print(
+        f"Attribute importance saved to {result.output_path}; "
+        f"sample_rows={result.sample_rows}, attribute_rows={result.attribute_rows}"
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
 
@@ -427,6 +445,10 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if args.command == "inspect":
         run_inspect(args)
+        return
+
+    if args.command == "analyze":
+        run_analyze(args)
         return
 
     raise ValueError(f"Unsupported command: {args.command!r}")

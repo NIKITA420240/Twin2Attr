@@ -21,7 +21,7 @@ def resolve_max_length(
     config: AppConfig,
     pairs: list[PreparedPair],
 ) -> int:
-    encoding = config.pair_encoding
+    encoding = config.model_description.transformer.pair_encoding
     if encoding.max_length is not None:
         return encoding.max_length
 

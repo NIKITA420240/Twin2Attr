@@ -107,7 +107,7 @@ class UnifiedCliTests(unittest.TestCase):
         args = parse_args(
             [
                 "initialize",
-                "pair_encoding.max_length=64",
+                "model_description.transformer.pair_encoding.max_length=64",
                 "model_description.transformer.artifact_dir=models/initialized",
             ]
         )
@@ -116,8 +116,26 @@ class UnifiedCliTests(unittest.TestCase):
         self.assertEqual(
             args.overrides,
             [
-                "pair_encoding.max_length=64",
+                "model_description.transformer.pair_encoding.max_length=64",
                 "model_description.transformer.artifact_dir=models/initialized",
+            ],
+        )
+
+    def test_parses_analysis_overrides(self) -> None:
+        args = parse_args(
+            [
+                "analyze",
+                "analysis.data_model=mix_dataset",
+                "analysis_models.attribute_importance.sample_size=1000",
+            ]
+        )
+
+        self.assertEqual(args.command, "analyze")
+        self.assertEqual(
+            args.overrides,
+            [
+                "analysis.data_model=mix_dataset",
+                "analysis_models.attribute_importance.sample_size=1000",
             ],
         )
 

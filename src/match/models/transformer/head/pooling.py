@@ -63,7 +63,7 @@ class AttentionPooling(nn.Module):
             nn.Linear(inner_size, num_heads),
         )
 
-    def forward(
+    def attention_weights(
         self,
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor,
@@ -79,7 +79,14 @@ class AttentionPooling(nn.Module):
         weights = weights / weights.sum(dim=1, keepdim=True).clamp_min(
             torch.finfo(weights.dtype).eps
         )
-        weights = weights.to(dtype=hidden_states.dtype)
+        return weights.to(dtype=hidden_states.dtype)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        weights = self.attention_weights(hidden_states, attention_mask)
         pooled = torch.einsum("blk,blh->bkh", weights, hidden_states).flatten(1)
         return torch.where(
             attention_mask.any(dim=1, keepdim=True),

@@ -19,10 +19,11 @@ DEFAULT_INITIALIZED_MAX_LENGTH = 128
 
 
 def _initialization_max_length(config: AppConfig) -> int:
-    configured = config.pair_encoding.max_length
+    encoding = config.model_description.transformer.pair_encoding
+    configured = encoding.max_length
     if configured is not None:
         return configured
-    return min(DEFAULT_INITIALIZED_MAX_LENGTH, config.pair_encoding.hard_cap)
+    return min(DEFAULT_INITIALIZED_MAX_LENGTH, encoding.hard_cap)
 
 
 def initialize(config: AppConfig) -> TrainingArtifacts:
@@ -42,7 +43,7 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
         )
 
     parameters = config.model_description.transformer
-    encoding = config.pair_encoding
+    encoding = parameters.pair_encoding
     max_length = _initialization_max_length(config)
     head_config = PoolingHeadConfig(
         poolings=parameters.head.poolings,

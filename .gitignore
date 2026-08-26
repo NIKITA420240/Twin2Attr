@@ -8,6 +8,7 @@
 /.cache/
 /.hydra/
 /outputs/
+/analysis/
 /multirun/
 /dist/
 /build/
