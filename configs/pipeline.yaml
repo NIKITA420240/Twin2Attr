@@ -1,7 +1,7 @@
 # transformer | maxpooling | fusion | boosting
 training:
   model: transformer
-  data_model: base_dataset
+  data_model: mix_dataset
 
 data_model_description:
   base_dataset:
@@ -54,9 +54,9 @@ inference:
 pair_encoding:
   use_field_tokens: true
   # null disables per-attribute value truncation.
-  max_attribute_value_tokens: 32
+  max_attribute_value_tokens: 16
   # null lets the training data determine the limit.
-  max_length: null
+  max_length: 256
   quantile: 0.95
   sample_size: 10000
   hard_cap: 512
@@ -64,18 +64,18 @@ pair_encoding:
 models_parameters:
   transformer:
     pretrained_model_path: models/mmarco-mMiniLMv2-L12-H384-v1
-    max_epochs: 8
+    max_epochs: 15
     hpo_trials: 1
     # Used directly when hpo_trials=1; otherwise these are initial values.
     # Base LR for Transformer encoder layers and the value tuned by HPO.
     learning_rate: 3.0e-5
     # Only the newly added [KEY]/[VAL] rows use this embedding LR.
-    embeddings_learning_rate: 1.0e-4
-    train_new_token_embeddings_only: true
+    embeddings_learning_rate: 1.0e-6
+    train_new_token_embeddings_only: false
     # Freeze the rest of the backbone and fine-tune only its three highest layers.
-    train_last_n_layers: 3
-    head_learning_rate: 1.0e-3
-    layerwise_lr_decay: 1.0
+    train_last_n_layers: Null
+    head_learning_rate: 1.0e-4
+    layerwise_lr_decay: 0.9
     weight_decay: 0.01
     hpo_learning_rate_min: 0.000001
     hpo_learning_rate_max: 0.00005
@@ -179,7 +179,7 @@ features:
     use_amp: true
     semantic_cleanup: true
   physical:
-    enabled: false
+    enabled: true
     source_column: name
     output_column: physical_attributes
     enriched_column: feature_attributes
