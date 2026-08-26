@@ -51,19 +51,31 @@ class ModelTrainingStrategyTests(unittest.TestCase):
             root = Path(directory)
             config = replace(
                 self.config,
-                artifacts=replace(
-                    self.config.artifacts,
-                    transformer_dir=root / "models" / "transformer",
-                    maxpooling_path=root / "models" / "maxpooling.joblib",
-                    fusion_path=root / "models" / "fusion.pt",
+                model_description=replace(
+                    self.config.model_description,
+                    transformer=replace(
+                        self.config.model_description.transformer,
+                        artifact_dir=root / "models" / "transformer",
+                    ),
+                    maxpooling=replace(
+                        self.config.model_description.maxpooling,
+                        artifact_path=root / "models" / "maxpooling.joblib",
+                    ),
+                    fusion=replace(
+                        self.config.model_description.fusion,
+                        artifact_path=root / "models" / "fusion.pt",
+                    ),
+                ),
+                training=replace(
+                    self.config.training,
                     solution_path=root / "solution.json",
                 ),
             )
             artifacts = TrainingArtifacts(
                 predictor="fusion",
-                transformer_dir=config.artifacts.transformer_dir,
-                maxpooling_path=config.artifacts.maxpooling_path,
-                fusion_path=config.artifacts.fusion_path,
+                transformer_dir=config.model_description.transformer.artifact_dir,
+                maxpooling_path=config.model_description.maxpooling.artifact_path,
+                fusion_path=config.model_description.fusion.artifact_path,
             )
             output_path = save_solution_manifest(config, artifacts)
             solution = json.loads(output_path.read_text(encoding="utf-8"))
@@ -90,15 +102,21 @@ class ModelTrainingStrategyTests(unittest.TestCase):
                         cluster_centers_path=root / "models" / "centers.pt",
                     ),
                 ),
-                artifacts=replace(
-                    self.config.artifacts,
-                    transformer_dir=root / "models" / "transformer",
+                model_description=replace(
+                    self.config.model_description,
+                    transformer=replace(
+                        self.config.model_description.transformer,
+                        artifact_dir=root / "models" / "transformer",
+                    ),
+                ),
+                training=replace(
+                    self.config.training,
                     solution_path=root / "solution.json",
                 ),
             )
             artifacts = TrainingArtifacts(
                 predictor="transformer",
-                transformer_dir=config.artifacts.transformer_dir,
+                transformer_dir=config.model_description.transformer.artifact_dir,
             )
             output_path = save_solution_manifest(config, artifacts)
             solution = json.loads(output_path.read_text(encoding="utf-8"))
@@ -122,15 +140,21 @@ class ModelTrainingStrategyTests(unittest.TestCase):
                         enabled=True,
                     ),
                 ),
-                artifacts=replace(
-                    self.config.artifacts,
-                    transformer_dir=root / "models" / "transformer",
+                model_description=replace(
+                    self.config.model_description,
+                    transformer=replace(
+                        self.config.model_description.transformer,
+                        artifact_dir=root / "models" / "transformer",
+                    ),
+                ),
+                training=replace(
+                    self.config.training,
                     solution_path=root / "solution.json",
                 ),
             )
             artifacts = TrainingArtifacts(
                 predictor="transformer",
-                transformer_dir=config.artifacts.transformer_dir,
+                transformer_dir=config.model_description.transformer.artifact_dir,
             )
             output_path = save_solution_manifest(config, artifacts)
             solution = json.loads(output_path.read_text(encoding="utf-8"))
@@ -156,15 +180,21 @@ class ModelTrainingStrategyTests(unittest.TestCase):
                         ),
                     ),
                 ),
-                artifacts=replace(
-                    self.config.artifacts,
-                    transformer_dir=experiment / "models" / "transformer",
+                model_description=replace(
+                    self.config.model_description,
+                    transformer=replace(
+                        self.config.model_description.transformer,
+                        artifact_dir=experiment / "models" / "transformer",
+                    ),
+                ),
+                training=replace(
+                    self.config.training,
                     solution_path=experiment / "solution.json",
                 ),
             )
             artifacts = TrainingArtifacts(
                 predictor="transformer",
-                transformer_dir=config.artifacts.transformer_dir,
+                transformer_dir=config.model_description.transformer.artifact_dir,
             )
 
             output_path = save_solution_manifest(config, artifacts)

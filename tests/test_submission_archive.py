@@ -29,6 +29,42 @@ class SubmissionArchiveTests(unittest.TestCase):
         )
 
     @staticmethod
+    def _with_model_artifacts(
+        config,
+        *,
+        transformer: Path | None = None,
+        maxpooling: Path | None = None,
+        boosting: Path | None = None,
+        stacking: Path | None = None,
+    ):
+        description = config.model_description
+        changes = {}
+        if transformer is not None:
+            changes["transformer"] = replace(
+                description.transformer,
+                artifact_dir=transformer,
+            )
+        if maxpooling is not None:
+            changes["maxpooling"] = replace(
+                description.maxpooling,
+                artifact_path=maxpooling,
+            )
+        if boosting is not None:
+            changes["boosting"] = replace(
+                description.boosting,
+                artifact_dir=boosting,
+            )
+        if stacking is not None:
+            changes["stacking"] = replace(
+                description.stacking,
+                artifact_dir=stacking,
+            )
+        return replace(
+            config,
+            model_description=replace(description, **changes),
+        )
+
+    @staticmethod
     def _project(root: Path) -> None:
         (root / "src" / "match").mkdir(parents=True)
         (root / "src" / "match" / "__init__.py").write_text("", encoding="utf-8")
@@ -109,11 +145,10 @@ class SubmissionArchiveTests(unittest.TestCase):
             unique.write_bytes(b"unique")
             output = root / "dist" / "submission.zip"
             config = replace(
-                self.config,
-                inference=replace(
-                    self.config.inference,
-                    transformer_dir=transformer,
-                    maxpooling_path=maxpooling,
+                self._with_model_artifacts(
+                    self.config,
+                    transformer=transformer,
+                    maxpooling=maxpooling,
                 ),
                 features=replace(
                     self.config.features,
@@ -194,10 +229,9 @@ class SubmissionArchiveTests(unittest.TestCase):
             unique = root / "data" / "unique.parquet"
             unique.write_bytes(b"unique")
             config = replace(
-                self.config,
-                inference=replace(
-                    self.config.inference,
-                    transformer_dir=transformer,
+                self._with_model_artifacts(
+                    self.config,
+                    transformer=transformer,
                 ),
                 features=replace(
                     self.config.features,
@@ -251,12 +285,14 @@ class SubmissionArchiveTests(unittest.TestCase):
             maxpooling.parent.mkdir(parents=True)
             maxpooling.write_bytes(b"maxpooling")
             config = replace(
-                self.config,
+                self._with_model_artifacts(
+                    self.config,
+                    transformer=root / "models" / "missing-transformer",
+                    maxpooling=maxpooling,
+                ),
                 inference=replace(
                     self.config.inference,
                     model="maxpooling",
-                    transformer_dir=root / "models" / "missing-transformer",
-                    maxpooling_path=maxpooling,
                 ),
                 submission=replace(
                     self.config.submission,
@@ -280,10 +316,9 @@ class SubmissionArchiveTests(unittest.TestCase):
             root = Path(directory)
             self._project(root)
             config = replace(
-                self.config,
-                inference=replace(
-                    self.config.inference,
-                    transformer_dir=root / "models" / "missing",
+                self._with_model_artifacts(
+                    self.config,
+                    transformer=root / "models" / "missing",
                 ),
                 submission=replace(
                     self.config.submission,
@@ -306,10 +341,9 @@ class SubmissionArchiveTests(unittest.TestCase):
             )
             (transformer / "pytorch_model.bin").write_bytes(b"pretrained")
             config = replace(
-                self.config,
-                inference=replace(
-                    self.config.inference,
-                    transformer_dir=transformer,
+                self._with_model_artifacts(
+                    self.config,
+                    transformer=transformer,
                 ),
                 submission=replace(
                     self.config.submission,
@@ -330,12 +364,14 @@ class SubmissionArchiveTests(unittest.TestCase):
             (boosting / "model.cbm").write_bytes(b"boosting")
             (boosting / "manifest.json").write_text("{}", encoding="utf-8")
             config = replace(
-                self.config,
+                self._with_model_artifacts(
+                    self.config,
+                    transformer=transformer,
+                    boosting=boosting,
+                ),
                 inference=replace(
                     self.config.inference,
                     model="cascade",
-                    transformer_dir=transformer,
-                    boosting_dir=boosting,
                 ),
                 submission=replace(
                     self.config.submission,
@@ -369,12 +405,14 @@ class SubmissionArchiveTests(unittest.TestCase):
             (stacking / "model.cbm").write_bytes(b"stacking")
             (stacking / "manifest.json").write_text("{}", encoding="utf-8")
             config = replace(
-                self.config,
+                self._with_model_artifacts(
+                    self.config,
+                    transformer=transformer,
+                    stacking=stacking,
+                ),
                 inference=replace(
                     self.config.inference,
                     model="stacking",
-                    transformer_dir=transformer,
-                    stacking_dir=stacking,
                 ),
                 submission=replace(
                     self.config.submission,

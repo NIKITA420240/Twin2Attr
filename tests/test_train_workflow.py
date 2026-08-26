@@ -23,9 +23,9 @@ class TrainWorkflowConfigTests(unittest.TestCase):
         data = object()
         artifacts = TrainingArtifacts(
             predictor="transformer",
-            transformer_dir=self.config.artifacts.transformer_dir,
+            transformer_dir=self.config.model_description.transformer.artifact_dir,
         )
-        solution_path = self.config.artifacts.solution_path
+        solution_path = self.config.training.solution_path
         trainer = Mock()
         trainer.train.return_value = artifacts
         data_model = Mock()
@@ -70,7 +70,7 @@ class TrainWorkflowConfigTests(unittest.TestCase):
         self.assertEqual(result.predictor, "transformer")
         self.assertEqual(
             result.resolved_config_path,
-            self.config.artifacts.resolved_config_path,
+            self.config.training.resolved_config_path,
         )
         self.assertEqual(result.solution_path, solution_path)
         build_trainer.assert_called_once_with(self.config)
@@ -80,7 +80,7 @@ class TrainWorkflowConfigTests(unittest.TestCase):
         trainer.train.assert_called_once_with(data)
         save_config.assert_called_once_with(
             self.config,
-            self.config.artifacts.resolved_config_path,
+            self.config.training.resolved_config_path,
         )
         save_manifest.assert_called_once_with(self.config, artifacts)
 

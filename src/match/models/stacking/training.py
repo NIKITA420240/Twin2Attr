@@ -57,7 +57,7 @@ class StackingTrainer:
             raise RuntimeError("Transformer trainer did not produce an artifact")
         transformer = TransformerPredictor.load(
             transformer_artifacts.transformer_dir,
-            batch_size=self.config.models_parameters.transformer.batch_size,
+            batch_size=self.config.model_description.transformer.batch_size,
             device=self.config.runtime.device,
         )
         stacking_batch = PredictionBatch(
@@ -92,7 +92,7 @@ class StackingTrainer:
 
         from catboost import CatBoostClassifier
 
-        parameters = self.config.models_parameters.boosting
+        parameters = self.config.model_description.boosting
         model = CatBoostClassifier(
             iterations=parameters.iterations,
             depth=parameters.depth,
@@ -127,7 +127,7 @@ class StackingTrainer:
         )
         output_dir = save_stacking_model(
             model,
-            self.config.artifacts.stacking_dir,
+            self.config.model_description.stacking.artifact_dir,
             list(train_features.columns),
         )
         logger.info(

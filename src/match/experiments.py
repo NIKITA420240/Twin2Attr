@@ -68,14 +68,36 @@ def configure_experiment(
     model_root = experiment_dir / "models" / "twin2attr"
     configured = replace(
         config,
-        artifacts=replace(
-            config.artifacts,
-            transformer_dir=model_root / "transformer",
-            maxpooling_path=model_root / "maxpooling.joblib",
-            fusion_path=model_root / "fusion.pt",
-            boosting_dir=model_root / "boosting",
-            stacking_dir=model_root / "stacking",
+        model_description=replace(
+            config.model_description,
+            transformer=replace(
+                config.model_description.transformer,
+                artifact_dir=model_root / "transformer",
+            ),
+            maxpooling=replace(
+                config.model_description.maxpooling,
+                artifact_path=model_root / "maxpooling.joblib",
+            ),
+            fusion=replace(
+                config.model_description.fusion,
+                artifact_path=model_root / "fusion.pt",
+            ),
+            boosting=replace(
+                config.model_description.boosting,
+                artifact_dir=model_root / "boosting",
+            ),
+            stacking=replace(
+                config.model_description.stacking,
+                artifact_dir=model_root / "stacking",
+            ),
+        ),
+        training=replace(
+            config.training,
             resolved_config_path=model_root / "pipeline_config.yaml",
+            solution_path=experiment_dir / "solution.json",
+        ),
+        inference=replace(
+            config.inference,
             solution_path=experiment_dir / "solution.json",
         ),
         logging=replace(
@@ -107,7 +129,10 @@ def validation_pairs_hash(matches: pl.DataFrame) -> str:
 
 
 def _training_metadata(config: AppConfig) -> dict[str, Any]:
-    path = config.artifacts.transformer_dir / "training_metadata.json"
+    path = (
+        config.model_description.transformer.artifact_dir
+        / "training_metadata.json"
+    )
     if not path.is_file():
         return {}
     value = json.loads(path.read_text(encoding="utf-8"))
@@ -126,7 +151,7 @@ def _validate_registry_schema(registry_path: Path) -> None:
 
 
 def _head_description(config: AppConfig) -> str:
-    head = config.models_parameters.transformer.head
+    head = config.model_description.transformer.head
     if head.type == "default":
         return "Default HF: CLS -> Dropout -> Linear(2)"
     poolings = ", ".join(
@@ -167,7 +192,7 @@ def save_experiment_record(
 ) -> tuple[Path, Path]:
     """Persist experiment.json and append one successful run to the CSV registry."""
     name = validate_experiment_name(experiment_name)
-    experiment_dir = config.artifacts.solution_path.parent
+    experiment_dir = config.training.solution_path.parent
     experiment_dir.mkdir(parents=True, exist_ok=True)
     created_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace(
         "+00:00", "Z"
@@ -179,7 +204,7 @@ def save_experiment_record(
     metric_name = f"{artifacts.predictor}.validation_macro_pr_auc"
     macro_pr_auc = metrics.get(metric_name)
 
-    transformer = config.models_parameters.transformer
+    transformer = config.model_description.transformer
     training_metadata = _training_metadata(config)
     resolved = training_metadata.get("resolved_config")
     resolved_config = resolved if isinstance(resolved, dict) else {}

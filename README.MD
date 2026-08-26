@@ -25,7 +25,9 @@ uv run python run.py \
 Результат сохраняется как CSV со столбцами `id1`, `id2`, `predict`. Выбранная
 модель и пути к её артефактам фиксируются в `solution.json`, поэтому evaluator
 не должен передавать дополнительный параметр модели. Короткие формы: `-i`,
-`-m` и `-o`.
+`-m` и `-o`. Локально путь берётся из `inference.solution_path`; явный
+`--solution` имеет приоритет. В собранном архиве используется `solution.json`
+рядом с `run.py`.
 
 ## Сборка архива для evaluator
 
@@ -38,11 +40,9 @@ uv run python -m build_submission
 `training.model` определяет стратегию обучения, а `inference.model` — модель,
 которая попадёт в финальный архив. Эти параметры независимы: например, после
 обучения `fusion` можно собрать более компактное решение только с Transformer.
-Пути готовых весов задаются отдельно через `inference.transformer_dir`,
-`inference.maxpooling_path`, `inference.fusion_path` и
-`inference.boosting_dir` и `inference.stacking_dir`, поэтому сборка не зависит
-от директорий, куда
-training workflow сохраняет новые артефакты.
+Параметры и путь артефакта каждой модели находятся вместе в соответствующей
+секции `model_description`. `inference` содержит имя выбранной модели и путь к
+её `solution.json`.
 
 Путь результата задаётся параметром `submission.output_path` и по умолчанию
 равен `dist/twin2attr_submission.zip`. В корень ZIP попадают `run.py`,
@@ -93,9 +93,10 @@ uv run python -m build_submission \
 uv run python run.py initialize
 ```
 
-Команда читает `models_parameters.transformer.pretrained_model_path`, создаёт
-голову из `models_parameters.transformer.head` и сохраняет результат в
-`artifacts.transformer_dir`. Артефакт помечается `match_initialized_only=true`
+Команда читает `model_description.transformer.pretrained_model_path`, создаёт
+голову из `model_description.transformer.head` и сохраняет результат в
+`model_description.transformer.artifact_dir`. Артефакт помечается
+`match_initialized_only=true`
 и файлом `initialization_metadata.json`: его предсказания случайны, поэтому он
 не годится для итогового score. При `pair_encoding.max_length=null` используется
 значение 128.
@@ -186,11 +187,12 @@ uv run python run.py train \
   training.model=fusion
 ```
 
-Гиперпараметры лежат в `models_parameters.transformer`,
-`models_parameters.maxpooling`, `models_parameters.fusion` и
-`models_parameters.boosting`. Состав и пороги каскада задаются в
-`models_parameters.cascade`, а модели двух уровней — в
-`models_parameters.stacking`. Выбранный trainer
+Полное описание модели — гиперпараметры и путь её артефакта — лежит в
+`model_description.transformer`,
+`model_description.maxpooling`, `model_description.fusion` и
+`model_description.boosting`. Состав и пороги каскада задаются в
+`model_description.cascade`, а модели двух уровней — в
+`model_description.stacking`. Выбранный trainer
 возвращает единый `TrainingArtifacts`. Финальный predict запускается отдельно
 через `run.py predict`; совместимый `solution.json` создаётся после успешного
 обучения автоматически. Токенизация остаётся динамической внутри батчей.
@@ -201,19 +203,22 @@ HPO с фиксированными параметрами выглядит та
 
 ```bash
 uv run python run.py train \
-  models_parameters.transformer.hpo_trials=1 \
-  models_parameters.transformer.learning_rate=0.00001 \
-  models_parameters.transformer.weight_decay=0.01 \
-  models_parameters.transformer.train_batch_size=32 \
-  models_parameters.transformer.gradient_accumulation_steps=2
+  model_description.transformer.hpo_trials=1 \
+  model_description.transformer.learning_rate=0.00001 \
+  model_description.transformer.weight_decay=0.01 \
+  model_description.transformer.train_batch_size=32 \
+  model_description.transformer.gradient_accumulation_steps=2
 ```
 
 При `hpo_trials > 1` итоговые `learning_rate` и `weight_decay` выбирает Optuna
 из диапазонов `hpo_learning_rate_min/max` и `hpo_weight_decay_min/max`.
 Поле `batch_size` относится только к финальному Transformer-инференсу.
 
-Базовые пути Transformer, MaxPooling, Fusion, resolved-конфига и `solution.json`
-задаются в секции `artifacts`. При запуске `run.py train` они автоматически
+Пути моделей задаются рядом с их параметрами через `artifact_dir` или
+`artifact_path`. `training.resolved_config_path` задаёт место для полного
+resolved-конфига, а `training.solution_path` — место записи inference manifest.
+`inference.solution_path` по умолчанию ссылается на тот же файл через
+интерполяцию. При запуске `run.py train` все генерируемые пути автоматически
 перенаправляются внутрь текущего `experiments/$EXPERIMENT_NAME`. Общие входные
 данные, pretrained-модели и NER-артефакты не копируются в каждый эксперимент;
 `solution.json` ссылается на них относительными путями.

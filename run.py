@@ -255,7 +255,7 @@ def _add_config_arguments(parser: argparse.ArgumentParser) -> None:
         nargs=argparse.REMAINDER,
         help=(
             "Hydra-style overrides such as "
-            "models_parameters.transformer.max_epochs=3"
+            "model_description.transformer.max_epochs=3"
         ),
     )
 
@@ -304,7 +304,15 @@ def build_parser() -> argparse.ArgumentParser:
     predict.add_argument(
         "--solution",
         default=None,
-        help="Optional path to solution.json; defaults to the project root",
+        help=(
+            "Optional path to solution.json; otherwise use inference.solution_path "
+            "from the local pipeline config or solution.json beside run.py"
+        ),
+    )
+    predict.add_argument(
+        "--config",
+        default=DEFAULT_CONFIG,
+        help="Optional local pipeline config used to resolve inference.solution_path",
     )
     return parser
 
@@ -324,11 +332,21 @@ def _load_workflow_config(
     return load_app_config_file(config_path, overrides)
 
 
+def _predict_solution_path(args: argparse.Namespace) -> Path | None:
+    if args.solution:
+        return Path(args.solution)
+    config_path = Path(args.config).expanduser()
+    if not config_path.is_file():
+        return None
+    return _load_workflow_config(str(config_path), ()).inference.solution_path
+
+
 def run_predict(args: argparse.Namespace) -> None:
     """Create a validated evaluator-compatible prediction CSV."""
+    solution_path = _predict_solution_path(args)
     ensure_polars_available()
-    ensure_preprocessing_runtime_available(args.solution)
-    ensure_catboost_available(args.solution)
+    ensure_preprocessing_runtime_available(solution_path)
+    ensure_catboost_available(solution_path)
 
     from match.submission import create_submission
 
@@ -336,7 +354,7 @@ def run_predict(args: argparse.Namespace) -> None:
         items_path=args.items_path,
         matches_path=args.matches_path,
         output_path=args.output_path,
-        solution_path=Path(args.solution) if args.solution else None,
+        solution_path=solution_path,
     )
     print(f"Submission saved to {args.output_path}; rows={result.height}")
 

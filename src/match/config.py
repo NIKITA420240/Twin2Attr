@@ -147,6 +147,8 @@ def _validate_data_split_settings(
 class TrainingSettings:
     model: str
     data_model: str
+    resolved_config_path: Path
+    solution_path: Path
 
     def __post_init__(self) -> None:
         if self.model not in {
@@ -171,11 +173,7 @@ class TrainingSettings:
 @dataclass(frozen=True, slots=True)
 class InferenceSettings:
     model: str
-    transformer_dir: Path
-    maxpooling_path: Path
-    fusion_path: Path
-    boosting_dir: Path
-    stacking_dir: Path
+    solution_path: Path
 
     def __post_init__(self) -> None:
         if self.model not in {
@@ -261,6 +259,7 @@ class TransformerHeadParameters:
 @dataclass(frozen=True, slots=True)
 class TransformerParameters:
     pretrained_model_path: str
+    artifact_dir: Path
     max_epochs: int
     hpo_trials: int
     learning_rate: float
@@ -327,6 +326,7 @@ class TransformerParameters:
 
 @dataclass(frozen=True, slots=True)
 class MaxPoolingParameters:
+    artifact_path: Path
     vector_size: int
     window: int
     min_count: int
@@ -342,6 +342,7 @@ class MaxPoolingParameters:
 
 @dataclass(frozen=True, slots=True)
 class FusionParameters:
+    artifact_path: Path
     embedding_batch_size: int
     hidden_dim: int
     dropout: float
@@ -354,6 +355,7 @@ class FusionParameters:
 
 @dataclass(frozen=True, slots=True)
 class BoostingParameters:
+    artifact_dir: Path
     iterations: int
     depth: int
     learning_rate: float
@@ -393,6 +395,7 @@ class CascadeParameters:
 
 @dataclass(frozen=True, slots=True)
 class StackingParameters:
+    artifact_dir: Path
     base_model: str
     stacking_model: str
 
@@ -404,24 +407,13 @@ class StackingParameters:
 
 
 @dataclass(frozen=True, slots=True)
-class ModelsParametersSettings:
+class ModelDescriptionSettings:
     transformer: TransformerParameters
     maxpooling: MaxPoolingParameters
     fusion: FusionParameters
     boosting: BoostingParameters
     cascade: CascadeParameters
     stacking: StackingParameters
-
-
-@dataclass(frozen=True, slots=True)
-class ArtifactSettings:
-    transformer_dir: Path
-    maxpooling_path: Path
-    fusion_path: Path
-    boosting_dir: Path
-    stacking_dir: Path
-    resolved_config_path: Path
-    solution_path: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -543,8 +535,7 @@ class AppConfig:
     data_model_description: DataModelDescriptionSettings
     inference: InferenceSettings
     pair_encoding: PairEncodingSettings
-    models_parameters: ModelsParametersSettings
-    artifacts: ArtifactSettings
+    model_description: ModelDescriptionSettings
     features: FeatureSettings
     runtime: RuntimeSettings
     logging: LoggingSettings
@@ -680,18 +671,17 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         raise ValueError("config section 'inference' must be a mapping")
     inference = inference_value
     encoding = _section(resolved, "pair_encoding")
-    models_parameters = _section(resolved, "models_parameters")
-    transformer = _section(models_parameters, "transformer")
+    model_description = _section(resolved, "model_description")
+    transformer = _section(model_description, "transformer")
     transformer_head_value = transformer.get("head", {})
     if not isinstance(transformer_head_value, Mapping):
         raise ValueError("config section 'transformer.head' must be a mapping")
     transformer_head = transformer_head_value
-    maxpooling = _section(models_parameters, "maxpooling")
-    fusion = _section(models_parameters, "fusion")
-    boosting = _section(models_parameters, "boosting")
-    cascade = _section(models_parameters, "cascade")
-    stacking = _section(models_parameters, "stacking")
-    artifacts = _section(resolved, "artifacts")
+    maxpooling = _section(model_description, "maxpooling")
+    fusion = _section(model_description, "fusion")
+    boosting = _section(model_description, "boosting")
+    cascade = _section(model_description, "cascade")
+    stacking = _section(model_description, "stacking")
     features = _section(resolved, "features")
     normalization_value = features.get(
         "normalization",
@@ -717,6 +707,14 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         training=TrainingSettings(
             model=str(_required(training, "model")),
             data_model=str(_required(training, "data_model")),
+            resolved_config_path=_path(
+                _required(training, "resolved_config_path"),
+                "training.resolved_config_path",
+            ),
+            solution_path=_path(
+                _required(training, "solution_path"),
+                "training.solution_path",
+            ),
         ),
         data_model_description=DataModelDescriptionSettings(
             base_dataset=BaseDatasetSettings(
@@ -759,40 +757,9 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         ),
         inference=InferenceSettings(
             model=str(_required(inference, "model")),
-            transformer_dir=_path(
-                inference.get(
-                    "transformer_dir",
-                    _required(artifacts, "transformer_dir"),
-                ),
-                "inference.transformer_dir",
-            ),
-            maxpooling_path=_path(
-                inference.get(
-                    "maxpooling_path",
-                    _required(artifacts, "maxpooling_path"),
-                ),
-                "inference.maxpooling_path",
-            ),
-            fusion_path=_path(
-                inference.get(
-                    "fusion_path",
-                    _required(artifacts, "fusion_path"),
-                ),
-                "inference.fusion_path",
-            ),
-            boosting_dir=_path(
-                inference.get(
-                    "boosting_dir",
-                    _required(artifacts, "boosting_dir"),
-                ),
-                "inference.boosting_dir",
-            ),
-            stacking_dir=_path(
-                inference.get(
-                    "stacking_dir",
-                    _required(artifacts, "stacking_dir"),
-                ),
-                "inference.stacking_dir",
+            solution_path=_path(
+                _required(inference, "solution_path"),
+                "inference.solution_path",
             ),
         ),
         pair_encoding=PairEncodingSettings(
@@ -808,10 +775,14 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             sample_size=int(_required(encoding, "sample_size")),
             hard_cap=int(_required(encoding, "hard_cap")),
         ),
-        models_parameters=ModelsParametersSettings(
+        model_description=ModelDescriptionSettings(
             transformer=TransformerParameters(
                 pretrained_model_path=str(
                     _required(transformer, "pretrained_model_path")
+                ),
+                artifact_dir=_path(
+                    _required(transformer, "artifact_dir"),
+                    "model_description.transformer.artifact_dir",
                 ),
                 max_epochs=int(_required(transformer, "max_epochs")),
                 hpo_trials=int(_required(transformer, "hpo_trials")),
@@ -823,7 +794,7 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 ),
                 train_new_token_embeddings_only=_bool(
                     transformer.get("train_new_token_embeddings_only", False),
-                    "models_parameters.transformer.train_new_token_embeddings_only",
+                    "model_description.transformer.train_new_token_embeddings_only",
                 ),
                 train_last_n_layers=_optional_int(
                     transformer.get("train_last_n_layers")
@@ -868,7 +839,7 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 ),
                 auto_find_batch_size=_bool(
                     _required(transformer, "auto_find_batch_size"),
-                    "models_parameters.transformer.auto_find_batch_size",
+                    "model_description.transformer.auto_find_batch_size",
                 ),
                 batch_size=int(_required(transformer, "batch_size")),
                 head=TransformerHeadParameters(
@@ -891,6 +862,10 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 ),
             ),
             maxpooling=MaxPoolingParameters(
+                artifact_path=_path(
+                    _required(maxpooling, "artifact_path"),
+                    "model_description.maxpooling.artifact_path",
+                ),
                 vector_size=int(_required(maxpooling, "vector_size")),
                 window=int(_required(maxpooling, "window")),
                 min_count=int(_required(maxpooling, "min_count")),
@@ -906,6 +881,10 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 weight_decay=float(_required(maxpooling, "weight_decay")),
             ),
             fusion=FusionParameters(
+                artifact_path=_path(
+                    _required(fusion, "artifact_path"),
+                    "model_description.fusion.artifact_path",
+                ),
                 embedding_batch_size=int(
                     _required(fusion, "embedding_batch_size")
                 ),
@@ -918,6 +897,10 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 weight_decay=float(_required(fusion, "weight_decay")),
             ),
             boosting=BoostingParameters(
+                artifact_dir=_path(
+                    _required(boosting, "artifact_dir"),
+                    "model_description.boosting.artifact_dir",
+                ),
                 iterations=int(_required(boosting, "iterations")),
                 depth=int(_required(boosting, "depth")),
                 learning_rate=float(_required(boosting, "learning_rate")),
@@ -938,38 +921,12 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 ),
             ),
             stacking=StackingParameters(
+                artifact_dir=_path(
+                    _required(stacking, "artifact_dir"),
+                    "model_description.stacking.artifact_dir",
+                ),
                 base_model=str(_required(stacking, "base_model")),
                 stacking_model=str(_required(stacking, "stacking_model")),
-            ),
-        ),
-        artifacts=ArtifactSettings(
-            transformer_dir=_path(
-                _required(artifacts, "transformer_dir"),
-                "artifacts.transformer_dir",
-            ),
-            maxpooling_path=_path(
-                _required(artifacts, "maxpooling_path"),
-                "artifacts.maxpooling_path",
-            ),
-            fusion_path=_path(
-                _required(artifacts, "fusion_path"),
-                "artifacts.fusion_path",
-            ),
-            boosting_dir=_path(
-                _required(artifacts, "boosting_dir"),
-                "artifacts.boosting_dir",
-            ),
-            stacking_dir=_path(
-                _required(artifacts, "stacking_dir"),
-                "artifacts.stacking_dir",
-            ),
-            resolved_config_path=_path(
-                _required(artifacts, "resolved_config_path"),
-                "artifacts.resolved_config_path",
-            ),
-            solution_path=_path(
-                _required(artifacts, "solution_path"),
-                "artifacts.solution_path",
             ),
         ),
         features=FeatureSettings(
@@ -1122,7 +1079,6 @@ def save_app_config(config: AppConfig, path: Path) -> None:
 
 __all__ = [
     "AppConfig",
-    "ArtifactSettings",
     "BaseDatasetSettings",
     "BoostingParameters",
     "CascadeParameters",
@@ -1137,7 +1093,7 @@ __all__ = [
     "LoggingSettings",
     "MaxPoolingParameters",
     "MixedDatasetSettings",
-    "ModelsParametersSettings",
+    "ModelDescriptionSettings",
     "NerSettings",
     "NormalizationSettings",
     "PairEncodingSettings",

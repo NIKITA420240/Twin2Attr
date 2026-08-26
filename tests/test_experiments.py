@@ -39,12 +39,23 @@ class ExperimentTrackingTests(unittest.TestCase):
             )
             self.assertEqual(registry_path, root.resolve() / "experiments.csv")
             self.assertEqual(
-                config.artifacts.transformer_dir,
+                config.model_description.transformer.artifact_dir,
                 experiment_dir / "models" / "twin2attr" / "transformer",
             )
             self.assertEqual(
-                config.artifacts.solution_path,
+                config.training.solution_path,
                 experiment_dir / "solution.json",
+            )
+            self.assertEqual(
+                config.inference.solution_path,
+                config.training.solution_path,
+            )
+            self.assertEqual(
+                config.training.resolved_config_path,
+                experiment_dir
+                / "models"
+                / "twin2attr"
+                / "pipeline_config.yaml",
             )
             self.assertEqual(
                 config.logging.file,
@@ -97,7 +108,9 @@ class ExperimentTrackingTests(unittest.TestCase):
             )
             artifacts = TrainingArtifacts(
                 predictor="transformer",
-                transformer_dir=config.artifacts.transformer_dir,
+                transformer_dir=(
+                    config.model_description.transformer.artifact_dir
+                ),
                 metrics=(("transformer.validation_macro_pr_auc", 0.74),),
             )
 
@@ -144,7 +157,9 @@ class ExperimentTrackingTests(unittest.TestCase):
             )
             artifacts = TrainingArtifacts(
                 predictor="transformer",
-                transformer_dir=config.artifacts.transformer_dir,
+                transformer_dir=(
+                    config.model_description.transformer.artifact_dir
+                ),
             )
 
             with self.assertRaisesRegex(ValueError, "unexpected schema"):

@@ -52,7 +52,7 @@ class BoostingTrainer:
     def train(self, data: TrainingData) -> TrainingArtifacts:
         from catboost import CatBoostClassifier
 
-        parameters = self.config.models_parameters.boosting
+        parameters = self.config.model_description.boosting
         builder = BoostingFeatureBuilder()
         train_batch = PredictionBatch(
             data.items,
@@ -113,7 +113,7 @@ class BoostingTrainer:
         )
         output_dir = save_boosting_model(
             model,
-            self.config.artifacts.boosting_dir,
+            self.config.model_description.boosting.artifact_dir,
             list(train_features.columns),
         )
         logger.info(

@@ -312,7 +312,7 @@ def train_sequence_classifier(
 
 
 def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
-    parameters = config.models_parameters.transformer
+    parameters = config.model_description.transformer
     encoding = config.pair_encoding
     return SequenceClassifierConfig(
         model_path=parameters.pretrained_model_path,
@@ -364,7 +364,7 @@ class TransformerTrainer:
             data.train_pairs,
             data.validation_pairs,
             _sequence_config(self.config),
-            output_dir=self.config.artifacts.transformer_dir,
+            output_dir=self.config.model_description.transformer.artifact_dir,
         )
         return TrainingArtifacts(
             predictor="transformer",
