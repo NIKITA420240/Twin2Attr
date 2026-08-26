@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 import torch
@@ -11,6 +12,7 @@ from torch.utils.data import Dataset
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from .prepare_data import PreparedCard, PreparedPair
+from .text_augmentation import ProductTextAugmenter
 
 __all__ = [
     "DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS",
@@ -35,14 +37,30 @@ DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS = 32
 class PreparedPairDataset(Dataset):
     """Expose prepared pairs to a PyTorch ``DataLoader`` without copying them."""
 
-    def __init__(self, pairs: Sequence[PreparedPair]) -> None:
+    def __init__(
+        self,
+        pairs: Sequence[PreparedPair],
+        *,
+        augment: bool = False,
+    ) -> None:
         self._pairs = pairs
+        self._augment = augment
 
     def __len__(self) -> int:
         return len(self._pairs)
 
-    def __getitem__(self, index: int) -> PreparedPair:
-        return self._pairs[index]
+    def __getitem__(self, index: int) -> PreparedPair | _AugmentedPairExample:
+        pair = self._pairs[index]
+        if self._augment:
+            return _AugmentedPairExample(pair)
+        return pair
+
+
+@dataclass(frozen=True, slots=True)
+class _AugmentedPairExample:
+    """Mark a train-dataset row for augmentation inside the collator."""
+
+    pair: PreparedPair
 
 
 def add_pair_special_tokens(
@@ -338,6 +356,7 @@ class PairEncodingCollator:
         use_field_tokens: bool = True,
         max_attribute_value_tokens: int | None = DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
         include_labels: bool = True,
+        augmenter: ProductTextAugmenter | None = None,
     ) -> None:
         if max_length < 1:
             raise ValueError("max_length must be positive")
@@ -350,29 +369,35 @@ class PairEncodingCollator:
         self.use_field_tokens = use_field_tokens
         self.max_attribute_value_tokens = max_attribute_value_tokens
         self.include_labels = include_labels
+        self.augmenter = augmenter
         self.special_token_count = _pair_special_token_count(tokenizer)
         if max_length <= self.special_token_count:
             raise ValueError("max_length must leave room for pair content after special tokens")
 
-    def __call__(self, pairs: list[PreparedPair]) -> dict[str, torch.Tensor]:
-        if not pairs:
+    def __call__(
+        self,
+        examples: list[PreparedPair | _AugmentedPairExample],
+    ) -> dict[str, torch.Tensor]:
+        if not examples:
             raise ValueError("cannot collate an empty batch")
-        encoded_pairs = [
-            _encode_prepared_pair(
-                self.tokenizer,
-                pair,
-                max_length=self.max_length,
-                special_token_count=self.special_token_count,
-                use_field_tokens=self.use_field_tokens,
-                max_attribute_value_tokens=self.max_attribute_value_tokens,
-            )
-            for pair in pairs
+        augmentation_flags = [
+            isinstance(example, _AugmentedPairExample) for example in examples
         ]
-        batch = self.tokenizer.pad(
-            encoded_pairs,
-            padding=True,
-            return_tensors="pt",
-        )
+        if any(augmentation_flags) and not all(augmentation_flags):
+            raise ValueError("a batch cannot mix augmented and plain dataset rows")
+        pairs = [
+            example.pair if isinstance(example, _AugmentedPairExample) else example
+            for example in examples
+        ]
+        batch = self._encode_and_pad(pairs)
+
+        if all(augmentation_flags):
+            if self.augmenter is None:
+                raise ValueError("augmented dataset rows require an augmenter")
+            augmented_pairs = [self.augmenter.augment_pair(pair) for pair in pairs]
+            augmented_batch = self._encode_and_pad(augmented_pairs)
+            for name, values in augmented_batch.items():
+                batch[f"augmented_{name}"] = values
 
         if self.include_labels:
             labels = [pair.label for pair in pairs]
@@ -386,6 +411,27 @@ class PairEncodingCollator:
                     dtype=torch.float32,
                 )
         return batch
+
+    def _encode_and_pad(
+        self,
+        pairs: list[PreparedPair],
+    ) -> dict[str, torch.Tensor]:
+        encoded_pairs = [
+            _encode_prepared_pair(
+                self.tokenizer,
+                pair,
+                max_length=self.max_length,
+                special_token_count=self.special_token_count,
+                use_field_tokens=self.use_field_tokens,
+                max_attribute_value_tokens=self.max_attribute_value_tokens,
+            )
+            for pair in pairs
+        ]
+        return self.tokenizer.pad(
+            encoded_pairs,
+            padding=True,
+            return_tensors="pt",
+        )
 
 
 def infer_pair_max_length(

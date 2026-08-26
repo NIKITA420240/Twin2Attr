@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .paths import resolve_project_path
+from .text_augmentation import TextAugmentationConfig
 
 FEATURE_PROVIDER_NAMES = ("normalization", "ner", "physical")
 
@@ -264,6 +265,7 @@ class TransformerParameters:
     head_learning_rate: float | None = None
     layerwise_lr_decay: float = 1.0
     head: TransformerHeadParameters = TransformerHeadParameters()
+    augmentation: TextAugmentationConfig = TextAugmentationConfig()
 
     def __post_init__(self) -> None:
         if not self.pretrained_model_path.strip():
@@ -646,6 +648,10 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     if not isinstance(transformer_head_value, Mapping):
         raise ValueError("config section 'transformer.head' must be a mapping")
     transformer_head = transformer_head_value
+    transformer_augmentation_value = transformer.get("augmentation", {})
+    if not isinstance(transformer_augmentation_value, Mapping):
+        raise ValueError("config section 'transformer.augmentation' must be a mapping")
+    transformer_augmentation = transformer_augmentation_value
     maxpooling = _section(models_parameters, "maxpooling")
     fusion = _section(models_parameters, "fusion")
     boosting = _section(models_parameters, "boosting")
@@ -826,6 +832,37 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     ),
                     attention_num_heads=int(
                         transformer_head.get("attention_num_heads", 1)
+                    ),
+                ),
+                augmentation=TextAugmentationConfig(
+                    enabled=_bool(
+                        transformer_augmentation.get("enabled", False),
+                        "models_parameters.transformer.augmentation.enabled",
+                    ),
+                    alpha=float(transformer_augmentation.get("alpha", 0.7)),
+                    attribute_dropout_probability=float(
+                        transformer_augmentation.get(
+                            "attribute_dropout_probability",
+                            0.15,
+                        )
+                    ),
+                    word_shuffle_probability=float(
+                        transformer_augmentation.get(
+                            "word_shuffle_probability",
+                            0.15,
+                        )
+                    ),
+                    keyboard_typo_probability=float(
+                        transformer_augmentation.get(
+                            "keyboard_typo_probability",
+                            0.01,
+                        )
+                    ),
+                    word_dropout_probability=float(
+                        transformer_augmentation.get(
+                            "word_dropout_probability",
+                            0.03,
+                        )
                     ),
                 ),
             ),
@@ -1075,6 +1112,7 @@ __all__ = [
     "PhysicalFeatureSettings",
     "RuntimeSettings",
     "SubmissionSettings",
+    "TextAugmentationConfig",
     "TrainingSettings",
     "TransformerParameters",
     "TransformerHeadParameters",

@@ -45,6 +45,13 @@ class AppConfigTests(unittest.TestCase):
             int,
         )
         self.assertIsNone(self.config.pair_encoding.max_length)
+        augmentation = self.config.models_parameters.transformer.augmentation
+        self.assertTrue(augmentation.enabled)
+        self.assertEqual(augmentation.alpha, 0.7)
+        self.assertEqual(augmentation.attribute_dropout_probability, 0.15)
+        self.assertEqual(augmentation.word_shuffle_probability, 0.15)
+        self.assertEqual(augmentation.keyboard_typo_probability, 0.01)
+        self.assertEqual(augmentation.word_dropout_probability, 0.03)
 
     def test_applies_overrides_before_creating_typed_config(self) -> None:
         config = load_app_config_file(
@@ -128,6 +135,16 @@ class AppConfigTests(unittest.TestCase):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
                 ["models_parameters.transformer.learning_rate=0"],
+            )
+
+    def test_rejects_invalid_augmentation_probability(self) -> None:
+        with self.assertRaisesRegex(ValueError, r"augmentation.*\[0, 1\]"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                [
+                    "models_parameters.transformer.augmentation."
+                    "keyboard_typo_probability=1.1"
+                ],
             )
 
     def test_rejects_incomplete_feature_execution_order(self) -> None:

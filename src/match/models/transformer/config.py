@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...pair_encoding import DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS
+from ...text_augmentation import TextAugmentationConfig
 from .head import PoolingHeadConfig
 
 
@@ -37,6 +38,7 @@ class SequenceClassifierConfig:
     embeddings_learning_rate: float | None = None
     head_learning_rate: float | None = None
     layerwise_lr_decay: float = 1.0
+    augmentation: TextAugmentationConfig = TextAugmentationConfig()
 
     def __post_init__(self) -> None:
         if not self.model_path.strip():
@@ -119,6 +121,7 @@ class ResolvedTrainingConfig:
     gradient_clip_norm: float
     early_stopping_patience: int
     auto_find_batch_size: bool
+    augmentation: TextAugmentationConfig
 
 
 @dataclass(frozen=True)

@@ -18,17 +18,24 @@ from .head import PoolingHeadConfig, PoolingSequenceClassifier
 from .optimizer import LearningRateMultipliers, build_transformer_optimizer
 
 
+AUGMENTED_INPUT_PREFIX = "augmented_"
+
+
 class WeightedSequenceTrainer(Trainer):
     def __init__(
         self,
         *args: Any,
         class_weights: torch.Tensor,
         learning_rate_multipliers: LearningRateMultipliers | None = None,
+        augmentation_alpha: float = 1.0,
         **kwargs: Any,
     ) -> None:
+        if not 0.0 <= augmentation_alpha <= 1.0:
+            raise ValueError("augmentation_alpha must be in [0, 1]")
         self.learning_rate_multipliers = (
             learning_rate_multipliers or LearningRateMultipliers()
         )
+        self.augmentation_alpha = augmentation_alpha
         super().__init__(*args, **kwargs)
         self.class_weights = class_weights.detach().to(dtype=torch.float32)
 
@@ -52,16 +59,46 @@ class WeightedSequenceTrainer(Trainer):
         del num_items_in_batch
         labels = inputs.pop("labels")
         sample_weights = inputs.pop("sample_weights")
+        augmented_inputs = {
+            name.removeprefix(AUGMENTED_INPUT_PREFIX): inputs.pop(name)
+            for name in tuple(inputs)
+            if name.startswith(AUGMENTED_INPUT_PREFIX)
+        }
         outputs = model(**inputs)
-        losses = F.cross_entropy(
+        original_loss = self._weighted_cross_entropy(
             outputs.logits,
             labels,
-            weight=self.class_weights.to(outputs.logits.device),
+            sample_weights,
+        )
+        if augmented_inputs:
+            augmented_outputs = model(**augmented_inputs)
+            augmented_loss = self._weighted_cross_entropy(
+                augmented_outputs.logits,
+                labels,
+                sample_weights,
+            )
+            loss = (
+                self.augmentation_alpha * original_loss
+                + (1.0 - self.augmentation_alpha) * augmented_loss
+            )
+        else:
+            loss = original_loss
+        return (loss, outputs) if return_outputs else loss
+
+    def _weighted_cross_entropy(
+        self,
+        logits: torch.Tensor,
+        labels: torch.Tensor,
+        sample_weights: torch.Tensor,
+    ) -> torch.Tensor:
+        losses = F.cross_entropy(
+            logits,
+            labels,
+            weight=self.class_weights.to(logits.device),
             reduction="none",
         )
-        weights = sample_weights.to(outputs.logits.device)
-        loss = torch.sum(losses * weights) / torch.sum(weights)
-        return (loss, outputs) if return_outputs else loss
+        weights = sample_weights.to(logits.device)
+        return torch.sum(losses * weights) / torch.sum(weights)
 
 
 def model_factory(

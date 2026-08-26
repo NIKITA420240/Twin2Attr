@@ -7,6 +7,10 @@ _EXPORTS = {
     "ResolvedTrainingConfig": (".config", "ResolvedTrainingConfig"),
     "SequenceClassifierConfig": (".config", "SequenceClassifierConfig"),
     "TrainingResult": (".config", "TrainingResult"),
+    "TextAugmentationConfig": (
+        "...text_augmentation",
+        "TextAugmentationConfig",
+    ),
     "TransformerPredictor": (".predictor", "TransformerPredictor"),
     "TransformerTrainer": (".training", "TransformerTrainer"),
     "compute_class_weights": (".metrics", "compute_class_weights"),

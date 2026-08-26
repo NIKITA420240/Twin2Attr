@@ -24,6 +24,7 @@ from ...pair_encoding import (
     infer_pair_max_length,
 )
 from ...prepare_data import PreparedPair
+from ...text_augmentation import ProductTextAugmenter
 from ..artifacts import TrainingArtifacts
 from .config import ResolvedTrainingConfig, SequenceClassifierConfig, TrainingResult
 from .head import PoolingHeadConfig
@@ -162,14 +163,37 @@ def train_sequence_classifier(
         )
     logger.info("Max input length: {}", max_length)
 
-    train_dataset = PreparedPairDataset(train_pairs)
-    validation_dataset = PreparedPairDataset(validation_pairs)
-    collator = PairEncodingCollator(
-        tokenizer,
-        max_length,
-        use_field_tokens=config.use_field_tokens,
-        max_attribute_value_tokens=config.max_attribute_value_tokens,
+    train_dataset = PreparedPairDataset(
+        train_pairs,
+        augment=config.augmentation.enabled,
     )
+    validation_dataset = PreparedPairDataset(validation_pairs)
+
+    def build_collator() -> PairEncodingCollator:
+        augmenter = None
+        if config.augmentation.enabled:
+            augmenter = ProductTextAugmenter(
+                config.augmentation,
+                seed=config.seed,
+            )
+        return PairEncodingCollator(
+            tokenizer,
+            max_length,
+            use_field_tokens=config.use_field_tokens,
+            max_attribute_value_tokens=config.max_attribute_value_tokens,
+            augmenter=augmenter,
+        )
+
+    if config.augmentation.enabled:
+        logger.info(
+            "Text augmentation enabled: alpha={}, attribute_dropout={}, "
+            "word_shuffle={}, keyboard_typo={}, word_dropout={}",
+            config.augmentation.alpha,
+            config.augmentation.attribute_dropout_probability,
+            config.augmentation.word_shuffle_probability,
+            config.augmentation.keyboard_typo_probability,
+            config.augmentation.word_dropout_probability,
+        )
     initialize_model = model_factory(
         config.model_path,
         tokenizer,
@@ -201,10 +225,11 @@ def train_sequence_classifier(
             model_init=initialize_model,
             train_dataset=train_dataset,
             eval_dataset=validation_dataset,
-            data_collator=collator,
+            data_collator=build_collator(),
             compute_metrics=validation_metric,
             class_weights=class_weights,
             learning_rate_multipliers=learning_rate_multipliers,
+            augmentation_alpha=config.augmentation.alpha,
         )
         best_run = hpo_trainer.hyperparameter_search(
             backend="optuna",
@@ -231,7 +256,7 @@ def train_sequence_classifier(
         model_init=initialize_model,
         train_dataset=train_dataset,
         eval_dataset=validation_dataset,
-        data_collator=collator,
+        data_collator=build_collator(),
         compute_metrics=validation_metric,
         callbacks=[
             EarlyStoppingCallback(
@@ -240,6 +265,7 @@ def train_sequence_classifier(
         ],
         class_weights=class_weights,
         learning_rate_multipliers=learning_rate_multipliers,
+        augmentation_alpha=config.augmentation.alpha,
     )
     trainer.train()
     metrics = trainer.evaluate()
@@ -280,6 +306,7 @@ def train_sequence_classifier(
         gradient_clip_norm=config.max_grad_norm,
         early_stopping_patience=config.early_stopping_patience,
         auto_find_batch_size=config.auto_find_batch_size,
+        augmentation=config.augmentation,
     )
     metadata = {
         "validation_macro_pr_auc": float(metrics["eval_macro_pr_auc"]),
@@ -310,6 +337,7 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
         embeddings_learning_rate=parameters.embeddings_learning_rate,
         head_learning_rate=parameters.head_learning_rate,
         layerwise_lr_decay=parameters.layerwise_lr_decay,
+        augmentation=parameters.augmentation,
         weight_decay=parameters.weight_decay,
         hpo_learning_rate_min=parameters.hpo_learning_rate_min,
         hpo_learning_rate_max=parameters.hpo_learning_rate_max,

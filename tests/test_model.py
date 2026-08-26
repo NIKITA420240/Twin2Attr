@@ -14,6 +14,7 @@ from match.pair_encoding import (
 from match.prepare_data import PreparedCard, PreparedPair
 from match.models.transformer import (
     SequenceClassifierConfig,
+    TextAugmentationConfig,
     compute_class_weights,
     compute_pr_auc,
     train_sequence_classifier,
@@ -241,7 +242,18 @@ class SequenceClassifierModelTests(unittest.TestCase):
                     str(checkpoint),
                     max_epochs=1,
                     hpo_trials=1,
+                    train_batch_size=2,
+                    eval_batch_size=2,
+                    auto_find_batch_size=False,
                     seed=7,
+                    augmentation=TextAugmentationConfig(
+                        enabled=True,
+                        alpha=0.6,
+                        attribute_dropout_probability=0.2,
+                        word_shuffle_probability=0.5,
+                        keyboard_typo_probability=0.05,
+                        word_dropout_probability=0.1,
+                    ),
                 ),
                 output_dir=output,
             )
@@ -249,6 +261,8 @@ class SequenceClassifierModelTests(unittest.TestCase):
             self.assertTrue((output / "config.json").is_file())
             self.assertTrue((output / "training_metadata.json").is_file())
             self.assertTrue(np.isfinite(result.validation_macro_pr_auc))
+            self.assertTrue(result.resolved_config.augmentation.enabled)
+            self.assertEqual(result.resolved_config.augmentation.alpha, 0.6)
 
 
 if __name__ == "__main__":

@@ -75,6 +75,15 @@ models_parameters:
     # 1.0 keeps the same LR on every encoder layer; try 0.8 after the baseline.
     layerwise_lr_decay: 1.0
     weight_decay: 0.0008071667762206581
+    augmentation:
+      enabled: true
+      # L = alpha * L(original) + (1 - alpha) * L(augmented).
+      alpha: 0.7
+      # Attribute keys and category are preserved; names and values are noised.
+      attribute_dropout_probability: 0.15
+      word_shuffle_probability: 0.15
+      keyboard_typo_probability: 0.01
+      word_dropout_probability: 0.03
     hpo_learning_rate_min: 0.000001
     hpo_learning_rate_max: 0.00005
     hpo_weight_decay_min: 0.0

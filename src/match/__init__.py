@@ -36,6 +36,10 @@ _EXPORTS = {
         "SequenceClassifierConfig",
     ),
     "TrainingResult": (".models.transformer.config", "TrainingResult"),
+    "TextAugmentationConfig": (
+        ".text_augmentation",
+        "TextAugmentationConfig",
+    ),
     "TrainingArtifacts": (".models.artifacts", "TrainingArtifacts"),
     "TransformerPredictor": (".models", "TransformerPredictor"),
     "VAL_TOKEN": (".pair_encoding", "VAL_TOKEN"),
@@ -63,6 +67,10 @@ _EXPORTS = {
     "normalize_physical_attributes": (
         ".normalization",
         "normalize_physical_attributes",
+    ),
+    "ProductTextAugmenter": (
+        ".text_augmentation",
+        "ProductTextAugmenter",
     ),
     "predict_fusion_probabilities": (
         ".models.fusion.predictor",
