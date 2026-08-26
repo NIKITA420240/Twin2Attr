@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import run as run_module
 from run import (
+    _predict_solution_path,
     _with_default_command,
     ensure_polars_available,
     ensure_preprocessing_runtime_available,
@@ -25,9 +26,9 @@ class UnifiedCliTests(unittest.TestCase):
     def test_explicit_command_is_preserved(self) -> None:
         self.assertEqual(
             _with_default_command(
-                ["train", "models_parameters.transformer.max_epochs=1"]
+                ["train", "model_description.transformer.max_epochs=1"]
             ),
-            ["train", "models_parameters.transformer.max_epochs=1"],
+            ["train", "model_description.transformer.max_epochs=1"],
         )
 
     def test_parses_evaluator_invocation_as_predict(self) -> None:
@@ -51,7 +52,7 @@ class UnifiedCliTests(unittest.TestCase):
         args = parse_args(
             [
                 "train",
-                "models_parameters.transformer.max_epochs=3",
+                "model_description.transformer.max_epochs=3",
                 "split.mode=auto",
             ]
         )
@@ -59,7 +60,47 @@ class UnifiedCliTests(unittest.TestCase):
         self.assertEqual(args.command, "train")
         self.assertEqual(
             args.overrides,
-            ["models_parameters.transformer.max_epochs=3", "split.mode=auto"],
+            ["model_description.transformer.max_epochs=3", "split.mode=auto"],
+        )
+
+    def test_predict_resolves_solution_from_pipeline_config(self) -> None:
+        args = parse_args(
+            [
+                "predict",
+                "--items_path",
+                "items.parquet",
+                "--matches_path",
+                "matches.parquet",
+                "--output_path",
+                "submission.csv",
+            ]
+        )
+
+        solution_path = _predict_solution_path(args)
+
+        self.assertEqual(
+            solution_path,
+            run_module.SOURCE_ROOT.parent / "solution.json",
+        )
+
+    def test_explicit_solution_overrides_pipeline_config(self) -> None:
+        args = parse_args(
+            [
+                "predict",
+                "--items_path",
+                "items.parquet",
+                "--matches_path",
+                "matches.parquet",
+                "--output_path",
+                "submission.csv",
+                "--solution",
+                "another-solution.json",
+            ]
+        )
+
+        self.assertEqual(
+            _predict_solution_path(args),
+            Path("another-solution.json"),
         )
 
     def test_parses_initialize_overrides(self) -> None:
@@ -67,7 +108,7 @@ class UnifiedCliTests(unittest.TestCase):
             [
                 "initialize",
                 "pair_encoding.max_length=64",
-                "artifacts.transformer_dir=models/initialized",
+                "model_description.transformer.artifact_dir=models/initialized",
             ]
         )
 
@@ -76,7 +117,7 @@ class UnifiedCliTests(unittest.TestCase):
             args.overrides,
             [
                 "pair_encoding.max_length=64",
-                "artifacts.transformer_dir=models/initialized",
+                "model_description.transformer.artifact_dir=models/initialized",
             ],
         )
 

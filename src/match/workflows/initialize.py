@@ -33,14 +33,15 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
             f"got {config.training.model!r}"
         )
 
-    output_path = config.artifacts.transformer_dir.resolve()
+    output_path = config.model_description.transformer.artifact_dir.resolve()
     if output_path.exists() and any(output_path.iterdir()):
         raise FileExistsError(
             f"Transformer artifact directory is not empty: {output_path}. "
-            "Move it away or choose another artifacts.transformer_dir."
+            "Move it away or choose another "
+            "model_description.transformer.artifact_dir."
         )
 
-    parameters = config.models_parameters.transformer
+    parameters = config.model_description.transformer
     encoding = config.pair_encoding
     max_length = _initialization_max_length(config)
     head_config = PoolingHeadConfig(
@@ -93,12 +94,12 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
             predictor="transformer",
             transformer_dir=output_path,
         )
-        save_app_config(config, config.artifacts.resolved_config_path)
+        save_app_config(config, config.training.resolved_config_path)
         solution_path = save_solution_manifest(config, artifacts)
         logger.info("Initialized Transformer artifact saved to {!s}", output_path)
         return replace(
             artifacts,
-            resolved_config_path=config.artifacts.resolved_config_path,
+            resolved_config_path=config.training.resolved_config_path,
             solution_path=solution_path,
         )
 

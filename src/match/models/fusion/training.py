@@ -240,7 +240,7 @@ def train_fusion_classifier(
 
 
 def _fusion_config(config: AppConfig) -> FusionConfig:
-    parameters = config.models_parameters.fusion
+    parameters = config.model_description.fusion
     return FusionConfig(
         hidden_dim=parameters.hidden_dim,
         dropout=parameters.dropout,
@@ -267,7 +267,7 @@ class FusionTrainer:
         if maxpooling_artifacts.maxpooling_path is None:
             raise RuntimeError("max-pooling trainer did not produce its artifact")
         started_at = perf_counter()
-        parameters = self.config.models_parameters.fusion
+        parameters = self.config.model_description.fusion
         transformer = TransformerPredictor.load(
             transformer_artifacts.transformer_dir,
             batch_size=parameters.embedding_batch_size,
@@ -300,7 +300,7 @@ class FusionTrainer:
             [int(pair.label) for pair in data.validation_pairs],
             [pair.category for pair in data.validation_pairs],
             _fusion_config(self.config),
-            output_path=self.config.artifacts.fusion_path,
+            output_path=self.config.model_description.fusion.artifact_path,
             device=self.config.runtime.device,
         )
         logger.info(

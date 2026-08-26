@@ -22,6 +22,19 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(self.config.training.model, "stacking")
         self.assertEqual(self.config.training.data_model, "base_dataset")
         self.assertEqual(self.config.inference.model, "stacking")
+        self.assertEqual(
+            self.config.training.resolved_config_path,
+            PROJECT_ROOT / "models" / "twin2attr" / "pipeline_config.yaml",
+        )
+        self.assertEqual(
+            self.config.training.solution_path,
+            PROJECT_ROOT / "solution.json",
+        )
+        self.assertEqual(
+            self.config.inference.solution_path,
+            self.config.training.solution_path,
+        )
+        self.assertFalse(hasattr(self.config, "artifacts"))
         self.assertTrue(self.config.features.normalization.enabled)
         self.assertEqual(
             self.config.features.execution_order,
@@ -32,40 +45,40 @@ class AppConfigTests(unittest.TestCase):
             "normalized_attributes",
         )
         self.assertEqual(
-            self.config.inference.transformer_dir,
+            self.config.model_description.transformer.artifact_dir,
             PROJECT_ROOT / "models" / "twin2attr" / "stacking" / "transformer",
         )
         self.assertEqual(
-            self.config.inference.stacking_dir,
+            self.config.model_description.stacking.artifact_dir,
             PROJECT_ROOT / "models" / "twin2attr" / "stacking" / "boosting",
         )
         self.assertEqual(
-            self.config.models_parameters.transformer.pretrained_model_path,
+            self.config.model_description.transformer.pretrained_model_path,
             "models/rubert-base-cased",
         )
         self.assertTrue(self.config.pair_encoding.use_field_tokens)
         self.assertFalse(
-            self.config.models_parameters.transformer.train_new_token_embeddings_only
+            self.config.model_description.transformer.train_new_token_embeddings_only
         )
         self.assertIsNone(
-            self.config.models_parameters.transformer.train_last_n_layers
+            self.config.model_description.transformer.train_last_n_layers
         )
         self.assertEqual(
-            self.config.models_parameters.transformer.lr_scheduler_type,
+            self.config.model_description.transformer.lr_scheduler_type,
             "cosine",
         )
         self.assertIsInstance(
             self.config.pair_encoding.max_attribute_value_tokens,
             int,
         )
-        self.assertEqual(self.config.pair_encoding.max_length, 400)
+        self.assertEqual(self.config.pair_encoding.max_length, 256)
         self.assertEqual(base.stacking_train_fraction, 0.15)
         self.assertEqual(
-            self.config.models_parameters.stacking.base_model,
+            self.config.model_description.stacking.base_model,
             "transformer",
         )
         self.assertEqual(
-            self.config.models_parameters.stacking.stacking_model,
+            self.config.model_description.stacking.stacking_model,
             "boosting",
         )
 
@@ -110,20 +123,20 @@ class AppConfigTests(unittest.TestCase):
         config = load_app_config_file(
             PROJECT_ROOT / "configs" / "pipeline.yaml",
             [
-                "models_parameters.transformer.hpo_trials=1",
-                "models_parameters.transformer.learning_rate=0.00001",
-                "models_parameters.transformer.embeddings_learning_rate=0.000005",
-                "models_parameters.transformer.train_new_token_embeddings_only=true",
-                "models_parameters.transformer.train_last_n_layers=3",
-                "models_parameters.transformer.lr_scheduler_type=cosine",
-                "models_parameters.transformer.head_learning_rate=0.00003",
-                "models_parameters.transformer.layerwise_lr_decay=0.8",
-                "models_parameters.transformer.train_batch_size=16",
-                "models_parameters.transformer.gradient_accumulation_steps=4",
+                "model_description.transformer.hpo_trials=1",
+                "model_description.transformer.learning_rate=0.00001",
+                "model_description.transformer.embeddings_learning_rate=0.000005",
+                "model_description.transformer.train_new_token_embeddings_only=true",
+                "model_description.transformer.train_last_n_layers=3",
+                "model_description.transformer.lr_scheduler_type=cosine",
+                "model_description.transformer.head_learning_rate=0.00003",
+                "model_description.transformer.layerwise_lr_decay=0.8",
+                "model_description.transformer.train_batch_size=16",
+                "model_description.transformer.gradient_accumulation_steps=4",
             ],
         )
 
-        parameters = config.models_parameters.transformer
+        parameters = config.model_description.transformer
         self.assertEqual(parameters.hpo_trials, 1)
         self.assertEqual(parameters.learning_rate, 1e-5)
         self.assertEqual(parameters.embeddings_learning_rate, 5e-6)
@@ -136,7 +149,7 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(parameters.gradient_accumulation_steps, 4)
 
     def test_loads_composable_transformer_head(self) -> None:
-        head = self.config.models_parameters.transformer.head
+        head = self.config.model_description.transformer.head
 
         self.assertEqual(head.type, "pooling")
         self.assertEqual(head.poolings, ("cls", "attention"))
@@ -147,30 +160,30 @@ class AppConfigTests(unittest.TestCase):
     def test_can_select_original_transformer_head(self) -> None:
         config = load_app_config_file(
             PROJECT_ROOT / "configs" / "pipeline.yaml",
-            ["models_parameters.transformer.head.type=default"],
+            ["model_description.transformer.head.type=default"],
         )
 
-        self.assertEqual(config.models_parameters.transformer.head.type, "default")
+        self.assertEqual(config.model_description.transformer.head.type, "default")
 
     def test_rejects_invalid_transformer_learning_rate(self) -> None:
         with self.assertRaisesRegex(ValueError, "optimizer parameters"):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
-                ["models_parameters.transformer.learning_rate=0"],
+                ["model_description.transformer.learning_rate=0"],
             )
 
     def test_rejects_non_positive_trainable_layer_count(self) -> None:
         with self.assertRaisesRegex(ValueError, "optimizer parameters"):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
-                ["models_parameters.transformer.train_last_n_layers=0"],
+                ["model_description.transformer.train_last_n_layers=0"],
             )
 
     def test_rejects_unknown_lr_scheduler(self) -> None:
         with self.assertRaisesRegex(ValueError, "lr_scheduler_type"):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
-                ["models_parameters.transformer.lr_scheduler_type=cyclic"],
+                ["model_description.transformer.lr_scheduler_type=cyclic"],
             )
 
     def test_rejects_incomplete_feature_execution_order(self) -> None:

@@ -358,7 +358,7 @@ class MaxPoolingTrainer:
     config: AppConfig
 
     def train(self, data: TrainingData) -> TrainingArtifacts:
-        parameters = self.config.models_parameters.maxpooling
+        parameters = self.config.model_description.maxpooling
         model = train_maxpooling_model(
             data.items,
             data.train_matches,
@@ -380,7 +380,7 @@ class MaxPoolingTrainer:
         )
         output_path = save_maxpooling_model(
             model,
-            self.config.artifacts.maxpooling_path,
+            self.config.model_description.maxpooling.artifact_path,
         )
         return TrainingArtifacts(
             predictor="maxpooling",

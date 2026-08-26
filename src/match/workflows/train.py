@@ -37,11 +37,11 @@ def train(
         )
         trainer = build_trainer(config)
         artifacts = trainer.train(data)
-        save_app_config(config, config.artifacts.resolved_config_path)
+        save_app_config(config, config.training.resolved_config_path)
         solution_path = save_solution_manifest(config, artifacts)
         result = replace(
             artifacts,
-            resolved_config_path=config.artifacts.resolved_config_path,
+            resolved_config_path=config.training.resolved_config_path,
             solution_path=solution_path,
         )
         if experiment_name is not None:

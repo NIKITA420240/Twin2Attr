@@ -74,33 +74,33 @@ def build_solution_manifest(
 
     if artifacts.transformer_dir is not None:
         solution["model_directory"] = map_path(artifacts.transformer_dir)
-        solution["batch_size"] = config.models_parameters.transformer.batch_size
+        solution["batch_size"] = config.model_description.transformer.batch_size
     if artifacts.maxpooling_path is not None:
         solution["maxpooling_path"] = map_path(artifacts.maxpooling_path)
         solution["maxpooling_batch_size"] = (
-            config.models_parameters.maxpooling.batch_size
+            config.model_description.maxpooling.batch_size
         )
     if artifacts.fusion_path is not None:
         solution["fusion_path"] = map_path(artifacts.fusion_path)
-        solution["fusion_batch_size"] = config.models_parameters.fusion.batch_size
+        solution["fusion_batch_size"] = config.model_description.fusion.batch_size
     if artifacts.boosting_dir is not None:
         solution["boosting_directory"] = map_path(artifacts.boosting_dir)
         solution["boosting_thread_count"] = (
-            config.models_parameters.boosting.thread_count
+            config.model_description.boosting.thread_count
         )
     if artifacts.stacking_dir is not None:
         solution["stacking_directory"] = map_path(artifacts.stacking_dir)
         solution["stacking_thread_count"] = (
-            config.models_parameters.boosting.thread_count
+            config.model_description.boosting.thread_count
         )
     if artifacts.predictor == "cascade":
-        cascade = config.models_parameters.cascade
+        cascade = config.model_description.cascade
         solution["fast_model"] = cascade.fast_model
         solution["main_model"] = cascade.main_model
         solution["negative_threshold"] = cascade.negative_threshold
         solution["positive_threshold"] = cascade.positive_threshold
     if artifacts.predictor == "stacking":
-        stacking = config.models_parameters.stacking
+        stacking = config.model_description.stacking
         solution["base_model"] = stacking.base_model
         solution["stacking_model"] = stacking.stacking_model
     normalization = config.features.normalization
@@ -168,7 +168,7 @@ def save_solution_manifest(
     artifacts: TrainingArtifacts,
 ) -> Path:
     """Write an inference manifest matching the produced artifact set."""
-    output_path = config.artifacts.solution_path
+    output_path = config.training.solution_path
     output_path.parent.mkdir(parents=True, exist_ok=True)
     root = output_path.parent
     solution = build_solution_manifest(

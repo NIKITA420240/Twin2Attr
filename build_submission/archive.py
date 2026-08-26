@@ -64,36 +64,36 @@ def _selected_artifacts(config: AppConfig) -> TrainingArtifacts:
     if predictor == "transformer":
         return TrainingArtifacts(
             predictor=predictor,
-            transformer_dir=config.inference.transformer_dir,
+            transformer_dir=config.model_description.transformer.artifact_dir,
         )
     if predictor == "maxpooling":
         return TrainingArtifacts(
             predictor=predictor,
-            maxpooling_path=config.inference.maxpooling_path,
+            maxpooling_path=config.model_description.maxpooling.artifact_path,
         )
     if predictor == "fusion":
         return TrainingArtifacts(
             predictor=predictor,
-            transformer_dir=config.inference.transformer_dir,
-            maxpooling_path=config.inference.maxpooling_path,
-            fusion_path=config.inference.fusion_path,
+            transformer_dir=config.model_description.transformer.artifact_dir,
+            maxpooling_path=config.model_description.maxpooling.artifact_path,
+            fusion_path=config.model_description.fusion.artifact_path,
         )
     if predictor == "boosting":
         return TrainingArtifacts(
             predictor=predictor,
-            boosting_dir=config.inference.boosting_dir,
+            boosting_dir=config.model_description.boosting.artifact_dir,
         )
     if predictor == "cascade":
         return TrainingArtifacts(
             predictor=predictor,
-            transformer_dir=config.inference.transformer_dir,
-            boosting_dir=config.inference.boosting_dir,
+            transformer_dir=config.model_description.transformer.artifact_dir,
+            boosting_dir=config.model_description.boosting.artifact_dir,
         )
     if predictor == "stacking":
         return TrainingArtifacts(
             predictor=predictor,
-            transformer_dir=config.inference.transformer_dir,
-            stacking_dir=config.inference.stacking_dir,
+            transformer_dir=config.model_description.transformer.artifact_dir,
+            stacking_dir=config.model_description.stacking.artifact_dir,
         )
     raise ValueError(f"unsupported submission predictor: {predictor!r}")
 

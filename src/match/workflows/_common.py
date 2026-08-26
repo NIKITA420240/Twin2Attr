@@ -26,7 +26,7 @@ def resolve_max_length(
         return encoding.max_length
 
     tokenizer = AutoTokenizer.from_pretrained(
-        config.models_parameters.transformer.pretrained_model_path
+        config.model_description.transformer.pretrained_model_path
     )
     if encoding.use_field_tokens:
         add_pair_special_tokens(tokenizer)
