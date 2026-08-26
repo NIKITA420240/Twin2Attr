@@ -21,7 +21,14 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(base.seed, self.config.runtime.seed)
         self.assertEqual(self.config.training.model, "stacking")
         self.assertEqual(self.config.training.data_model, "base_dataset")
+        self.assertIsNone(self.config.training.augmentation_model)
+        self.assertIsNone(self.config.training.data_postprocessing_model)
         self.assertEqual(self.config.inference.model, "stacking")
+        self.assertIsNone(self.config.inference.augmentation_model)
+        self.assertEqual(
+            self.config.inference.data_postprocessing_model,
+            "attribute_sort",
+        )
         self.assertEqual(
             self.config.training.resolved_config_path,
             PROJECT_ROOT / "models" / "twin2attr" / "pipeline_config.yaml",
@@ -40,6 +47,23 @@ class AppConfigTests(unittest.TestCase):
             "attribute_importance",
         )
         self.assertEqual(self.config.analysis.data_model, "base_dataset")
+        self.assertEqual(
+            self.config.analysis.augmentation_model,
+            "attribute_shuffle",
+        )
+        self.assertIsNone(self.config.analysis.data_postprocessing_model)
+        augmentation = self.config.augmentation_models.attribute_shuffle
+        self.assertEqual(augmentation.shuffled_copies, 1)
+        self.assertFalse(augmentation.keep_original)
+        self.assertTrue(augmentation.shuffle_cards_independently)
+        self.assertTrue(augmentation.skip_oversized)
+        self.assertEqual(
+            self.config.data_postprocessing_models.attribute_sort.priorities_path,
+            PROJECT_ROOT
+            / "analysis"
+            / "attribute_importance"
+            / "attribute_importance.parquet",
+        )
         analysis = self.config.analysis_models.attribute_importance
         self.assertEqual(analysis.model, "transformer")
         self.assertIsNone(analysis.sample_size)

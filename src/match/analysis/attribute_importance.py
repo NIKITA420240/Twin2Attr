@@ -217,7 +217,10 @@ def _aggregate(
         raw = statistics.raw_importance
         source = scope
         importance = raw
-        if scope == "category" and statistics.occurrences < min_occurrences:
+        if (
+            scope == "category"
+            and statistics.scored_occurrences < min_occurrences
+        ):
             fallback = global_statistics[attribute].raw_importance
             importance = fallback
             source = "global"
@@ -255,7 +258,20 @@ def _aggregate(
         append_row("category", category, attribute, statistics)
     if not rows:
         raise ValueError("attribute analysis found no raw attributes in the sample")
-    return pl.DataFrame(rows).sort("scope", "category", "attribute")
+    rows.sort(
+        key=lambda row: (
+            row["scope"],
+            "" if row["category"] is None else row["category"],
+            -row["importance"],
+            row["attribute"],
+        )
+    )
+    priorities: dict[tuple[str, str | None], int] = defaultdict(int)
+    for row in rows:
+        group = (row["scope"], row["category"])
+        priorities[group] += 1
+        row["priority"] = priorities[group]
+    return pl.DataFrame(rows)
 
 
 def _validate_model(
@@ -325,6 +341,10 @@ def analyze_transformer_attribute_importance(
     metadata = {
         "analysis_model": config.analysis.analysis_model,
         "data_model": config.analysis.data_model,
+        "augmentation_model": config.analysis.augmentation_model,
+        "data_postprocessing_model": (
+            config.analysis.data_postprocessing_model
+        ),
         "model": settings.model,
         "model_path": str(model_path),
         "sample_size": len(pairs),
@@ -339,6 +359,18 @@ def analyze_transformer_attribute_importance(
             model.config.head_config.get("attention_num_heads", 1)
         ),
     }
+    if config.analysis.augmentation_model == "attribute_shuffle":
+        augmentation = config.augmentation_models.attribute_shuffle
+        metadata["augmentation"] = {
+            "type": augmentation.type,
+            "shuffled_copies": augmentation.shuffled_copies,
+            "keep_original": augmentation.keep_original,
+            "seed": augmentation.seed,
+            "shuffle_cards_independently": (
+                augmentation.shuffle_cards_independently
+            ),
+            "skip_oversized": augmentation.skip_oversized,
+        }
     metadata_path.write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",

@@ -43,6 +43,8 @@ class PreparedPair:
     label: int | None
     category: str
     sample_weight: float = 1.0
+    preserve_attribute_order: bool = False
+    skip_oversized_attributes: bool = False
 
 
 def _parse_attributes(raw: Any, *, item_id: Any) -> tuple[AttributePair, ...]:

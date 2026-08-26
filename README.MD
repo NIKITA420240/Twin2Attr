@@ -147,6 +147,21 @@ uv run python run.py analyze
 analysis:
   analysis_model: attribute_importance
   data_model: base_dataset
+  augmentation_model: attribute_shuffle
+  data_postprocessing_model: null
+
+augmentation_models:
+  attribute_shuffle:
+    type: attribute_shuffle
+    shuffled_copies: 1
+    keep_original: false
+    seed: ${runtime.seed}
+    shuffle_cards_independently: true
+    skip_oversized: true
+
+data_postprocessing_models:
+  attribute_sort:
+    priorities_path: ${analysis_models.attribute_importance.output_dir}/${analysis_models.attribute_importance.output_file}
 
 analysis_models:
   attribute_importance:
@@ -162,12 +177,37 @@ analysis_models:
 ```
 
 При `group_by_category=true` итог содержит глобальные оценки и оценки внутри
-категорий. Если пара «категория + атрибут» встретилась менее
+категорий. Если пара «категория + атрибут» реально попала в Transformer менее
 `min_occurrences` раз, для неё используется глобальная оценка атрибута. В
 Parquet также записываются количество наблюдений и доля секций, не попавших в
 Transformer из-за ограничения длины; рядом сохраняется JSON с параметрами
 расчёта. `sample_size: null` отключает ограничение и анализирует всю выборку;
 положительное число оставляет возможность сделать быстрый пробный расчёт.
+
+`attribute_shuffle` работает после feature pipeline и до токенизации. При
+`shuffled_copies: 1` и `keep_original: false` каждая исходная пара заменяется
+одной детерминированно перемешанной версией, поэтому число Transformer-вызовов
+не увеличивается. Аугментированные пары сохраняют заданный порядок атрибутов;
+обычные пары при `augmentation_model: null` продолжают использовать прежнюю
+сортировку от коротких полей к длинным. `skip_oversized: true` позволяет после
+не поместившегося поля проверить следующие поля.
+
+Анализ добавляет целочисленный `priority`, где `1` означает самый важный
+атрибут. Приоритет рассчитывается отдельно для глобальных строк и внутри каждой
+категории. На inference готовую таблицу можно включить так:
+
+```yaml
+inference:
+  augmentation_model: null
+  data_postprocessing_model: attribute_sort
+```
+
+`attribute_sort` получает только `priorities_path`: сначала использует
+категориальный priority, затем глобальный, а неизвестные таблице атрибуты
+оставляет в конце в исходном относительном порядке. Этап выполняется после
+augmentation и перед `PairEncoding`. В training и analysis по умолчанию стоит
+`data_postprocessing_model: null`, чтобы сохранить текущее обучение и не
+создавать циклическую зависимость при построении самой таблицы.
 
 Для анализа нужна уже обученная наша pooling-голова с `attention` в
 `model_description.transformer.head.poolings`. Обычный

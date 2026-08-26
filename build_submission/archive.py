@@ -137,6 +137,10 @@ def _required_resources(
         resources.append(config.features.ner.model_dir)
         if config.features.ner.cluster_centers_path is not None:
             resources.append(config.features.ner.cluster_centers_path)
+    if config.inference.data_postprocessing_model == "attribute_sort":
+        resources.append(
+            config.data_postprocessing_models.attribute_sort.priorities_path
+        )
     return tuple(resources)
 
 

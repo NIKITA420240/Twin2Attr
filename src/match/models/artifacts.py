@@ -71,6 +71,31 @@ def build_solution_manifest(
 ) -> dict[str, object]:
     """Build an inference manifest with paths mapped for its destination."""
     solution: dict[str, object] = {"predictor": artifacts.predictor}
+    solution["augmentation_model"] = config.inference.augmentation_model
+    if config.inference.augmentation_model == "attribute_shuffle":
+        augmentation = config.augmentation_models.attribute_shuffle
+        solution["augmentation_models"] = {
+            "attribute_shuffle": {
+                "type": augmentation.type,
+                "shuffled_copies": augmentation.shuffled_copies,
+                "keep_original": augmentation.keep_original,
+                "seed": augmentation.seed,
+                "shuffle_cards_independently": (
+                    augmentation.shuffle_cards_independently
+                ),
+                "skip_oversized": augmentation.skip_oversized,
+            }
+        }
+    solution["data_postprocessing_model"] = (
+        config.inference.data_postprocessing_model
+    )
+    if config.inference.data_postprocessing_model == "attribute_sort":
+        postprocessing = config.data_postprocessing_models.attribute_sort
+        solution["data_postprocessing_models"] = {
+            "attribute_sort": {
+                "priorities_path": map_path(postprocessing.priorities_path),
+            }
+        }
 
     if artifacts.transformer_dir is not None:
         solution["model_directory"] = map_path(artifacts.transformer_dir)

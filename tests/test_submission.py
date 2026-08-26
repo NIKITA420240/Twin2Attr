@@ -1,8 +1,13 @@
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+import numpy as np
+import polars as pl
 
 from match.models.factory import build_predictor
+from match.submission import _predict
 
 
 class PredictorLoadingTests(unittest.TestCase):
@@ -190,6 +195,60 @@ class PredictorLoadingTests(unittest.TestCase):
     def test_rejects_unknown_predictor(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unsupported predictor"):
             build_predictor({"predictor": "unknown"}, self.root)
+
+    def test_inference_averages_shuffled_copies_per_source_pair(self) -> None:
+        items = pl.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "name": ["one", "two", "three"],
+                "category": ["category"] * 3,
+                "attributes": [
+                    '{"a":"1","b":"2","c":"3"}',
+                    '{"a":"1","b":"2","c":"3"}',
+                    '{"a":"1","b":"2","c":"3"}',
+                ],
+            }
+        )
+        matches = pl.DataFrame({"id1": [1, 2], "id2": [2, 3]})
+        predictor = Mock()
+        predictor.predict_proba.return_value = np.asarray(
+            [0.2, 0.4, 0.6, 0.8],
+            dtype=np.float32,
+        )
+        solution = {
+            "augmentation_model": "attribute_shuffle",
+            "augmentation_models": {
+                "attribute_shuffle": {
+                    "type": "attribute_shuffle",
+                    "shuffled_copies": 2,
+                    "keep_original": False,
+                    "seed": 42,
+                    "shuffle_cards_independently": True,
+                    "skip_oversized": True,
+                }
+            },
+        }
+        with (
+            patch(
+                "match.submission.prepare_manifest_items",
+                return_value=SimpleNamespace(
+                    frame=items,
+                    attributes_column="attributes",
+                ),
+            ),
+            patch(
+                "match.submission.build_predictor",
+                return_value=predictor,
+            ),
+        ):
+            result = _predict(items, matches, solution, self.root)
+
+        np.testing.assert_allclose(result, [0.3, 0.7])
+        augmented_batch = predictor.predict_proba.call_args.args[0]
+        self.assertEqual(augmented_batch.matches.height, 4)
+        self.assertTrue(
+            all(pair.preserve_attribute_order for pair in augmented_batch.pairs)
+        )
 
 
 if __name__ == "__main__":
