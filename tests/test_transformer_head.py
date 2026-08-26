@@ -51,6 +51,13 @@ class TransformerPoolingHeadTests(unittest.TestCase):
 
         torch.testing.assert_close(pooled, torch.tensor([[2.0, 3.0]]))
 
+        weights = head.attention_weights(
+            hidden_states,
+            torch.tensor([[1, 1, 0]]),
+        )
+        torch.testing.assert_close(weights.sum(dim=1), torch.ones(1, 1))
+        torch.testing.assert_close(weights[:, 2], torch.zeros(1, 1))
+
     def test_multi_head_attention_pooling_concatenates_head_outputs(self) -> None:
         head = TransformerPoolingHead(
             hidden_size=2,

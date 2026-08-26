@@ -7,18 +7,24 @@ from .contracts import TrainingDataModel
 from .models import BaseDatasetModel, MixedDatasetModel
 
 
-def build_data_model(config: AppConfig) -> TrainingDataModel:
-    """Build the data recipe selected by ``training.data_model``."""
-    name = config.training.data_model
+def build_data_model(
+    config: AppConfig,
+    *,
+    name: str | None = None,
+) -> TrainingDataModel:
+    """Build a named data recipe or the one selected for training."""
+    selected_name = config.training.data_model if name is None else name
     descriptions = config.data_model_description
-    if name == "base_dataset":
+    if selected_name == "base_dataset":
         return BaseDatasetModel(
             descriptions.base_dataset,
-            create_stacking_split=config.training.model == "stacking",
+            create_stacking_split=(
+                name is None and config.training.model == "stacking"
+            ),
         )
-    if name == "mix_dataset":
+    if selected_name == "mix_dataset":
         return MixedDatasetModel(descriptions.mix_dataset)
-    raise ValueError(f"Unsupported training data model: {name!r}")
+    raise ValueError(f"Unsupported data model: {selected_name!r}")
 
 
 __all__ = ["build_data_model"]

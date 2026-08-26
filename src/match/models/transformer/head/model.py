@@ -60,6 +60,16 @@ class TransformerPoolingHead(nn.Module):
             dim=-1,
         )
 
+    def attention_weights(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        pooling = self.poolings["attention"] if "attention" in self.poolings else None
+        if not isinstance(pooling, AttentionPooling):
+            raise TypeError("Transformer pooling head has no attention branch")
+        return pooling.attention_weights(hidden_states, attention_mask)
+
     def forward(
         self,
         hidden_states: torch.Tensor,

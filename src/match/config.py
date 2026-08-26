@@ -191,6 +191,22 @@ class InferenceSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class AnalysisSettings:
+    analysis_model: str
+    data_model: str
+
+    def __post_init__(self) -> None:
+        if self.analysis_model != "attribute_importance":
+            raise ValueError(
+                "analysis.analysis_model currently must be 'attribute_importance'"
+            )
+        if self.data_model not in {"base_dataset", "mix_dataset"}:
+            raise ValueError(
+                "analysis.data_model must be one of: base_dataset, mix_dataset"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class NormalizationSettings:
     enabled: bool
     output_column: str
@@ -260,6 +276,7 @@ class TransformerHeadParameters:
 class TransformerParameters:
     pretrained_model_path: str
     artifact_dir: Path
+    pair_encoding: PairEncodingSettings
     max_epochs: int
     hpo_trials: int
     learning_rate: float
@@ -417,6 +434,51 @@ class ModelDescriptionSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class AttributeImportanceAnalysisSettings:
+    model: str
+    output_dir: Path
+    sample_size: int | None
+    group_by_category: bool
+    min_occurrences: int
+    score_type: str
+    output_file: str
+    metadata_file: str
+
+    def __post_init__(self) -> None:
+        if self.model != "transformer":
+            raise ValueError(
+                "attribute_importance.model currently must be 'transformer'"
+            )
+        if self.sample_size is not None and self.sample_size < 1:
+            raise ValueError(
+                "attribute_importance.sample_size must be positive or null"
+            )
+        if self.min_occurrences < 1:
+            raise ValueError(
+                "attribute_importance.min_occurrences must be positive"
+            )
+        if self.score_type != "normalized_mean_attention":
+            raise ValueError(
+                "attribute_importance.score_type currently must be "
+                "'normalized_mean_attention'"
+            )
+        for name, value in (
+            ("output_file", self.output_file),
+            ("metadata_file", self.metadata_file),
+        ):
+            path = Path(value)
+            if not value.strip() or path.is_absolute() or path.name != value:
+                raise ValueError(
+                    f"attribute_importance.{name} must be a relative file name"
+                )
+
+
+@dataclass(frozen=True, slots=True)
+class AnalysisModelsSettings:
+    attribute_importance: AttributeImportanceAnalysisSettings
+
+
+@dataclass(frozen=True, slots=True)
 class NerSettings:
     enabled: bool
     provider: str | None
@@ -534,7 +596,8 @@ class AppConfig:
     training: TrainingSettings
     data_model_description: DataModelDescriptionSettings
     inference: InferenceSettings
-    pair_encoding: PairEncodingSettings
+    analysis: AnalysisSettings
+    analysis_models: AnalysisModelsSettings
     model_description: ModelDescriptionSettings
     features: FeatureSettings
     runtime: RuntimeSettings
@@ -670,9 +733,15 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     if not isinstance(inference_value, Mapping):
         raise ValueError("config section 'inference' must be a mapping")
     inference = inference_value
-    encoding = _section(resolved, "pair_encoding")
+    analysis = _section(resolved, "analysis")
+    analysis_models = _section(resolved, "analysis_models")
+    attribute_importance = _section(
+        analysis_models,
+        "attribute_importance",
+    )
     model_description = _section(resolved, "model_description")
     transformer = _section(model_description, "transformer")
+    encoding = _section(transformer, "pair_encoding")
     transformer_head_value = transformer.get("head", {})
     if not isinstance(transformer_head_value, Mapping):
         raise ValueError("config section 'transformer.head' must be a mapping")
@@ -762,18 +831,31 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 "inference.solution_path",
             ),
         ),
-        pair_encoding=PairEncodingSettings(
-            use_field_tokens=_bool(
-                _required(encoding, "use_field_tokens"),
-                "pair_encoding.use_field_tokens",
+        analysis=AnalysisSettings(
+            analysis_model=str(_required(analysis, "analysis_model")),
+            data_model=str(_required(analysis, "data_model")),
+        ),
+        analysis_models=AnalysisModelsSettings(
+            attribute_importance=AttributeImportanceAnalysisSettings(
+                model=str(_required(attribute_importance, "model")),
+                output_dir=_path(
+                    _required(attribute_importance, "output_dir"),
+                    "analysis_models.attribute_importance.output_dir",
+                ),
+                sample_size=_optional_int(attribute_importance.get("sample_size")),
+                group_by_category=_bool(
+                    _required(attribute_importance, "group_by_category"),
+                    "analysis_models.attribute_importance.group_by_category",
+                ),
+                min_occurrences=int(
+                    _required(attribute_importance, "min_occurrences")
+                ),
+                score_type=str(_required(attribute_importance, "score_type")),
+                output_file=str(_required(attribute_importance, "output_file")),
+                metadata_file=str(
+                    _required(attribute_importance, "metadata_file")
+                ),
             ),
-            max_attribute_value_tokens=_optional_int(
-                encoding.get("max_attribute_value_tokens")
-            ),
-            max_length=_optional_int(encoding.get("max_length")),
-            quantile=float(_required(encoding, "quantile")),
-            sample_size=int(_required(encoding, "sample_size")),
-            hard_cap=int(_required(encoding, "hard_cap")),
         ),
         model_description=ModelDescriptionSettings(
             transformer=TransformerParameters(
@@ -783,6 +865,19 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 artifact_dir=_path(
                     _required(transformer, "artifact_dir"),
                     "model_description.transformer.artifact_dir",
+                ),
+                pair_encoding=PairEncodingSettings(
+                    use_field_tokens=_bool(
+                        _required(encoding, "use_field_tokens"),
+                        "model_description.transformer.pair_encoding.use_field_tokens",
+                    ),
+                    max_attribute_value_tokens=_optional_int(
+                        encoding.get("max_attribute_value_tokens")
+                    ),
+                    max_length=_optional_int(encoding.get("max_length")),
+                    quantile=float(_required(encoding, "quantile")),
+                    sample_size=int(_required(encoding, "sample_size")),
+                    hard_cap=int(_required(encoding, "hard_cap")),
                 ),
                 max_epochs=int(_required(transformer, "max_epochs")),
                 hpo_trials=int(_required(transformer, "hpo_trials")),
@@ -1078,7 +1173,11 @@ def save_app_config(config: AppConfig, path: Path) -> None:
 
 
 __all__ = [
+    "FEATURE_PROVIDER_NAMES",
+    "AnalysisModelsSettings",
+    "AnalysisSettings",
     "AppConfig",
+    "AttributeImportanceAnalysisSettings",
     "BaseDatasetSettings",
     "BoostingParameters",
     "CascadeParameters",
@@ -1086,7 +1185,6 @@ __all__ = [
     "DataModelDescriptionSettings",
     "DatasetSourceSettings",
     "DatasetSplitterSettings",
-    "FEATURE_PROVIDER_NAMES",
     "FeatureSettings",
     "FusionParameters",
     "InferenceSettings",
@@ -1101,8 +1199,8 @@ __all__ = [
     "RuntimeSettings",
     "SubmissionSettings",
     "TrainingSettings",
-    "TransformerParameters",
     "TransformerHeadParameters",
+    "TransformerParameters",
     "load_app_config",
     "load_app_config_file",
     "save_app_config",

@@ -51,20 +51,35 @@ inference:
   model: stacking
   solution_path: ${training.solution_path}
 
-pair_encoding:
-  use_field_tokens: true
-  # null disables per-attribute value truncation.
-  max_attribute_value_tokens: 16
-  # null lets the training data determine the limit.
-  max_length: 256
-  quantile: 0.95
-  sample_size: 10000
-  hard_cap: 512
+analysis:
+  analysis_model: attribute_importance
+  data_model: base_dataset
+
+analysis_models:
+  attribute_importance:
+    model: transformer
+    output_dir: analysis/attribute_importance
+    # null analyzes the complete selected dataset.
+    sample_size: null
+    group_by_category: true
+    min_occurrences: 30
+    score_type: normalized_mean_attention
+    output_file: attribute_importance.parquet
+    metadata_file: attribute_importance_metadata.json
 
 model_description:
   transformer:
     pretrained_model_path: models/rubert-base-cased
     artifact_dir: models/twin2attr/stacking/transformer
+    pair_encoding:
+      use_field_tokens: true
+      # null disables per-attribute value truncation.
+      max_attribute_value_tokens: 16
+      # null lets the training data determine the limit.
+      max_length: 256
+      quantile: 0.95
+      sample_size: 10000
+      hard_cap: 512
     max_epochs: 15
     hpo_trials: 1
     # Used directly when hpo_trials=1; otherwise these are initial values.

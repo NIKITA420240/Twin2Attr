@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import math
+from collections import Counter
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 import torch
@@ -17,9 +19,11 @@ __all__ = [
     "KEY_TOKEN",
     "VAL_TOKEN",
     "PairEncodingCollator",
+    "PairEncodingWithAttributes",
     "PreparedPairDataset",
     "add_pair_special_tokens",
     "encode_prepared_pair",
+    "encode_prepared_pair_with_attributes",
     "infer_pair_max_length",
     "pair_special_token_ids",
     "serialize_card",
@@ -157,44 +161,56 @@ def _encode_card_sections(
     *,
     use_field_tokens: bool,
     max_attribute_value_tokens: int | None,
-) -> tuple[list[int], list[list[int]], int]:
+) -> tuple[list[int], list[tuple[str, list[int]]], int]:
     required: list[int] = []
     for key, value in (("name", card.name), ("category", card.category)):
         text = f"{KEY_TOKEN} {key} {VAL_TOKEN} {value}" if use_field_tokens else f"{key}: {value}"
         required.extend(tokenizer.encode(text, add_special_tokens=False))
 
-    attributes: list[list[int]] = []
+    attributes: list[tuple[str, list[int]]] = []
     for key, value in card.attributes:
         prefix = f"{KEY_TOKEN} {key} {VAL_TOKEN}" if use_field_tokens else f"{key}:"
         prefix_ids = tokenizer.encode(prefix, add_special_tokens=False)
         value_ids = tokenizer.encode(f" {value}", add_special_tokens=False)
         if max_attribute_value_tokens is not None:
             value_ids = value_ids[:max_attribute_value_tokens]
-        attributes.append(prefix_ids + value_ids)
-    attributes.sort(key=len)
-    demand = len(required) + sum(len(attribute) for attribute in attributes)
+        attributes.append((str(key), prefix_ids + value_ids))
+    attributes.sort(key=lambda attribute: len(attribute[1]))
+    demand = len(required) + sum(len(token_ids) for _, token_ids in attributes)
     return required, attributes, demand
 
 
+@dataclass(frozen=True, slots=True)
+class _FittedCard:
+    input_ids: list[int]
+    token_attributes: list[str | None]
+    included_attributes: tuple[str, ...]
+
+
 def _fit_pair_to_budget(
-    left_sections: tuple[list[int], list[list[int]], int],
-    right_sections: tuple[list[int], list[list[int]], int],
+    left_sections: tuple[list[int], list[tuple[str, list[int]]], int],
+    right_sections: tuple[list[int], list[tuple[str, list[int]]], int],
     content_budget: int,
-) -> tuple[list[int], list[int]]:
+) -> tuple[_FittedCard, _FittedCard]:
     def fit_card(
-        sections: tuple[list[int], list[list[int]], int],
+        sections: tuple[list[int], list[tuple[str, list[int]]], int],
         budget: int,
-    ) -> list[int]:
+    ) -> _FittedCard:
         required, attributes, _ = sections
         if len(required) >= budget:
-            return required[:budget]
+            fitted = required[:budget]
+            return _FittedCard(fitted, [None] * len(fitted), ())
 
         fitted = list(required)
-        for attribute in attributes:
-            if len(fitted) + len(attribute) > budget:
+        token_attributes: list[str | None] = [None] * len(required)
+        included: list[str] = []
+        for key, token_ids in attributes:
+            if len(fitted) + len(token_ids) > budget:
                 break
-            fitted.extend(attribute)
-        return fitted
+            fitted.extend(token_ids)
+            token_attributes.extend([key] * len(token_ids))
+            included.append(key)
+        return _FittedCard(fitted, token_attributes, tuple(included))
 
     left_demand = left_sections[2]
     right_demand = right_sections[2]
@@ -207,24 +223,32 @@ def _fit_pair_to_budget(
     remaining -= left_extra
     right_budget += min(right_demand - right_budget, remaining)
 
-    left_ids = fit_card(left_sections, left_budget)
-    right_ids = fit_card(right_sections, right_budget)
+    left = fit_card(left_sections, left_budget)
+    right = fit_card(right_sections, right_budget)
 
-    while (remaining := content_budget - len(left_ids) - len(right_ids)) > 0:
-        left_candidate = fit_card(left_sections, len(left_ids) + remaining)
-        right_candidate = fit_card(right_sections, len(right_ids) + remaining)
-        left_gain = len(left_candidate) - len(left_ids)
-        right_gain = len(right_candidate) - len(right_ids)
+    while (
+        remaining := content_budget - len(left.input_ids) - len(right.input_ids)
+    ) > 0:
+        left_candidate = fit_card(
+            left_sections,
+            len(left.input_ids) + remaining,
+        )
+        right_candidate = fit_card(
+            right_sections,
+            len(right.input_ids) + remaining,
+        )
+        left_gain = len(left_candidate.input_ids) - len(left.input_ids)
+        right_gain = len(right_candidate.input_ids) - len(right.input_ids)
         if left_gain <= 0 and right_gain <= 0:
             break
         if left_gain >= right_gain:
-            left_ids = left_candidate
+            left = left_candidate
         else:
-            right_ids = right_candidate
-    return left_ids, right_ids
+            right = right_candidate
+    return left, right
 
 
-def _encode_prepared_pair(
+def _encode_prepared_pair_with_fitted(
     tokenizer: PreTrainedTokenizerBase,
     pair: PreparedPair,
     *,
@@ -232,7 +256,7 @@ def _encode_prepared_pair(
     special_token_count: int,
     use_field_tokens: bool,
     max_attribute_value_tokens: int | None,
-) -> dict[str, list[int]]:
+) -> tuple[dict[str, list[int]], _FittedCard, _FittedCard]:
     content_budget = max_length - special_token_count
     if content_budget < 1:
         raise ValueError("max_length must leave room for pair content after special tokens")
@@ -249,11 +273,13 @@ def _encode_prepared_pair(
         use_field_tokens=use_field_tokens,
         max_attribute_value_tokens=max_attribute_value_tokens,
     )
-    left_ids, right_ids = _fit_pair_to_budget(
+    left, right = _fit_pair_to_budget(
         left_sections,
         right_sections,
         content_budget,
     )
+    left_ids = left.input_ids
+    right_ids = right.input_ids
 
     build_inputs = getattr(tokenizer, "build_inputs_with_special_tokens", None)
     if callable(build_inputs):
@@ -301,6 +327,26 @@ def _encode_prepared_pair(
                 len(right_ids) + 1
             )
         encoded["token_type_ids"] = token_type_ids
+    return encoded, left, right
+
+
+def _encode_prepared_pair(
+    tokenizer: PreTrainedTokenizerBase,
+    pair: PreparedPair,
+    *,
+    max_length: int,
+    special_token_count: int,
+    use_field_tokens: bool,
+    max_attribute_value_tokens: int | None,
+) -> dict[str, list[int]]:
+    encoded, _, _ = _encode_prepared_pair_with_fitted(
+        tokenizer,
+        pair,
+        max_length=max_length,
+        special_token_count=special_token_count,
+        use_field_tokens=use_field_tokens,
+        max_attribute_value_tokens=max_attribute_value_tokens,
+    )
     return encoded
 
 
@@ -335,6 +381,95 @@ def encode_prepared_pair(
         special_token_count=_pair_special_token_count(tokenizer),
         use_field_tokens=use_field_tokens,
         max_attribute_value_tokens=max_attribute_value_tokens,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PairEncodingWithAttributes:
+    """Encoded pair plus the raw-attribute owner of every token position."""
+
+    inputs: dict[str, list[int]]
+    token_attributes: tuple[str | None, ...]
+    present_attribute_sections: dict[str, int]
+    included_attribute_sections: dict[str, int]
+
+
+def _pair_token_attributes(
+    tokenizer: PreTrainedTokenizerBase,
+    left: _FittedCard,
+    right: _FittedCard,
+    special_token_count: int,
+) -> tuple[str | None, ...]:
+    cls_token = getattr(tokenizer, "cls_token", None)
+    sep_token = getattr(tokenizer, "sep_token", None)
+    if special_token_count == 3 and cls_token in (None, "[CLS]") and sep_token in (
+        None,
+        "[SEP]",
+    ):
+        values = [
+            None,
+            *left.token_attributes,
+            None,
+            *right.token_attributes,
+            None,
+        ]
+    elif special_token_count == 4 and cls_token == "<s>" and sep_token == "</s>":
+        values = [
+            None,
+            *left.token_attributes,
+            None,
+            None,
+            *right.token_attributes,
+            None,
+        ]
+    else:
+        raise ValueError(
+            "attribute analysis supports BERT and RoBERTa/XLM-R pair layouts"
+        )
+    return tuple(values)
+
+
+def encode_prepared_pair_with_attributes(
+    tokenizer: PreTrainedTokenizerBase,
+    pair: PreparedPair,
+    *,
+    max_length: int,
+    use_field_tokens: bool = True,
+    max_attribute_value_tokens: int | None = DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
+) -> PairEncodingWithAttributes:
+    """Encode one pair and preserve token-to-raw-attribute alignment."""
+    if max_attribute_value_tokens is not None and max_attribute_value_tokens < 1:
+        raise ValueError("max_attribute_value_tokens must be positive or None")
+    if use_field_tokens:
+        _require_pair_special_tokens(tokenizer)
+    special_token_count = _pair_special_token_count(tokenizer)
+    inputs, left, right = _encode_prepared_pair_with_fitted(
+        tokenizer,
+        pair,
+        max_length=max_length,
+        special_token_count=special_token_count,
+        use_field_tokens=use_field_tokens,
+        max_attribute_value_tokens=max_attribute_value_tokens,
+    )
+    token_attributes = _pair_token_attributes(
+        tokenizer,
+        left,
+        right,
+        special_token_count,
+    )
+    if len(token_attributes) != len(inputs["input_ids"]):
+        raise RuntimeError("attribute token alignment does not match encoded input")
+    present = Counter(
+        str(key)
+        for card in (pair.left, pair.right)
+        for key, _ in card.attributes
+    )
+    included = Counter((*left.included_attributes, *right.included_attributes))
+    return PairEncodingWithAttributes(
+        inputs=inputs,
+        token_attributes=token_attributes,
+        present_attribute_sections=dict(present),
+        included_attribute_sections=dict(included),
     )
 
 

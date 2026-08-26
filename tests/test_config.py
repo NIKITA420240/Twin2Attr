@@ -35,6 +35,17 @@ class AppConfigTests(unittest.TestCase):
             self.config.training.solution_path,
         )
         self.assertFalse(hasattr(self.config, "artifacts"))
+        self.assertEqual(
+            self.config.analysis.analysis_model,
+            "attribute_importance",
+        )
+        self.assertEqual(self.config.analysis.data_model, "base_dataset")
+        analysis = self.config.analysis_models.attribute_importance
+        self.assertEqual(analysis.model, "transformer")
+        self.assertIsNone(analysis.sample_size)
+        self.assertTrue(analysis.group_by_category)
+        self.assertEqual(analysis.min_occurrences, 30)
+        self.assertEqual(analysis.score_type, "normalized_mean_attention")
         self.assertTrue(self.config.features.normalization.enabled)
         self.assertEqual(
             self.config.features.execution_order,
@@ -56,7 +67,8 @@ class AppConfigTests(unittest.TestCase):
             self.config.model_description.transformer.pretrained_model_path,
             "models/rubert-base-cased",
         )
-        self.assertTrue(self.config.pair_encoding.use_field_tokens)
+        encoding = self.config.model_description.transformer.pair_encoding
+        self.assertTrue(encoding.use_field_tokens)
         self.assertFalse(
             self.config.model_description.transformer.train_new_token_embeddings_only
         )
@@ -68,10 +80,10 @@ class AppConfigTests(unittest.TestCase):
             "cosine",
         )
         self.assertIsInstance(
-            self.config.pair_encoding.max_attribute_value_tokens,
+            encoding.max_attribute_value_tokens,
             int,
         )
-        self.assertEqual(self.config.pair_encoding.max_length, 256)
+        self.assertEqual(encoding.max_length, 256)
         self.assertEqual(base.stacking_train_fraction, 0.15)
         self.assertEqual(
             self.config.model_description.stacking.base_model,

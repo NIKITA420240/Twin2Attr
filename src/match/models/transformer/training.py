@@ -313,7 +313,7 @@ def train_sequence_classifier(
 
 def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
     parameters = config.model_description.transformer
-    encoding = config.pair_encoding
+    encoding = parameters.pair_encoding
     return SequenceClassifierConfig(
         model_path=parameters.pretrained_model_path,
         max_epochs=parameters.max_epochs,
