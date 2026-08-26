@@ -2,6 +2,8 @@
 training:
   model: stacking
   data_model: base_dataset
+  augmentation_model: null
+  data_postprocessing_model: null
   resolved_config_path: models/twin2attr/pipeline_config.yaml
   solution_path: solution.json
 
@@ -49,11 +51,28 @@ data_model_description:
 # transformer | maxpooling | fusion | boosting | cascade | stacking
 inference:
   model: stacking
+  augmentation_model: null
+  data_postprocessing_model: null
   solution_path: ${training.solution_path}
 
 analysis:
   analysis_model: attribute_importance
   data_model: base_dataset
+  augmentation_model: attribute_shuffle
+  data_postprocessing_model: null
+
+augmentation_models:
+  attribute_shuffle:
+    type: attribute_shuffle
+    shuffled_copies: 1
+    keep_original: false
+    seed: ${runtime.seed}
+    shuffle_cards_independently: true
+    skip_oversized: true
+
+data_postprocessing_models:
+  attribute_sort:
+    priorities_path: ${analysis_models.attribute_importance.output_dir}/${analysis_models.attribute_importance.output_file}
 
 analysis_models:
   attribute_importance:

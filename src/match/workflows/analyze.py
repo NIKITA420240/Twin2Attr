@@ -9,9 +9,11 @@ from ..analysis import (
     AttributeImportanceResult,
     analyze_transformer_attribute_importance,
 )
+from ..augmentations import apply_pair_augmentation
 from ..config import AppConfig
 from ..data import prepare_configured_items, prepare_pair_rows
 from ..data_models import build_data_model
+from ..data_postprocessing import apply_pair_postprocessing
 from ._common import workflow_logging
 
 
@@ -68,12 +70,27 @@ def analyze(config: AppConfig) -> AttributeImportanceResult:
             prepared_items.attributes_column,
             split_name="attribute importance analysis",
         )
+        augmented = apply_pair_augmentation(
+            pairs,
+            config,
+            model_name=config.analysis.augmentation_model,
+        )
+        processed = apply_pair_postprocessing(
+            augmented.pairs,
+            config,
+            model_name=config.analysis.data_postprocessing_model,
+        )
         logger.info(
-            "Attribute analysis sample selected: data_model={}, rows={}",
+            "Attribute analysis sample selected: data_model={}, source_rows={}, "
+            "augmented_rows={}",
             config.analysis.data_model,
             len(pairs),
+            len(processed),
         )
-        return analyze_transformer_attribute_importance(config, pairs)
+        return analyze_transformer_attribute_importance(
+            config,
+            processed,
+        )
 
 
 __all__ = ["analyze"]

@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 import polars as pl
 
+from .augmentations import apply_manifest_augmentation
 from .data.preprocessing import prepare_manifest_items
+from .data_postprocessing import apply_manifest_postprocessing
 from .models.contracts import PredictionBatch
 from .models.factory import build_predictor
 from .paths import PROJECT_ROOT
-
 
 PAIR_COLUMNS = ("id1", "id2")
 ITEM_COLUMNS = ("id", "name", "attributes", "category")
@@ -86,7 +88,37 @@ def _predict(
         matches=matches,
         attributes_column=prepared_items.attributes_column,
     )
-    return build_predictor(solution, solution_root).predict_proba(batch)
+    predictor = build_predictor(solution, solution_root)
+    if (
+        solution.get("augmentation_model") is None
+        and solution.get("data_postprocessing_model") is None
+    ):
+        return predictor.predict_proba(batch)
+
+    augmented = apply_manifest_augmentation(batch.prepared_pairs(), solution)
+    processed_pairs = apply_manifest_postprocessing(
+        augmented.pairs,
+        solution,
+        solution_root,
+    )
+    source_indices = np.asarray(augmented.source_indices, dtype=np.int64)
+    augmented_batch = PredictionBatch(
+        items=prepared_items.frame,
+        matches=matches[source_indices.tolist()],
+        attributes_column=prepared_items.attributes_column,
+        pairs=processed_pairs,
+    )
+    predictions = np.asarray(
+        predictor.predict_proba(augmented_batch),
+        dtype=np.float64,
+    )
+    sums = np.zeros(matches.height, dtype=np.float64)
+    counts = np.zeros(matches.height, dtype=np.int64)
+    np.add.at(sums, source_indices, predictions)
+    np.add.at(counts, source_indices, 1)
+    if not counts.all():
+        raise RuntimeError("inference augmentation omitted source pairs")
+    return sums / counts
 
 
 def create_submission(

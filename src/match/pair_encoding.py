@@ -161,6 +161,7 @@ def _encode_card_sections(
     *,
     use_field_tokens: bool,
     max_attribute_value_tokens: int | None,
+    preserve_attribute_order: bool = False,
 ) -> tuple[list[int], list[tuple[str, list[int]]], int]:
     required: list[int] = []
     for key, value in (("name", card.name), ("category", card.category)):
@@ -175,7 +176,8 @@ def _encode_card_sections(
         if max_attribute_value_tokens is not None:
             value_ids = value_ids[:max_attribute_value_tokens]
         attributes.append((str(key), prefix_ids + value_ids))
-    attributes.sort(key=lambda attribute: len(attribute[1]))
+    if not preserve_attribute_order:
+        attributes.sort(key=lambda attribute: len(attribute[1]))
     demand = len(required) + sum(len(token_ids) for _, token_ids in attributes)
     return required, attributes, demand
 
@@ -191,6 +193,8 @@ def _fit_pair_to_budget(
     left_sections: tuple[list[int], list[tuple[str, list[int]]], int],
     right_sections: tuple[list[int], list[tuple[str, list[int]]], int],
     content_budget: int,
+    *,
+    skip_oversized_attributes: bool = False,
 ) -> tuple[_FittedCard, _FittedCard]:
     def fit_card(
         sections: tuple[list[int], list[tuple[str, list[int]]], int],
@@ -206,6 +210,8 @@ def _fit_pair_to_budget(
         included: list[str] = []
         for key, token_ids in attributes:
             if len(fitted) + len(token_ids) > budget:
+                if skip_oversized_attributes:
+                    continue
                 break
             fitted.extend(token_ids)
             token_attributes.extend([key] * len(token_ids))
@@ -266,17 +272,20 @@ def _encode_prepared_pair_with_fitted(
         pair.left,
         use_field_tokens=use_field_tokens,
         max_attribute_value_tokens=max_attribute_value_tokens,
+        preserve_attribute_order=pair.preserve_attribute_order,
     )
     right_sections = _encode_card_sections(
         tokenizer,
         pair.right,
         use_field_tokens=use_field_tokens,
         max_attribute_value_tokens=max_attribute_value_tokens,
+        preserve_attribute_order=pair.preserve_attribute_order,
     )
     left, right = _fit_pair_to_budget(
         left_sections,
         right_sections,
         content_budget,
+        skip_oversized_attributes=pair.skip_oversized_attributes,
     )
     left_ids = left.input_ids
     right_ids = right.input_ids

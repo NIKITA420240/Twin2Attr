@@ -113,6 +113,38 @@ class AttributeImportanceAnalysisTests(unittest.TestCase):
         self.assertIn("color", encoded.token_attributes)
         self.assertIn("memory", encoded.token_attributes)
 
+    def test_explicit_order_can_skip_oversized_attribute(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, tokenizer = self._checkpoint(Path(directory))
+            pair = _pair()
+            long_value = " ".join(["large"] * 5)
+            pair = replace(
+                pair,
+                left=replace(
+                    pair.left,
+                    attributes=(("memory", long_value), ("brand", "acme")),
+                ),
+                right=replace(
+                    pair.right,
+                    attributes=(("memory", long_value), ("brand", "acme")),
+                ),
+                preserve_attribute_order=True,
+                skip_oversized_attributes=True,
+            )
+
+            encoded = encode_prepared_pair_with_attributes(
+                tokenizer,
+                pair,
+                max_length=32,
+                max_attribute_value_tokens=8,
+            )
+
+        self.assertLess(
+            encoded.included_attribute_sections.get("memory", 0),
+            encoded.present_attribute_sections["memory"],
+        )
+        self.assertGreater(encoded.included_attribute_sections["brand"], 0)
+
     def test_analyzer_writes_parquet_and_metadata_without_training(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -151,6 +183,14 @@ class AttributeImportanceAnalysisTests(unittest.TestCase):
         self.assertIn("brand", frame.get_column("attribute").to_list())
         self.assertEqual(set(frame.get_column("scope")), {"global", "category"})
         self.assertTrue((frame.get_column("importance") > 0).all())
+        self.assertTrue((frame.get_column("priority") > 0).all())
+        self.assertEqual(
+            frame.group_by("scope", "category")
+            .agg(pl.col("priority").min().alias("minimum"))
+            .get_column("minimum")
+            .to_list(),
+            [1, 1],
+        )
         self.assertEqual(metadata["max_length"], 48)
         self.assertEqual(metadata["model"], "transformer")
 

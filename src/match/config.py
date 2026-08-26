@@ -147,10 +147,21 @@ def _validate_data_split_settings(
 class TrainingSettings:
     model: str
     data_model: str
+    augmentation_model: str | None
+    data_postprocessing_model: str | None
     resolved_config_path: Path
     solution_path: Path
 
     def __post_init__(self) -> None:
+        if self.augmentation_model not in {None, "attribute_shuffle"}:
+            raise ValueError(
+                "training.augmentation_model must be null or 'attribute_shuffle'"
+            )
+        if self.data_postprocessing_model not in {None, "attribute_sort"}:
+            raise ValueError(
+                "training.data_postprocessing_model must be null or "
+                "'attribute_sort'"
+            )
         if self.model not in {
             "transformer",
             "maxpooling",
@@ -173,9 +184,20 @@ class TrainingSettings:
 @dataclass(frozen=True, slots=True)
 class InferenceSettings:
     model: str
+    augmentation_model: str | None
+    data_postprocessing_model: str | None
     solution_path: Path
 
     def __post_init__(self) -> None:
+        if self.augmentation_model not in {None, "attribute_shuffle"}:
+            raise ValueError(
+                "inference.augmentation_model must be null or 'attribute_shuffle'"
+            )
+        if self.data_postprocessing_model not in {None, "attribute_sort"}:
+            raise ValueError(
+                "inference.data_postprocessing_model must be null or "
+                "'attribute_sort'"
+            )
         if self.model not in {
             "transformer",
             "maxpooling",
@@ -194,8 +216,19 @@ class InferenceSettings:
 class AnalysisSettings:
     analysis_model: str
     data_model: str
+    augmentation_model: str | None
+    data_postprocessing_model: str | None
 
     def __post_init__(self) -> None:
+        if self.augmentation_model not in {None, "attribute_shuffle"}:
+            raise ValueError(
+                "analysis.augmentation_model must be null or 'attribute_shuffle'"
+            )
+        if self.data_postprocessing_model not in {None, "attribute_sort"}:
+            raise ValueError(
+                "analysis.data_postprocessing_model must be null or "
+                "'attribute_sort'"
+            )
         if self.analysis_model != "attribute_importance":
             raise ValueError(
                 "analysis.analysis_model currently must be 'attribute_importance'"
@@ -479,6 +512,40 @@ class AnalysisModelsSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class AttributeShuffleSettings:
+    type: str
+    shuffled_copies: int
+    keep_original: bool
+    seed: int
+    shuffle_cards_independently: bool
+    skip_oversized: bool
+
+    def __post_init__(self) -> None:
+        if self.type != "attribute_shuffle":
+            raise ValueError(
+                "augmentation_models.attribute_shuffle.type must be "
+                "'attribute_shuffle'"
+            )
+        if self.shuffled_copies < 1:
+            raise ValueError("attribute_shuffle.shuffled_copies must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class AugmentationModelsSettings:
+    attribute_shuffle: AttributeShuffleSettings
+
+
+@dataclass(frozen=True, slots=True)
+class AttributeSortSettings:
+    priorities_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class DataPostprocessingModelsSettings:
+    attribute_sort: AttributeSortSettings
+
+
+@dataclass(frozen=True, slots=True)
 class NerSettings:
     enabled: bool
     provider: str | None
@@ -598,6 +665,8 @@ class AppConfig:
     inference: InferenceSettings
     analysis: AnalysisSettings
     analysis_models: AnalysisModelsSettings
+    augmentation_models: AugmentationModelsSettings
+    data_postprocessing_models: DataPostprocessingModelsSettings
     model_description: ModelDescriptionSettings
     features: FeatureSettings
     runtime: RuntimeSettings
@@ -739,6 +808,13 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         analysis_models,
         "attribute_importance",
     )
+    augmentation_models = _section(resolved, "augmentation_models")
+    attribute_shuffle = _section(augmentation_models, "attribute_shuffle")
+    data_postprocessing_models = _section(
+        resolved,
+        "data_postprocessing_models",
+    )
+    attribute_sort = _section(data_postprocessing_models, "attribute_sort")
     model_description = _section(resolved, "model_description")
     transformer = _section(model_description, "transformer")
     encoding = _section(transformer, "pair_encoding")
@@ -776,6 +852,16 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         training=TrainingSettings(
             model=str(_required(training, "model")),
             data_model=str(_required(training, "data_model")),
+            augmentation_model=(
+                None
+                if training.get("augmentation_model") is None
+                else str(training["augmentation_model"])
+            ),
+            data_postprocessing_model=(
+                None
+                if training.get("data_postprocessing_model") is None
+                else str(training["data_postprocessing_model"])
+            ),
             resolved_config_path=_path(
                 _required(training, "resolved_config_path"),
                 "training.resolved_config_path",
@@ -826,6 +912,16 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         ),
         inference=InferenceSettings(
             model=str(_required(inference, "model")),
+            augmentation_model=(
+                None
+                if inference.get("augmentation_model") is None
+                else str(inference["augmentation_model"])
+            ),
+            data_postprocessing_model=(
+                None
+                if inference.get("data_postprocessing_model") is None
+                else str(inference["data_postprocessing_model"])
+            ),
             solution_path=_path(
                 _required(inference, "solution_path"),
                 "inference.solution_path",
@@ -834,6 +930,16 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         analysis=AnalysisSettings(
             analysis_model=str(_required(analysis, "analysis_model")),
             data_model=str(_required(analysis, "data_model")),
+            augmentation_model=(
+                None
+                if analysis.get("augmentation_model") is None
+                else str(analysis["augmentation_model"])
+            ),
+            data_postprocessing_model=(
+                None
+                if analysis.get("data_postprocessing_model") is None
+                else str(analysis["data_postprocessing_model"])
+            ),
         ),
         analysis_models=AnalysisModelsSettings(
             attribute_importance=AttributeImportanceAnalysisSettings(
@@ -854,6 +960,36 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 output_file=str(_required(attribute_importance, "output_file")),
                 metadata_file=str(
                     _required(attribute_importance, "metadata_file")
+                ),
+            ),
+        ),
+        augmentation_models=AugmentationModelsSettings(
+            attribute_shuffle=AttributeShuffleSettings(
+                type=str(_required(attribute_shuffle, "type")),
+                shuffled_copies=int(
+                    _required(attribute_shuffle, "shuffled_copies")
+                ),
+                keep_original=_bool(
+                    _required(attribute_shuffle, "keep_original"),
+                    "augmentation_models.attribute_shuffle.keep_original",
+                ),
+                seed=int(_required(attribute_shuffle, "seed")),
+                shuffle_cards_independently=_bool(
+                    _required(attribute_shuffle, "shuffle_cards_independently"),
+                    "augmentation_models.attribute_shuffle."
+                    "shuffle_cards_independently",
+                ),
+                skip_oversized=_bool(
+                    _required(attribute_shuffle, "skip_oversized"),
+                    "augmentation_models.attribute_shuffle.skip_oversized",
+                ),
+            ),
+        ),
+        data_postprocessing_models=DataPostprocessingModelsSettings(
+            attribute_sort=AttributeSortSettings(
+                priorities_path=_path(
+                    _required(attribute_sort, "priorities_path"),
+                    "data_postprocessing_models.attribute_sort.priorities_path",
                 ),
             ),
         ),
@@ -1178,6 +1314,9 @@ __all__ = [
     "AnalysisSettings",
     "AppConfig",
     "AttributeImportanceAnalysisSettings",
+    "AttributeShuffleSettings",
+    "AttributeSortSettings",
+    "AugmentationModelsSettings",
     "BaseDatasetSettings",
     "BoostingParameters",
     "CascadeParameters",
@@ -1185,6 +1324,7 @@ __all__ = [
     "DataModelDescriptionSettings",
     "DatasetSourceSettings",
     "DatasetSplitterSettings",
+    "DataPostprocessingModelsSettings",
     "FeatureSettings",
     "FusionParameters",
     "InferenceSettings",

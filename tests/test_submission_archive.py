@@ -17,7 +17,11 @@ class SubmissionArchiveTests(unittest.TestCase):
         )
         self.config = replace(
             config,
-            inference=replace(config.inference, model="transformer"),
+            inference=replace(
+                config.inference,
+                model="transformer",
+                data_postprocessing_model=None,
+            ),
             features=replace(
                 config.features,
                 normalization=replace(
@@ -143,6 +147,9 @@ class SubmissionArchiveTests(unittest.TestCase):
             synonyms.write_bytes(b"synonyms")
             unique = root / "data" / "unique.parquet"
             unique.write_bytes(b"unique")
+            priorities = root / "analysis" / "attribute_importance.parquet"
+            priorities.parent.mkdir()
+            priorities.write_bytes(b"priorities")
             output = root / "dist" / "submission.zip"
             config = replace(
                 self._with_model_artifacts(
@@ -163,6 +170,17 @@ class SubmissionArchiveTests(unittest.TestCase):
                     self.config.submission,
                     output_path=output,
                 ),
+                inference=replace(
+                    self.config.inference,
+                    data_postprocessing_model="attribute_sort",
+                ),
+                data_postprocessing_models=replace(
+                    self.config.data_postprocessing_models,
+                    attribute_sort=replace(
+                        self.config.data_postprocessing_models.attribute_sort,
+                        priorities_path=priorities,
+                    ),
+                ),
             )
 
             result = build_submission_archive(config, project_root=root)
@@ -174,7 +192,14 @@ class SubmissionArchiveTests(unittest.TestCase):
         self.assertEqual(result.predictor, "transformer")
         self.assertEqual(solution["predictor"], "transformer")
         self.assertEqual(solution["model_directory"], "models/transformer")
+        self.assertEqual(
+            solution["data_postprocessing_models"]["attribute_sort"][
+                "priorities_path"
+            ],
+            "analysis/attribute_importance.parquet",
+        )
         self.assertIn("models/transformer/model.safetensors", names)
+        self.assertIn("analysis/attribute_importance.parquet", names)
         self.assertIn("vendor_wheels/polars-1.43.2-py3-none-any.whl", names)
         self.assertIn("vendor_wheels/pymorphy3-2.0.6-py3-none-any.whl", names)
         self.assertIn(

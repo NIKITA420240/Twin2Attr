@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+from ..augmentations import apply_pair_augmentation
 from ..config import AppConfig, save_app_config
 from ..data import prepare_configured_items, prepare_training_data
 from ..data_models import build_data_model
+from ..data_postprocessing import apply_pair_postprocessing
 from ..experiments import save_experiment_record
 from ..models.artifacts import TrainingArtifacts, save_solution_manifest
 from ..models.factory import build_trainer
@@ -35,6 +37,29 @@ def train(
             attributes_column=attributes_column,
             stacking_matches=getattr(splits, "stacking_matches", None),
         )
+        if config.training.augmentation_model is not None:
+            augmented = apply_pair_augmentation(
+                data.train_pairs,
+                config,
+                model_name=config.training.augmentation_model,
+            )
+            source_indices = list(augmented.source_indices)
+            data = replace(
+                data,
+                train_matches=data.train_matches[source_indices],
+                train_pairs=list(augmented.pairs),
+            )
+        if config.training.data_postprocessing_model is not None:
+            data = replace(
+                data,
+                train_pairs=list(
+                    apply_pair_postprocessing(
+                        data.train_pairs,
+                        config,
+                        model_name=config.training.data_postprocessing_model,
+                    )
+                ),
+            )
         trainer = build_trainer(config)
         artifacts = trainer.train(data)
         save_app_config(config, config.training.resolved_config_path)
