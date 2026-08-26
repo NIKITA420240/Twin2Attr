@@ -1,0 +1,28 @@
+{
+  "validation_macro_pr_auc": 0.7536739046089598,
+  "best_hyperparameters": {
+    "learning_rate": 3e-05,
+    "weight_decay": 0.01
+  },
+  "resolved_config": {
+    "max_epochs": 15,
+    "max_length": 256,
+    "train_batch_size": 64,
+    "eval_batch_size": 64,
+    "gradient_accumulation_steps": 4,
+    "learning_rate": 3e-05,
+    "embeddings_learning_rate": 1e-06,
+    "train_new_token_embeddings_only": false,
+    "train_last_n_layers": null,
+    "head_learning_rate": 0.0001,
+    "layerwise_lr_decay": 0.9,
+    "weight_decay": 0.01,
+    "use_field_tokens": true,
+    "max_attribute_value_tokens": 16,
+    "warmup_ratio": 0.06,
+    "lr_scheduler_type": "cosine",
+    "gradient_clip_norm": 1.0,
+    "early_stopping_patience": 2,
+    "auto_find_batch_size": true
+  }
+}
