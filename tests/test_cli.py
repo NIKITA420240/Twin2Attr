@@ -127,6 +127,7 @@ class UnifiedCliTests(unittest.TestCase):
                 "typing_extensions-4.16.0-py3-none-any.whl",
                 "colorama-0.4.6-py2.py3-none-any.whl",
                 "win32_setctime-1.2.0-py3-none-any.whl",
+                "orjson-3.11.9-cp312-cp312-manylinux2014_x86_64.whl",
             ):
                 (wheels / name).write_bytes(b"wheel")
             solution = root / "solution.json"
@@ -143,6 +144,7 @@ class UnifiedCliTests(unittest.TestCase):
                             "import_module",
                             side_effect=[
                                 missing,
+                                object(),
                                 object(),
                                 object(),
                                 object(),
@@ -165,7 +167,8 @@ class UnifiedCliTests(unittest.TestCase):
                     self.assertIn("joblib==1.5.3", command)
                     self.assertIn("loguru==0.7.3", command)
                     self.assertIn("pint==0.25.3", command)
-                    self.assertEqual(import_module.call_count, 5)
+                    self.assertIn("orjson==3.11.9", command)
+                    self.assertEqual(import_module.call_count, 6)
 
 
 if __name__ == "__main__":

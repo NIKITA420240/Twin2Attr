@@ -33,6 +33,7 @@ def train(
             splits.train_matches,
             splits.validation_matches,
             attributes_column=attributes_column,
+            stacking_matches=getattr(splits, "stacking_matches", None),
         )
         trainer = build_trainer(config)
         artifacts = trainer.train(data)

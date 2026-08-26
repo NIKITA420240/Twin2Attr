@@ -88,7 +88,7 @@ def _inference_settings(
     return resolved_length, use_field_tokens, max_attribute_value_tokens
 
 
-def predict_match_probabilities(
+def predict_pair_logits(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
     pairs: Sequence[PreparedPair],
@@ -96,10 +96,11 @@ def predict_match_probabilities(
     batch_size: int = 64,
     max_length: int | None = None,
 ) -> np.ndarray:
+    """Return the two classifier logits for every prepared pair."""
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
     if not pairs:
-        return np.empty(0, dtype=np.float32)
+        return np.empty((0, 2), dtype=np.float32)
     max_length, use_field_tokens, value_limit = _inference_settings(
         model,
         tokenizer,
@@ -129,13 +130,63 @@ def predict_match_probabilities(
                 for batch in loader:
                     inputs = {key: value.to(device) for key, value in batch.items()}
                     logits = model(**inputs).logits
-                    chunks.append(logits.softmax(dim=-1)[:, 1].float().cpu().numpy())
+                    if logits.ndim != 2 or logits.shape[1] != 2:
+                        raise RuntimeError(
+                            "stacking requires a binary Transformer classifier"
+                        )
+                    chunks.append(logits.float().cpu().numpy())
             return np.concatenate(chunks).astype(np.float32, copy=False)
         except torch.cuda.OutOfMemoryError:
             if current_batch_size == 1:
                 raise
             current_batch_size = max(1, current_batch_size // 2)
             torch.cuda.empty_cache()
+
+
+def predict_match_probabilities(
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizerBase,
+    pairs: Sequence[PreparedPair],
+    *,
+    batch_size: int = 64,
+    max_length: int | None = None,
+) -> np.ndarray:
+    logits = predict_pair_logits(
+        model,
+        tokenizer,
+        pairs,
+        batch_size=batch_size,
+        max_length=max_length,
+    )
+    if not len(logits):
+        return np.empty(0, dtype=np.float32)
+    shifted = logits - logits.max(axis=1, keepdims=True)
+    exponentials = np.exp(shifted)
+    return (exponentials[:, 1] / exponentials.sum(axis=1)).astype(
+        np.float32,
+        copy=False,
+    )
+
+
+def predict_logit_margins(
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizerBase,
+    pairs: Sequence[PreparedPair],
+    *,
+    batch_size: int = 64,
+    max_length: int | None = None,
+) -> np.ndarray:
+    """Return ``match_logit - different_logit`` for stacking."""
+    logits = predict_pair_logits(
+        model,
+        tokenizer,
+        pairs,
+        batch_size=batch_size,
+        max_length=max_length,
+    )
+    if not len(logits):
+        return np.empty(0, dtype=np.float32)
+    return (logits[:, 1] - logits[:, 0]).astype(np.float32, copy=False)
 
 
 def encode_pair_cls(
@@ -232,10 +283,20 @@ class TransformerPredictor:
             batch_size=self.batch_size,
         )
 
+    def predict_logit_margin(self, batch: PredictionBatch) -> np.ndarray:
+        return predict_logit_margins(
+            self.model,
+            self.tokenizer,
+            batch.prepared_pairs(),
+            batch_size=self.batch_size,
+        )
+
 
 __all__ = [
     "TransformerPredictor",
     "encode_pair_cls",
     "load_trained_classifier",
+    "predict_logit_margins",
+    "predict_pair_logits",
     "predict_match_probabilities",
 ]

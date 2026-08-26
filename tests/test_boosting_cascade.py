@@ -6,6 +6,11 @@ import polars as pl
 from match.models.boosting.features import BoostingFeatureBuilder
 from match.models.cascade.predictor import CascadePredictor
 from match.models.contracts import MatchPredictor, PredictionBatch
+from match.models.stacking.features import (
+    TRANSFORMER_LOGIT_MARGIN,
+    build_stacking_features,
+)
+from match.models.stacking.predictor import StackingPredictor
 
 
 def _batch() -> PredictionBatch:
@@ -34,6 +39,19 @@ class _FixedPredictor:
     def predict_proba(self, batch: PredictionBatch) -> np.ndarray:
         self.received_rows.append(batch.matches.height)
         return self.probabilities.copy()
+
+
+class _FixedMarginPredictor:
+    def predict_logit_margin(self, batch: PredictionBatch) -> np.ndarray:
+        return np.arange(batch.matches.height, dtype=np.float32) - 1.0
+
+
+class _FixedCatBoost:
+    def predict_proba(self, features, *, thread_count: int):
+        del thread_count
+        margins = features[TRANSFORMER_LOGIT_MARGIN].to_numpy()
+        probabilities = 1.0 / (1.0 + np.exp(-margins))
+        return np.column_stack((1.0 - probabilities, probabilities))
 
 
 class BoostingAndCascadeTests(unittest.TestCase):
@@ -84,6 +102,39 @@ class BoostingAndCascadeTests(unittest.TestCase):
 
         np.testing.assert_allclose(result, fast.probabilities)
         self.assertEqual(main.received_rows, [])
+
+    def test_stacking_appends_transformer_margin_to_base_features(self) -> None:
+        batch = _batch()
+        margins = np.array([-2.0, 0.0, 3.0], dtype=np.float32)
+
+        features = build_stacking_features(batch, margins)
+
+        self.assertEqual(features.shape, (3, 86))
+        self.assertEqual(features.columns[-1], TRANSFORMER_LOGIT_MARGIN)
+        np.testing.assert_array_equal(
+            features[TRANSFORMER_LOGIT_MARGIN].to_numpy(),
+            margins,
+        )
+
+    def test_stacking_predictor_uses_margin_and_returns_probabilities(self) -> None:
+        batch = _batch()
+        feature_names = list(
+            build_stacking_features(
+                batch,
+                np.zeros(batch.matches.height, dtype=np.float32),
+            ).columns
+        )
+        predictor = StackingPredictor(
+            _FixedCatBoost(),
+            feature_names,
+            transformer=_FixedMarginPredictor(),
+        )
+
+        probabilities = predictor.predict_proba(batch)
+
+        expected = 1.0 / (1.0 + np.exp(-np.array([-1.0, 0.0, 1.0])))
+        np.testing.assert_allclose(probabilities, expected, rtol=1e-6)
+        self.assertIsInstance(predictor, MatchPredictor)
 
 
 if __name__ == "__main__":

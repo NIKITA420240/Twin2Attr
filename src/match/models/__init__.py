@@ -15,6 +15,8 @@ _EXPORTS = {
     "ModelTrainer": (".contracts", "ModelTrainer"),
     "PairEncoder": (".contracts", "PairEncoder"),
     "PredictionBatch": (".contracts", "PredictionBatch"),
+    "StackingPredictor": (".stacking.predictor", "StackingPredictor"),
+    "StackingTrainer": (".stacking.training", "StackingTrainer"),
     "TrainingArtifacts": (".artifacts", "TrainingArtifacts"),
     "TransformerPredictor": (".transformer.predictor", "TransformerPredictor"),
     "TransformerTrainer": (".transformer.training", "TransformerTrainer"),

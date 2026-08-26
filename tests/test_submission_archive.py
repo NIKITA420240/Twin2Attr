@@ -17,6 +17,7 @@ class SubmissionArchiveTests(unittest.TestCase):
         )
         self.config = replace(
             config,
+            inference=replace(config.inference, model="transformer"),
             features=replace(
                 config.features,
                 normalization=replace(
@@ -70,6 +71,9 @@ class SubmissionArchiveTests(unittest.TestCase):
         (wheels / "win32_setctime-1.2.0-py3-none-any.whl").write_bytes(
             b"win32-setctime"
         )
+        (
+            wheels / "orjson-3.11.9-cp312-cp312-manylinux2014_x86_64.whl"
+        ).write_bytes(b"orjson")
 
     @staticmethod
     def _trained_transformer(root: Path) -> Path:
@@ -157,6 +161,10 @@ class SubmissionArchiveTests(unittest.TestCase):
         self.assertIn("vendor_wheels/colorama-0.4.6-py2.py3-none-any.whl", names)
         self.assertIn(
             "vendor_wheels/win32_setctime-1.2.0-py3-none-any.whl",
+            names,
+        )
+        self.assertIn(
+            "vendor_wheels/orjson-3.11.9-cp312-cp312-manylinux2014_x86_64.whl",
             names,
         )
         self.assertNotIn(
@@ -346,6 +354,46 @@ class SubmissionArchiveTests(unittest.TestCase):
         self.assertEqual(solution["main_model"], "transformer")
         self.assertIn("models/transformer/model.safetensors", names)
         self.assertIn("models/boosting/model.cbm", names)
+        self.assertIn(
+            "vendor_wheels/catboost-1.2.10-cp312-cp312-manylinux_x86_64.whl",
+            names,
+        )
+
+    def test_stacking_packages_transformer_and_catboost_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._project(root)
+            transformer = self._trained_transformer(root)
+            stacking = root / "models" / "stacking"
+            stacking.mkdir(parents=True)
+            (stacking / "model.cbm").write_bytes(b"stacking")
+            (stacking / "manifest.json").write_text("{}", encoding="utf-8")
+            config = replace(
+                self.config,
+                inference=replace(
+                    self.config.inference,
+                    model="stacking",
+                    transformer_dir=transformer,
+                    stacking_dir=stacking,
+                ),
+                submission=replace(
+                    self.config.submission,
+                    output_path=root / "submission.zip",
+                ),
+            )
+
+            result = build_submission_archive(config, project_root=root)
+
+            with ZipFile(result.path) as archive:
+                names = set(archive.namelist())
+                solution = json.loads(archive.read("solution.json"))
+
+        self.assertEqual(solution["predictor"], "stacking")
+        self.assertEqual(solution["base_model"], "transformer")
+        self.assertEqual(solution["stacking_model"], "boosting")
+        self.assertEqual(solution["stacking_directory"], "models/stacking")
+        self.assertIn("models/transformer/model.safetensors", names)
+        self.assertIn("models/stacking/model.cbm", names)
         self.assertIn(
             "vendor_wheels/catboost-1.2.10-cp312-cp312-manylinux_x86_64.whl",
             names,

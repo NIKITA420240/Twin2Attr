@@ -37,6 +37,14 @@ def build_trainer(config: AppConfig) -> ModelTrainer:
         from .boosting.training import BoostingTrainer
 
         return BoostingTrainer(config)
+    if config.training.model == "stacking":
+        from .stacking.training import StackingTrainer
+        from .transformer.training import TransformerTrainer
+
+        return StackingTrainer(
+            config=config,
+            transformer=TransformerTrainer(config),
+        )
     raise ValueError(f"Unsupported training model: {config.training.model!r}")
 
 
@@ -147,6 +155,32 @@ def build_predictor(
             main_model,
             negative_threshold=float(solution.get("negative_threshold", 0.01)),
             positive_threshold=float(solution.get("positive_threshold", 0.99)),
+        )
+    if predictor_name == "stacking":
+        from .stacking.predictor import StackingPredictor
+        from .transformer.predictor import TransformerPredictor
+
+        if str(solution.get("base_model")) != "transformer":
+            raise ValueError("stacking base_model must be 'transformer'")
+        if str(solution.get("stacking_model")) != "boosting":
+            raise ValueError("stacking stacking_model must be 'boosting'")
+        transformer = TransformerPredictor.load(
+            _artifact_path(
+                solution.get("model_directory"),
+                root=solution_root,
+                name="model_directory",
+            ),
+            batch_size=int(solution.get("batch_size", 64)),
+            device=device,
+        )
+        return StackingPredictor.load(
+            _artifact_path(
+                solution.get("stacking_directory"),
+                root=solution_root,
+                name="stacking_directory",
+            ),
+            transformer=transformer,
+            thread_count=int(solution.get("stacking_thread_count", -1)),
         )
     raise ValueError(f"Unsupported predictor in solution.json: {predictor_name!r}")
 

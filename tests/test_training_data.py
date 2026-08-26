@@ -53,6 +53,32 @@ class TrainingDataTests(unittest.TestCase):
         self.assertEqual(data.train_pairs[0].left.item_id, 1)
         self.assertEqual(data.validation_pairs[0].right.item_id, 3)
 
+    def test_keeps_stacking_pairs_separate_and_aligned(self) -> None:
+        items = pl.DataFrame(
+            {
+                "id": [1, 2, 3, 4],
+                "name": ["one", "two", "three", "four"],
+                "category": ["a", "a", "b", "b"],
+                "attributes": ["{}", "{}", "{}", "{}"],
+            }
+        )
+        train = pl.DataFrame({"id1": [1], "id2": [2], "target": [1]})
+        stacking = pl.DataFrame({"id1": [2], "id2": [3], "target": [0]})
+        validation = pl.DataFrame({"id1": [3], "id2": [4], "target": [1]})
+
+        data = prepare_training_data(
+            items,
+            train,
+            validation,
+            attributes_column="attributes",
+            stacking_matches=stacking,
+        )
+
+        self.assertIs(data.stacking_matches, stacking)
+        self.assertEqual([pair.left.item_id for pair in data.train_pairs], [1])
+        self.assertEqual([pair.left.item_id for pair in data.stacking_pairs], [2])
+        self.assertEqual([pair.left.item_id for pair in data.validation_pairs], [3])
+
 
 if __name__ == "__main__":
     unittest.main()

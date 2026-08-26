@@ -15,6 +15,8 @@ _EXPORTS = {
     "encode_pair_cls": (".predictor", "encode_pair_cls"),
     "load_trained_classifier": (".predictor", "load_trained_classifier"),
     "predict_match_probabilities": (".predictor", "predict_match_probabilities"),
+    "predict_logit_margins": (".predictor", "predict_logit_margins"),
+    "predict_pair_logits": (".predictor", "predict_pair_logits"),
     "train_sequence_classifier": (".training", "train_sequence_classifier"),
 }
 __all__ = sorted(_EXPORTS)

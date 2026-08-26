@@ -1,13 +1,14 @@
-# transformer | maxpooling | fusion | boosting
+# transformer | maxpooling | fusion | boosting | stacking
 training:
-  model: transformer
-  data_model: mix_dataset
+  model: stacking
+  data_model: base_dataset
 
 data_model_description:
   base_dataset:
     items: data/items_human.parquet
     matches: data/matches.parquet
     validation_fraction: 0.2
+    stacking_train_fraction: 0.15
     leakage_scope: pair
     candidate_splits: 128
     seed: ${runtime.seed}
@@ -43,13 +44,14 @@ data_model_description:
           positive_threshold: 7
           uncertain_action: drop
 
-# transformer | maxpooling | fusion | boosting | cascade
+# transformer | maxpooling | fusion | boosting | cascade | stacking
 inference:
-  model: transformer
-  transformer_dir: weights/cross-encoder-russian-msmarco
+  model: stacking
+  transformer_dir: models/twin2attr/stacking/transformer
   maxpooling_path: models/twin2attr/maxpooling.joblib
   fusion_path: models/twin2attr/fusion.pt
   boosting_dir: models/twin2attr/boosting
+  stacking_dir: models/twin2attr/stacking/boosting
 
 pair_encoding:
   use_field_tokens: true
@@ -63,7 +65,7 @@ pair_encoding:
 
 models_parameters:
   transformer:
-    pretrained_model_path: models/mmarco-mMiniLMv2-L12-H384-v1
+    pretrained_model_path: models/rubert-base-cased
     max_epochs: 15
     hpo_trials: 1
     # Used directly when hpo_trials=1; otherwise these are initial values.
@@ -143,11 +145,16 @@ models_parameters:
     negative_threshold: 0.01
     positive_threshold: 0.99
 
+  stacking:
+    base_model: transformer
+    stacking_model: boosting
+
 artifacts:
-  transformer_dir: models/twin2attr/transformer
+  transformer_dir: models/twin2attr/stacking/transformer
   maxpooling_path: models/twin2attr/maxpooling.joblib
   fusion_path: models/twin2attr/fusion.pt
   boosting_dir: models/twin2attr/boosting
+  stacking_dir: models/twin2attr/stacking/boosting
   resolved_config_path: models/twin2attr/pipeline_config.yaml
   solution_path: solution.json
 
@@ -166,7 +173,7 @@ features:
     n_jobs: 4
     chunk_size: 5000
   ner:
-    enabled: true
+    enabled: false
     provider: word_ner
     model_dir: models/ner/rubert_tiny2_word_ner
     cluster_centers_path: models/ner/cluster_centers.pt
@@ -179,7 +186,7 @@ features:
     use_amp: true
     semantic_cleanup: true
   physical:
-    enabled: true
+    enabled: false
     source_column: name
     output_column: physical_attributes
     enriched_column: feature_attributes

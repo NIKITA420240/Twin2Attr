@@ -22,6 +22,7 @@ class TrainingArtifacts:
     maxpooling_path: Path | None = None
     fusion_path: Path | None = None
     boosting_dir: Path | None = None
+    stacking_dir: Path | None = None
     resolved_config_path: Path | None = None
     solution_path: Path | None = None
     metrics: tuple[tuple[str, float], ...] = ()
@@ -43,12 +44,17 @@ class TrainingArtifacts:
             self.transformer_dir is None or self.boosting_dir is None
         ):
             raise ValueError("cascade artifacts require boosting and transformer paths")
+        if self.predictor == "stacking" and (
+            self.transformer_dir is None or self.stacking_dir is None
+        ):
+            raise ValueError("stacking artifacts require transformer and stacking paths")
         if self.predictor not in {
             "transformer",
             "maxpooling",
             "fusion",
             "boosting",
             "cascade",
+            "stacking",
         }:
             raise ValueError(f"unsupported artifacts predictor: {self.predictor!r}")
 
@@ -82,12 +88,21 @@ def build_solution_manifest(
         solution["boosting_thread_count"] = (
             config.models_parameters.boosting.thread_count
         )
+    if artifacts.stacking_dir is not None:
+        solution["stacking_directory"] = map_path(artifacts.stacking_dir)
+        solution["stacking_thread_count"] = (
+            config.models_parameters.boosting.thread_count
+        )
     if artifacts.predictor == "cascade":
         cascade = config.models_parameters.cascade
         solution["fast_model"] = cascade.fast_model
         solution["main_model"] = cascade.main_model
         solution["negative_threshold"] = cascade.negative_threshold
         solution["positive_threshold"] = cascade.positive_threshold
+    if artifacts.predictor == "stacking":
+        stacking = config.models_parameters.stacking
+        solution["base_model"] = stacking.base_model
+        solution["stacking_model"] = stacking.stacking_model
     normalization = config.features.normalization
     normalization_solution: dict[str, object] = {
         "enabled": normalization.enabled,
