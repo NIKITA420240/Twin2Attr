@@ -80,6 +80,7 @@ class BaseDatasetSettings:
     items: Path
     matches: Path
     validation_fraction: float
+    stacking_train_fraction: float
     leakage_scope: str
     candidate_splits: int
     seed: int
@@ -90,6 +91,12 @@ class BaseDatasetSettings:
             self.leakage_scope,
             self.candidate_splits,
         )
+        if not 0.0 < self.stacking_train_fraction < 1.0:
+            raise ValueError("stacking_train_fraction must be between zero and one")
+        if self.validation_fraction + self.stacking_train_fraction >= 1.0:
+            raise ValueError(
+                "validation_fraction + stacking_train_fraction must be less than one"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,15 +149,23 @@ class TrainingSettings:
     data_model: str
 
     def __post_init__(self) -> None:
-        if self.model not in {"transformer", "maxpooling", "fusion", "boosting"}:
+        if self.model not in {
+            "transformer",
+            "maxpooling",
+            "fusion",
+            "boosting",
+            "stacking",
+        }:
             raise ValueError(
                 "training.model must be one of: transformer, maxpooling, fusion, "
-                "boosting"
+                "boosting, stacking"
             )
         if self.data_model not in {"base_dataset", "mix_dataset"}:
             raise ValueError(
                 "training.data_model must be one of: base_dataset, mix_dataset"
             )
+        if self.model == "stacking" and self.data_model != "base_dataset":
+            raise ValueError("stacking training currently requires base_dataset")
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +175,7 @@ class InferenceSettings:
     maxpooling_path: Path
     fusion_path: Path
     boosting_dir: Path
+    stacking_dir: Path
 
     def __post_init__(self) -> None:
         if self.model not in {
@@ -168,10 +184,11 @@ class InferenceSettings:
             "fusion",
             "boosting",
             "cascade",
+            "stacking",
         }:
             raise ValueError(
                 "inference.model must be one of: transformer, maxpooling, fusion, "
-                "boosting, cascade"
+                "boosting, cascade, stacking"
             )
 
 
@@ -375,12 +392,25 @@ class CascadeParameters:
 
 
 @dataclass(frozen=True, slots=True)
+class StackingParameters:
+    base_model: str
+    stacking_model: str
+
+    def __post_init__(self) -> None:
+        if self.base_model != "transformer":
+            raise ValueError("stacking.base_model currently must be 'transformer'")
+        if self.stacking_model != "boosting":
+            raise ValueError("stacking.stacking_model currently must be 'boosting'")
+
+
+@dataclass(frozen=True, slots=True)
 class ModelsParametersSettings:
     transformer: TransformerParameters
     maxpooling: MaxPoolingParameters
     fusion: FusionParameters
     boosting: BoostingParameters
     cascade: CascadeParameters
+    stacking: StackingParameters
 
 
 @dataclass(frozen=True, slots=True)
@@ -389,6 +419,7 @@ class ArtifactSettings:
     maxpooling_path: Path
     fusion_path: Path
     boosting_dir: Path
+    stacking_dir: Path
     resolved_config_path: Path
     solution_path: Path
 
@@ -659,6 +690,7 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     fusion = _section(models_parameters, "fusion")
     boosting = _section(models_parameters, "boosting")
     cascade = _section(models_parameters, "cascade")
+    stacking = _section(models_parameters, "stacking")
     artifacts = _section(resolved, "artifacts")
     features = _section(resolved, "features")
     normalization_value = features.get(
@@ -698,6 +730,9 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 ),
                 validation_fraction=float(
                     _required(base_dataset, "validation_fraction")
+                ),
+                stacking_train_fraction=float(
+                    _required(base_dataset, "stacking_train_fraction")
                 ),
                 leakage_scope=str(_required(base_dataset, "leakage_scope")),
                 candidate_splits=int(
@@ -751,6 +786,13 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     _required(artifacts, "boosting_dir"),
                 ),
                 "inference.boosting_dir",
+            ),
+            stacking_dir=_path(
+                inference.get(
+                    "stacking_dir",
+                    _required(artifacts, "stacking_dir"),
+                ),
+                "inference.stacking_dir",
             ),
         ),
         pair_encoding=PairEncodingSettings(
@@ -895,6 +937,10 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     _required(cascade, "positive_threshold")
                 ),
             ),
+            stacking=StackingParameters(
+                base_model=str(_required(stacking, "base_model")),
+                stacking_model=str(_required(stacking, "stacking_model")),
+            ),
         ),
         artifacts=ArtifactSettings(
             transformer_dir=_path(
@@ -912,6 +958,10 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             boosting_dir=_path(
                 _required(artifacts, "boosting_dir"),
                 "artifacts.boosting_dir",
+            ),
+            stacking_dir=_path(
+                _required(artifacts, "stacking_dir"),
+                "artifacts.stacking_dir",
             ),
             resolved_config_path=_path(
                 _required(artifacts, "resolved_config_path"),

@@ -91,6 +91,7 @@ def _selected_items(
 @dataclass(frozen=True, slots=True)
 class BaseDatasetModel:
     settings: BaseDatasetSettings
+    create_stacking_split: bool = False
 
     def _load_matches(self) -> tuple[pl.DataFrame, pl.DataFrame]:
         item_lookup = _item_lookup(
@@ -120,12 +121,42 @@ class BaseDatasetModel:
         validation = result.validation_matches.with_columns(
             pl.lit(1.0).cast(pl.Float32).alias("sample_weight")
         )
-        items = _selected_items(
-            self.settings.items,
-            result.train_matches,
+        train_matches = result.train_matches
+        stacking_matches: pl.DataFrame | None = None
+        if self.create_stacking_split:
+            relative_fraction = self.settings.stacking_train_fraction / (
+                1.0 - self.settings.validation_fraction
+            )
+            stacking_split = split_matches(
+                item_lookup,
+                train_matches,
+                _split_config(
+                    validation_fraction=relative_fraction,
+                    leakage_scope=self.settings.leakage_scope,
+                    seed=self.settings.seed + 1,
+                    candidate_splits=self.settings.candidate_splits,
+                ),
+            )
+            train_matches = stacking_split.train_matches
+            stacking_matches = stacking_split.validation_matches
+            logger.info(
+                "Built stacking split: base_train_rows={}, stacking_train_rows={}, "
+                "validation_rows={}",
+                train_matches.height,
+                stacking_matches.height,
+                validation.height,
+            )
+        selected_frames = [train_matches]
+        if stacking_matches is not None:
+            selected_frames.append(stacking_matches)
+        selected_frames.append(validation)
+        items = _selected_items(self.settings.items, *selected_frames)
+        return LoadedTrainingSplits(
+            items,
+            train_matches,
             validation,
+            stacking_matches,
         )
-        return LoadedTrainingSplits(items, result.train_matches, validation)
 
     def load_inspection_frames(self) -> InspectionFrames:
         _, matches = self._load_matches()

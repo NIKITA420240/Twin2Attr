@@ -35,7 +35,11 @@ class DataModelTests(unittest.TestCase):
         self.assertIsInstance(build_data_model(config), BaseDatasetModel)
         mixed_config = replace(
             config,
-            training=replace(config.training, data_model="mix_dataset"),
+            training=replace(
+                config.training,
+                model="boosting",
+                data_model="mix_dataset",
+            ),
         )
         self.assertIsInstance(build_data_model(mixed_config), MixedDatasetModel)
 

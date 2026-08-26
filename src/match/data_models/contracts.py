@@ -15,6 +15,7 @@ class LoadedTrainingSplits:
     items: pl.DataFrame
     train_matches: pl.DataFrame
     validation_matches: pl.DataFrame
+    stacking_matches: pl.DataFrame | None = None
 
 
 @dataclass(frozen=True, slots=True)

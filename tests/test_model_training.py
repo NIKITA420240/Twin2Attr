@@ -9,6 +9,7 @@ from match.models.artifacts import TrainingArtifacts, save_solution_manifest
 from match.models.factory import build_trainer
 from match.models.fusion.training import FusionTrainer
 from match.models.maxpooling.training import MaxPoolingTrainer
+from match.models.stacking.training import StackingTrainer
 from match.models.transformer.training import TransformerTrainer
 from match.paths import PROJECT_ROOT
 
@@ -20,7 +21,13 @@ class ModelTrainingStrategyTests(unittest.TestCase):
         )
 
     def test_factory_selects_one_training_strategy(self) -> None:
-        transformer = build_trainer(self.config)
+        stacking = build_trainer(self.config)
+        transformer = build_trainer(
+            replace(
+                self.config,
+                training=replace(self.config.training, model="transformer"),
+            )
+        )
         maxpooling = build_trainer(
             replace(
                 self.config,
@@ -34,6 +41,7 @@ class ModelTrainingStrategyTests(unittest.TestCase):
             )
         )
 
+        self.assertIsInstance(stacking, StackingTrainer)
         self.assertIsInstance(transformer, TransformerTrainer)
         self.assertIsInstance(maxpooling, MaxPoolingTrainer)
         self.assertIsInstance(fusion, FusionTrainer)

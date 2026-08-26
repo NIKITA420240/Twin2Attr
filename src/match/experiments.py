@@ -74,6 +74,7 @@ def configure_experiment(
             maxpooling_path=model_root / "maxpooling.joblib",
             fusion_path=model_root / "fusion.pt",
             boosting_dir=model_root / "boosting",
+            stacking_dir=model_root / "stacking",
             resolved_config_path=model_root / "pipeline_config.yaml",
             solution_path=experiment_dir / "solution.json",
         ),
@@ -173,6 +174,7 @@ def save_experiment_record(
     )
     split_settings = _selected_split_settings(config)
     split_hash = validation_pairs_hash(splits.validation_matches)
+    stacking_matches = getattr(splits, "stacking_matches", None)
     metrics = dict(artifacts.metrics)
     metric_name = f"{artifacts.predictor}.validation_macro_pr_auc"
     macro_pr_auc = metrics.get(metric_name)
@@ -225,9 +227,17 @@ def save_experiment_record(
         "split": {
             "seed": split_settings.seed,
             "validation_fraction": split_settings.validation_fraction,
+            "stacking_train_fraction": getattr(
+                split_settings,
+                "stacking_train_fraction",
+                None,
+            ),
             "leakage_scope": split_settings.leakage_scope,
             "candidate_splits": split_settings.candidate_splits,
             "train_rows": splits.train_matches.height,
+            "stacking_train_rows": (
+                0 if stacking_matches is None else stacking_matches.height
+            ),
             "validation_rows": splits.validation_matches.height,
             "validation_pairs_hash": split_hash,
         },

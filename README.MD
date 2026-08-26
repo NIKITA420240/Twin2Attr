@@ -40,7 +40,8 @@ uv run python -m build_submission
 обучения `fusion` можно собрать более компактное решение только с Transformer.
 Пути готовых весов задаются отдельно через `inference.transformer_dir`,
 `inference.maxpooling_path`, `inference.fusion_path` и
-`inference.boosting_dir`, поэтому сборка не зависит от директорий, куда
+`inference.boosting_dir` и `inference.stacking_dir`, поэтому сборка не зависит
+от директорий, куда
 training workflow сохраняет новые артефакты.
 
 Путь результата задаётся параметром `submission.output_path` и по умолчанию
@@ -53,6 +54,7 @@ training workflow сохраняет новые артефакты.
 - `inference.model=fusion` — Transformer, MaxPooling и fusion head;
 - `inference.model=boosting` — CatBoost и сохранённая схема его фич;
 - `inference.model=cascade` — CatBoost и Transformer;
+- `inference.model=stacking` — Transformer и CatBoost второго уровня;
 - при включённой нормализации — оба parquet-файла правил;
 - при включённом NER — NER-модель и cluster centers;
 - physical provider не требует отдельных файлов весов.
@@ -60,7 +62,8 @@ training workflow сохраняет новые артефакты.
 Polars wheels из `build_submission/vendor_wheels` также автоматически
 добавляются в архив. Если Polars отсутствует в evaluator image, `run.py`
 устанавливает эти wheels во временную директорию до импорта inference-кода.
-CatBoost wheel добавляется и устанавливается только для `boosting` и `cascade`.
+CatBoost wheel добавляется и устанавливается для `boosting`, `cascade` и
+`stacking`.
 При включённой нормализации или physical provider сборщик аналогично добавляет
 полный runtime предобработки: `pymorphy3`, русские словари, `joblib`, `loguru`,
 `pint` и их офлайн-зависимости.
@@ -148,6 +151,12 @@ uv run python run.py train \
   data_model_description.base_dataset.validation_fraction=0.2
 ```
 
+При `training.model=stacking` human-выборка делится на три непересекающиеся
+части: Transformer train, CatBoost stacking train и validation. Доли последних
+двух задаются через `stacking_train_fraction` и `validation_fraction`. CatBoost
+получает 85 структурных признаков базового бустинга и один фиксированный
+`transformer_logit_margin`.
+
 `leakage_scope=pair` не разносит одинаковые и обратные пары по разным частям.
 `leakage_scope=item` не допускает ни одного общего товара, но из-за связанных
 компонент может менее точно сохранять требуемое распределение.
@@ -164,8 +173,9 @@ uv run python run.py train training.data_model=mix_dataset
 в `data_model_description.mix_dataset.sources`.
 
 Итоговая модель выбирается одним параметром `training.model`. Значения
-`transformer`, `maxpooling` и `boosting` обучают соответствующую модель, а `fusion`
-автоматически обучает Transformer, MaxPooling и объединяющий классификатор.
+`transformer`, `maxpooling` и `boosting` обучают соответствующую модель, `fusion`
+автоматически обучает Transformer, MaxPooling и объединяющий классификатор, а
+`stacking` — Transformer и CatBoost второго уровня.
 `cascade` доступен только в `inference.model`: он использует уже независимо
 обученные CatBoost и Transformer и сам не обучается.
 Нормализация является первым этапом feature pipeline и управляется флагом
@@ -179,7 +189,8 @@ uv run python run.py train \
 Гиперпараметры лежат в `models_parameters.transformer`,
 `models_parameters.maxpooling`, `models_parameters.fusion` и
 `models_parameters.boosting`. Состав и пороги каскада задаются в
-`models_parameters.cascade`. Выбранный trainer
+`models_parameters.cascade`, а модели двух уровней — в
+`models_parameters.stacking`. Выбранный trainer
 возвращает единый `TrainingArtifacts`. Финальный predict запускается отдельно
 через `run.py predict`; совместимый `solution.json` создаётся после успешного
 обучения автоматически. Токенизация остаётся динамической внутри батчей.

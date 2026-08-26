@@ -26,6 +26,7 @@ PYMORPHY3_VERSION = "2.0.6"
 JOBLIB_VERSION = "1.5.3"
 LOGURU_VERSION = "0.7.3"
 PINT_VERSION = "0.25.3"
+ORJSON_VERSION = "3.11.9"
 
 
 def ensure_polars_available() -> None:
@@ -95,17 +96,21 @@ def ensure_preprocessing_runtime_available(
         solution.get("normalization"),
     )
     physical = feature_values.get("physical")
+    ner = feature_values.get("ner")
     needs_preprocessing_runtime = (
         isinstance(normalization, dict)
         and bool(normalization.get("enabled", False))
     ) or (
         isinstance(physical, dict)
         and bool(physical.get("enabled", False))
+    ) or (
+        isinstance(ner, dict)
+        and bool(ner.get("enabled", False))
     )
     if not needs_preprocessing_runtime:
         return
 
-    runtime_modules = ("loguru", "joblib", "pint", "pymorphy3")
+    runtime_modules = ("loguru", "joblib", "pint", "pymorphy3", "orjson")
     for module_name in runtime_modules:
         try:
             importlib.import_module(module_name)
@@ -131,6 +136,7 @@ def ensure_preprocessing_runtime_available(
         "typing_extensions-*.whl",
         "colorama-*.whl",
         "win32_setctime-*.whl",
+        "orjson-*.whl",
     )
     missing = [
         pattern for pattern in required_patterns if not any(wheels_dir.glob(pattern))
@@ -168,6 +174,7 @@ def ensure_preprocessing_runtime_available(
             f"joblib=={JOBLIB_VERSION}",
             f"loguru=={LOGURU_VERSION}",
             f"pint=={PINT_VERSION}",
+            f"orjson=={ORJSON_VERSION}",
         ],
         check=True,
     )
@@ -189,7 +196,7 @@ def ensure_catboost_available(solution_path: str | Path | None = None) -> None:
     if not path.is_file():
         return
     solution = json.loads(path.read_text(encoding="utf-8"))
-    if solution.get("predictor") not in {"boosting", "cascade"}:
+    if solution.get("predictor") not in {"boosting", "cascade", "stacking"}:
         return
     try:
         importlib.import_module("catboost")

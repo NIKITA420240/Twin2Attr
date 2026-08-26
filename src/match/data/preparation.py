@@ -21,6 +21,8 @@ class TrainingData:
     validation_matches: pl.DataFrame
     train_pairs: list[PreparedPair]
     validation_pairs: list[PreparedPair]
+    stacking_matches: pl.DataFrame | None = None
+    stacking_pairs: list[PreparedPair] | None = None
 
 
 def prepare_pair_rows(
@@ -49,9 +51,12 @@ def prepare_training_data(
     validation_matches: pl.DataFrame,
     *,
     attributes_column: str,
+    stacking_matches: pl.DataFrame | None = None,
 ) -> TrainingData:
-    """Create aligned train and validation pairs without reading any files."""
+    """Create aligned base-train, stacking-train and validation pairs."""
     train_size = train_matches.height
+    stacking_size = 0 if stacking_matches is None else stacking_matches.height
+
     def selected(frame: pl.DataFrame) -> pl.DataFrame:
         if "sample_weight" not in frame.columns:
             frame = frame.with_columns(
@@ -59,24 +64,29 @@ def prepare_training_data(
             )
         return frame.select("id1", "id2", "target", "sample_weight")
 
-    combined_matches = pl.concat(
-        [
-            selected(train_matches),
-            selected(validation_matches),
-        ],
-        how="vertical_relaxed",
-    )
+    frames = [selected(train_matches)]
+    if stacking_matches is not None:
+        frames.append(selected(stacking_matches))
+    frames.append(selected(validation_matches))
+    combined_matches = pl.concat(frames, how="vertical_relaxed")
     pairs = prepare_pair_rows(
         items,
         combined_matches,
         attributes_column,
-        split_name="training and validation",
+        split_name="base training, stacking training and validation",
     )
+    validation_offset = train_size + stacking_size
     return TrainingData(
         items=items,
         attributes_column=attributes_column,
         train_matches=train_matches,
         validation_matches=validation_matches,
         train_pairs=pairs[:train_size],
-        validation_pairs=pairs[train_size:],
+        validation_pairs=pairs[validation_offset:],
+        stacking_matches=stacking_matches,
+        stacking_pairs=(
+            None
+            if stacking_matches is None
+            else pairs[train_size:validation_offset]
+        ),
     )

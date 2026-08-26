@@ -4,6 +4,7 @@
 /models/*
 !/models/ner/
 !/models/ner/**
+/weights/*-maxlen*/
 /.cache/
 /.hydra/
 /outputs/

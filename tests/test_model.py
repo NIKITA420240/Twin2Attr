@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import torch
@@ -18,6 +19,7 @@ from match.models.transformer import (
     compute_pr_auc,
     train_sequence_classifier,
 )
+from match.models.transformer.predictor import predict_logit_margins
 
 
 class FakeTokenizer:
@@ -181,6 +183,16 @@ class SequenceClassifierModelTests(unittest.TestCase):
         metrics = compute_pr_auc((logits, labels))
 
         self.assertEqual(metrics["pr_auc"], 1.0)
+
+    def test_stacking_logit_margin_is_positive_minus_negative_logit(self) -> None:
+        logits = np.array([[3.0, 1.0], [-1.0, 2.5]], dtype=np.float32)
+        with patch(
+            "match.models.transformer.predictor.predict_pair_logits",
+            return_value=logits,
+        ):
+            margins = predict_logit_margins(object(), object(), [object(), object()])
+
+        np.testing.assert_array_equal(margins, np.array([-2.0, 3.5]))
 
     def test_trains_and_saves_tiny_local_sequence_classifier(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

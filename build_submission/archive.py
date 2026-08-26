@@ -32,6 +32,7 @@ _PREPROCESSING_WHEEL_PATTERNS = (
     "typing_extensions-*.whl",
     "colorama-*.whl",
     "win32_setctime-*.whl",
+    "orjson-*.whl",
 )
 _SKIPPED_DIRECTORY_NAMES = {".cache", "__pycache__"}
 _STORED_SUFFIXES = {
@@ -88,6 +89,12 @@ def _selected_artifacts(config: AppConfig) -> TrainingArtifacts:
             transformer_dir=config.inference.transformer_dir,
             boosting_dir=config.inference.boosting_dir,
         )
+    if predictor == "stacking":
+        return TrainingArtifacts(
+            predictor=predictor,
+            transformer_dir=config.inference.transformer_dir,
+            stacking_dir=config.inference.stacking_dir,
+        )
     raise ValueError(f"unsupported submission predictor: {predictor!r}")
 
 
@@ -112,6 +119,7 @@ def _required_resources(
         artifacts.maxpooling_path,
         artifacts.fusion_path,
         artifacts.boosting_dir,
+        artifacts.stacking_dir,
     ):
         if path is not None:
             resources.append(path)
@@ -336,9 +344,10 @@ def build_submission_archive(
     inputs = _collect_inputs(
         resources,
         project_root=root,
-        include_catboost=artifacts.predictor in {"boosting", "cascade"},
+        include_catboost=artifacts.predictor in {"boosting", "cascade", "stacking"},
         include_preprocessing_runtime=(
             config.features.normalization.enabled
+            or config.features.ner.enabled
             or config.features.physical.enabled
         ),
     )

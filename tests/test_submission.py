@@ -149,6 +149,44 @@ class PredictorLoadingTests(unittest.TestCase):
             positive_threshold=0.98,
         )
 
+    def test_composes_stacking_from_transformer_and_catboost(self) -> None:
+        transformer = object()
+        stacking = object()
+        with (
+            patch(
+                "match.models.transformer.predictor.TransformerPredictor.load",
+                return_value=transformer,
+            ) as load_transformer,
+            patch(
+                "match.models.stacking.predictor.StackingPredictor.load",
+                return_value=stacking,
+            ) as load_stacking,
+        ):
+            result = build_predictor(
+                {
+                    "predictor": "stacking",
+                    "base_model": "transformer",
+                    "stacking_model": "boosting",
+                    "model_directory": "models/transformer",
+                    "stacking_directory": "models/stacking",
+                    "batch_size": 32,
+                    "stacking_thread_count": 4,
+                },
+                self.root,
+            )
+
+        self.assertIs(result, stacking)
+        load_transformer.assert_called_once_with(
+            self.root / "models" / "transformer",
+            batch_size=32,
+            device=None,
+        )
+        load_stacking.assert_called_once_with(
+            self.root / "models" / "stacking",
+            transformer=transformer,
+            thread_count=4,
+        )
+
     def test_rejects_unknown_predictor(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unsupported predictor"):
             build_predictor({"predictor": "unknown"}, self.root)

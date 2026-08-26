@@ -19,9 +19,9 @@ class AppConfigTests(unittest.TestCase):
         self.assertIsInstance(base.items, Path)
         self.assertTrue(base.items.is_absolute())
         self.assertEqual(base.seed, self.config.runtime.seed)
-        self.assertEqual(self.config.training.model, "transformer")
+        self.assertEqual(self.config.training.model, "stacking")
         self.assertEqual(self.config.training.data_model, "base_dataset")
-        self.assertEqual(self.config.inference.model, "transformer")
+        self.assertEqual(self.config.inference.model, "stacking")
         self.assertTrue(self.config.features.normalization.enabled)
         self.assertEqual(
             self.config.features.execution_order,
@@ -33,19 +33,22 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             self.config.inference.transformer_dir,
-            PROJECT_ROOT / "weights" / "cross-encoder-russian-msmarco",
+            PROJECT_ROOT / "models" / "twin2attr" / "stacking" / "transformer",
+        )
+        self.assertEqual(
+            self.config.inference.stacking_dir,
+            PROJECT_ROOT / "models" / "twin2attr" / "stacking" / "boosting",
         )
         self.assertEqual(
             self.config.models_parameters.transformer.pretrained_model_path,
-            "models/mmarco-mMiniLMv2-L12-H384-v1",
+            "models/rubert-base-cased",
         )
         self.assertTrue(self.config.pair_encoding.use_field_tokens)
-        self.assertTrue(
+        self.assertFalse(
             self.config.models_parameters.transformer.train_new_token_embeddings_only
         )
-        self.assertEqual(
-            self.config.models_parameters.transformer.train_last_n_layers,
-            3,
+        self.assertIsNone(
+            self.config.models_parameters.transformer.train_last_n_layers
         )
         self.assertEqual(
             self.config.models_parameters.transformer.lr_scheduler_type,
@@ -55,7 +58,16 @@ class AppConfigTests(unittest.TestCase):
             self.config.pair_encoding.max_attribute_value_tokens,
             int,
         )
-        self.assertIsNone(self.config.pair_encoding.max_length)
+        self.assertEqual(self.config.pair_encoding.max_length, 400)
+        self.assertEqual(base.stacking_train_fraction, 0.15)
+        self.assertEqual(
+            self.config.models_parameters.stacking.base_model,
+            "transformer",
+        )
+        self.assertEqual(
+            self.config.models_parameters.stacking.stacking_model,
+            "boosting",
+        )
 
     def test_applies_overrides_before_creating_typed_config(self) -> None:
         config = load_app_config_file(
@@ -224,6 +236,16 @@ class AppConfigTests(unittest.TestCase):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
                 ["inference.model=unknown"],
+            )
+
+    def test_rejects_overlapping_stacking_and_validation_fractions(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be less than one"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                [
+                    "data_model_description.base_dataset.validation_fraction=0.6",
+                    "data_model_description.base_dataset.stacking_train_fraction=0.4",
+                ],
             )
 
     def test_saved_config_can_be_loaded_again(self) -> None:
