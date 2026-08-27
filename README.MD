@@ -316,7 +316,10 @@ uv run python run.py train \
 Параметры финального Transformer-инференса вынесены в секцию `inference`:
 `inference.transformer.batch_size` задаёт размер батча, а
 `inference.transformer.dtype` — точность вычислений (`float32`, `float16` или
-`bfloat16`). Для H100 рекомендуется `bfloat16`.
+`bfloat16`). Для H100 рекомендуется `bfloat16`. Параметры `num_workers`,
+`prefetch_factor`, `pin_memory` и `non_blocking_transfer` управляют параллельной
+подготовкой и передачей батчей. `length_bucketing` группирует пары близкой длины
+и восстанавливает исходный порядок предсказаний после инференса.
 
 Пути моделей задаются рядом с их параметрами через `artifact_dir` или
 `artifact_path`. `training.resolved_config_path` задаёт место для полного

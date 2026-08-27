@@ -59,6 +59,15 @@ class StackingTrainer:
             transformer_artifacts.transformer_dir,
             batch_size=self.config.inference.transformer.batch_size,
             dtype=self.config.inference.transformer.dtype,
+            num_workers=self.config.inference.transformer.num_workers,
+            prefetch_factor=self.config.inference.transformer.prefetch_factor,
+            pin_memory=self.config.inference.transformer.pin_memory,
+            non_blocking_transfer=(
+                self.config.inference.transformer.non_blocking_transfer
+            ),
+            length_bucketing=(
+                self.config.inference.transformer.length_bucketing
+            ),
             device=self.config.runtime.device,
         )
         stacking_batch = PredictionBatch(

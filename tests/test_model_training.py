@@ -84,6 +84,11 @@ class ModelTrainingStrategyTests(unittest.TestCase):
         self.assertEqual(solution["model_directory"], "models/transformer")
         self.assertEqual(solution["batch_size"], 512)
         self.assertEqual(solution["dtype"], "bfloat16")
+        self.assertEqual(solution["num_workers"], 8)
+        self.assertEqual(solution["prefetch_factor"], 2)
+        self.assertTrue(solution["pin_memory"])
+        self.assertTrue(solution["non_blocking_transfer"])
+        self.assertTrue(solution["length_bucketing"])
         self.assertEqual(
             solution["maxpooling_path"],
             "models/maxpooling.joblib",

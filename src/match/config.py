@@ -190,10 +190,23 @@ class TrainingSettings:
 class TransformerInferenceSettings:
     batch_size: int
     dtype: str
+    num_workers: int = 0
+    prefetch_factor: int = 2
+    pin_memory: bool = True
+    non_blocking_transfer: bool = True
+    length_bucketing: bool = True
 
     def __post_init__(self) -> None:
         if self.batch_size < 1:
             raise ValueError("inference.transformer.batch_size must be positive")
+        if self.num_workers < 0:
+            raise ValueError(
+                "inference.transformer.num_workers must not be negative"
+            )
+        if self.prefetch_factor < 1:
+            raise ValueError(
+                "inference.transformer.prefetch_factor must be positive"
+            )
         if self.dtype not in {"float32", "float16", "bfloat16"}:
             raise ValueError(
                 "inference.transformer.dtype must be one of: float32, float16, "
@@ -971,6 +984,22 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             transformer=TransformerInferenceSettings(
                 batch_size=int(_required(inference_transformer, "batch_size")),
                 dtype=str(_required(inference_transformer, "dtype")).lower(),
+                num_workers=int(inference_transformer.get("num_workers", 0)),
+                prefetch_factor=int(
+                    inference_transformer.get("prefetch_factor", 2)
+                ),
+                pin_memory=_bool(
+                    inference_transformer.get("pin_memory", True),
+                    "inference.transformer.pin_memory",
+                ),
+                non_blocking_transfer=_bool(
+                    inference_transformer.get("non_blocking_transfer", True),
+                    "inference.transformer.non_blocking_transfer",
+                ),
+                length_bucketing=_bool(
+                    inference_transformer.get("length_bucketing", True),
+                    "inference.transformer.length_bucketing",
+                ),
             ),
         ),
         analysis=AnalysisSettings(

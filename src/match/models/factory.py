@@ -74,6 +74,13 @@ def build_predictor(
             ),
             batch_size=int(solution.get("batch_size", 64)),
             dtype=str(solution.get("dtype", "float32")),
+            num_workers=int(solution.get("num_workers", 0)),
+            prefetch_factor=int(solution.get("prefetch_factor", 2)),
+            pin_memory=bool(solution.get("pin_memory", True)),
+            non_blocking_transfer=bool(
+                solution.get("non_blocking_transfer", True)
+            ),
+            length_bucketing=bool(solution.get("length_bucketing", False)),
             device=device,
         )
         if predictor_name == "transformer":
@@ -150,6 +157,13 @@ def build_predictor(
             ),
             batch_size=int(solution.get("batch_size", 64)),
             dtype=str(solution.get("dtype", "float32")),
+            num_workers=int(solution.get("num_workers", 0)),
+            prefetch_factor=int(solution.get("prefetch_factor", 2)),
+            pin_memory=bool(solution.get("pin_memory", True)),
+            non_blocking_transfer=bool(
+                solution.get("non_blocking_transfer", True)
+            ),
+            length_bucketing=bool(solution.get("length_bucketing", False)),
             device=device,
         )
         return CascadePredictor(
@@ -174,6 +188,13 @@ def build_predictor(
             ),
             batch_size=int(solution.get("batch_size", 64)),
             dtype=str(solution.get("dtype", "float32")),
+            num_workers=int(solution.get("num_workers", 0)),
+            prefetch_factor=int(solution.get("prefetch_factor", 2)),
+            pin_memory=bool(solution.get("pin_memory", True)),
+            non_blocking_transfer=bool(
+                solution.get("non_blocking_transfer", True)
+            ),
+            length_bucketing=bool(solution.get("length_bucketing", False)),
             device=device,
         )
         return StackingPredictor.load(

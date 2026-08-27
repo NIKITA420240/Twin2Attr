@@ -43,6 +43,13 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(self.config.inference.transformer.batch_size, 512)
         self.assertEqual(self.config.inference.transformer.dtype, "bfloat16")
+        self.assertEqual(self.config.inference.transformer.num_workers, 8)
+        self.assertEqual(self.config.inference.transformer.prefetch_factor, 2)
+        self.assertTrue(self.config.inference.transformer.pin_memory)
+        self.assertTrue(
+            self.config.inference.transformer.non_blocking_transfer
+        )
+        self.assertTrue(self.config.inference.transformer.length_bucketing)
         self.assertFalse(hasattr(self.config, "artifacts"))
         self.assertEqual(
             self.config.analysis.analysis_model,
@@ -240,6 +247,13 @@ class AppConfigTests(unittest.TestCase):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
                 ["inference.transformer.dtype=int8"],
+            )
+
+    def test_rejects_negative_transformer_inference_workers(self) -> None:
+        with self.assertRaisesRegex(ValueError, "num_workers"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                ["inference.transformer.num_workers=-1"],
             )
 
     def test_rejects_incomplete_feature_execution_order(self) -> None:

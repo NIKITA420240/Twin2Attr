@@ -10,7 +10,7 @@ from typing import Sequence
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from transformers import (
     AutoModelForSequenceClassification,
     AutoTokenizer,
@@ -24,7 +24,7 @@ from ...pair_encoding import (
     PreparedPairDataset,
     infer_pair_max_length,
 )
-from ...prepare_data import PreparedPair
+from ...prepare_data import PreparedCard, PreparedPair
 from ..contracts import PredictionBatch
 from .head import PoolingSequenceClassifier, PoolingSequenceClassifierConfig
 
@@ -129,6 +129,105 @@ def _inference_settings(
     return resolved_length, use_field_tokens, max_attribute_value_tokens
 
 
+def _estimated_card_length(
+    card: PreparedCard,
+    max_attribute_value_tokens: int | None,
+) -> int:
+    """Estimate token demand cheaply, without running the tokenizer twice."""
+    value_character_limit = (
+        None
+        if max_attribute_value_tokens is None
+        else max_attribute_value_tokens * 4
+    )
+    demand = len(card.name) + len(card.category)
+    for key, value in card.attributes:
+        value_length = len(value)
+        if value_character_limit is not None:
+            value_length = min(value_length, value_character_limit)
+        demand += len(key) + value_length
+    return demand
+
+
+def _length_bucket_order(
+    pairs: Sequence[PreparedPair],
+    max_attribute_value_tokens: int | None,
+) -> np.ndarray:
+    """Return sorted-position to original-position indices for bucketing."""
+    estimates = np.fromiter(
+        (
+            _estimated_card_length(pair.left, max_attribute_value_tokens)
+            + _estimated_card_length(pair.right, max_attribute_value_tokens)
+            for pair in pairs
+        ),
+        dtype=np.int64,
+        count=len(pairs),
+    )
+    return np.argsort(estimates, kind="stable")
+
+
+class _OrderedPreparedPairDataset(Dataset):
+    def __init__(
+        self,
+        pairs: Sequence[PreparedPair],
+        order: np.ndarray,
+    ) -> None:
+        self._pairs = pairs
+        self._order = order
+
+    def __len__(self) -> int:
+        return len(self._order)
+
+    def __getitem__(self, index: int) -> PreparedPair:
+        return self._pairs[int(self._order[index])]
+
+
+def _inference_dataset(
+    pairs: Sequence[PreparedPair],
+    *,
+    length_bucketing: bool,
+    max_attribute_value_tokens: int | None,
+) -> tuple[Dataset, np.ndarray | None]:
+    if not length_bucketing or len(pairs) < 2:
+        return PreparedPairDataset(pairs), None
+    order = _length_bucket_order(pairs, max_attribute_value_tokens)
+    return _OrderedPreparedPairDataset(pairs, order), order
+
+
+def _inference_loader(
+    dataset: Dataset,
+    collator: PairEncodingCollator,
+    *,
+    batch_size: int,
+    device: torch.device,
+    num_workers: int,
+    prefetch_factor: int,
+    pin_memory: bool,
+) -> tuple[DataLoader, bool]:
+    use_pinned_memory = pin_memory and device.type == "cuda"
+    kwargs = {
+        "dataset": dataset,
+        "batch_size": batch_size,
+        "shuffle": False,
+        "collate_fn": collator,
+        "num_workers": num_workers,
+        "pin_memory": use_pinned_memory,
+    }
+    if num_workers > 0:
+        kwargs["prefetch_factor"] = prefetch_factor
+    return DataLoader(**kwargs), use_pinned_memory
+
+
+def _restore_original_order(
+    values: np.ndarray,
+    order: np.ndarray | None,
+) -> np.ndarray:
+    if order is None:
+        return values
+    restored = np.empty_like(values)
+    restored[order] = values
+    return restored
+
+
 def predict_pair_logits(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
@@ -137,10 +236,19 @@ def predict_pair_logits(
     batch_size: int = 64,
     max_length: int | None = None,
     dtype: str = "float32",
+    num_workers: int = 0,
+    prefetch_factor: int = 2,
+    pin_memory: bool = True,
+    non_blocking_transfer: bool = True,
+    length_bucketing: bool = False,
 ) -> np.ndarray:
     """Return the two classifier logits for every prepared pair."""
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
+    if num_workers < 0:
+        raise ValueError("num_workers must not be negative")
+    if prefetch_factor < 1:
+        raise ValueError("prefetch_factor must be positive")
     if not pairs:
         return np.empty((0, 2), dtype=np.float32)
     max_length, use_field_tokens, value_limit = _inference_settings(
@@ -157,20 +265,36 @@ def predict_pair_logits(
         include_labels=False,
     )
     device = next(model.parameters()).device
+    dataset, order = _inference_dataset(
+        pairs,
+        length_bucketing=length_bucketing,
+        max_attribute_value_tokens=value_limit,
+    )
     current_batch_size = batch_size
     while True:
         try:
-            loader = DataLoader(
-                PreparedPairDataset(pairs),
+            loader, use_pinned_memory = _inference_loader(
+                dataset,
+                collator,
                 batch_size=current_batch_size,
-                shuffle=False,
-                collate_fn=collator,
+                device=device,
+                num_workers=num_workers,
+                prefetch_factor=prefetch_factor,
+                pin_memory=pin_memory,
             )
             chunks: list[np.ndarray] = []
             model.eval()
             with torch.inference_mode():
                 for batch in loader:
-                    inputs = {key: value.to(device) for key, value in batch.items()}
+                    inputs = {
+                        key: value.to(
+                            device,
+                            non_blocking=(
+                                non_blocking_transfer and use_pinned_memory
+                            ),
+                        )
+                        for key, value in batch.items()
+                    }
                     with _autocast_context(device, dtype):
                         logits = model(**inputs).logits
                     if logits.ndim != 2 or logits.shape[1] != 2:
@@ -178,7 +302,8 @@ def predict_pair_logits(
                             "stacking requires a binary Transformer classifier"
                         )
                     chunks.append(logits.float().cpu().numpy())
-            return np.concatenate(chunks).astype(np.float32, copy=False)
+            logits = np.concatenate(chunks).astype(np.float32, copy=False)
+            return _restore_original_order(logits, order)
         except torch.cuda.OutOfMemoryError:
             if current_batch_size == 1:
                 raise
@@ -194,6 +319,11 @@ def predict_match_probabilities(
     batch_size: int = 64,
     max_length: int | None = None,
     dtype: str = "float32",
+    num_workers: int = 0,
+    prefetch_factor: int = 2,
+    pin_memory: bool = True,
+    non_blocking_transfer: bool = True,
+    length_bucketing: bool = False,
 ) -> np.ndarray:
     logits = predict_pair_logits(
         model,
@@ -202,6 +332,11 @@ def predict_match_probabilities(
         batch_size=batch_size,
         max_length=max_length,
         dtype=dtype,
+        num_workers=num_workers,
+        prefetch_factor=prefetch_factor,
+        pin_memory=pin_memory,
+        non_blocking_transfer=non_blocking_transfer,
+        length_bucketing=length_bucketing,
     )
     if not len(logits):
         return np.empty(0, dtype=np.float32)
@@ -221,6 +356,11 @@ def predict_logit_margins(
     batch_size: int = 64,
     max_length: int | None = None,
     dtype: str = "float32",
+    num_workers: int = 0,
+    prefetch_factor: int = 2,
+    pin_memory: bool = True,
+    non_blocking_transfer: bool = True,
+    length_bucketing: bool = False,
 ) -> np.ndarray:
     """Return ``match_logit - different_logit`` for stacking."""
     logits = predict_pair_logits(
@@ -230,6 +370,11 @@ def predict_logit_margins(
         batch_size=batch_size,
         max_length=max_length,
         dtype=dtype,
+        num_workers=num_workers,
+        prefetch_factor=prefetch_factor,
+        pin_memory=pin_memory,
+        non_blocking_transfer=non_blocking_transfer,
+        length_bucketing=length_bucketing,
     )
     if not len(logits):
         return np.empty(0, dtype=np.float32)
@@ -244,9 +389,18 @@ def encode_pair_cls(
     batch_size: int = 64,
     max_length: int | None = None,
     dtype: str = "float32",
+    num_workers: int = 0,
+    prefetch_factor: int = 2,
+    pin_memory: bool = True,
+    non_blocking_transfer: bool = True,
+    length_bucketing: bool = False,
 ) -> np.ndarray:
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
+    if num_workers < 0:
+        raise ValueError("num_workers must not be negative")
+    if prefetch_factor < 1:
+        raise ValueError("prefetch_factor must be positive")
     if not pairs:
         return np.empty((0, model.config.hidden_size), dtype=np.float32)
     max_length, use_field_tokens, value_limit = _inference_settings(
@@ -263,27 +417,44 @@ def encode_pair_cls(
         include_labels=False,
     )
     device = next(model.parameters()).device
+    dataset, order = _inference_dataset(
+        pairs,
+        length_bucketing=length_bucketing,
+        max_attribute_value_tokens=value_limit,
+    )
     current_batch_size = batch_size
     while True:
         try:
-            loader = DataLoader(
-                PreparedPairDataset(pairs),
+            loader, use_pinned_memory = _inference_loader(
+                dataset,
+                collator,
                 batch_size=current_batch_size,
-                shuffle=False,
-                collate_fn=collator,
+                device=device,
+                num_workers=num_workers,
+                prefetch_factor=prefetch_factor,
+                pin_memory=pin_memory,
             )
             chunks: list[np.ndarray] = []
             model.eval()
             with torch.inference_mode():
                 for batch in loader:
-                    inputs = {key: value.to(device) for key, value in batch.items()}
+                    inputs = {
+                        key: value.to(
+                            device,
+                            non_blocking=(
+                                non_blocking_transfer and use_pinned_memory
+                            ),
+                        )
+                        for key, value in batch.items()
+                    }
                     with _autocast_context(device, dtype):
                         hidden_state = model.base_model(
                             **inputs,
                             return_dict=True,
                         ).last_hidden_state
                     chunks.append(hidden_state[:, 0, :].float().cpu().numpy())
-            return np.concatenate(chunks).astype(np.float32, copy=False)
+            embeddings = np.concatenate(chunks).astype(np.float32, copy=False)
+            return _restore_original_order(embeddings, order)
         except torch.cuda.OutOfMemoryError:
             if current_batch_size == 1:
                 raise
@@ -297,10 +468,19 @@ class TransformerPredictor:
     model: PreTrainedModel
     batch_size: int = 64
     dtype: str = "float32"
+    num_workers: int = 0
+    prefetch_factor: int = 2
+    pin_memory: bool = True
+    non_blocking_transfer: bool = True
+    length_bucketing: bool = False
 
     def __post_init__(self) -> None:
         if self.batch_size < 1:
             raise ValueError("batch_size must be positive")
+        if self.num_workers < 0:
+            raise ValueError("num_workers must not be negative")
+        if self.prefetch_factor < 1:
+            raise ValueError("prefetch_factor must be positive")
         self.dtype = _normalize_inference_dtype(self.dtype)
 
     @classmethod
@@ -310,6 +490,11 @@ class TransformerPredictor:
         *,
         batch_size: int = 64,
         dtype: str = "float32",
+        num_workers: int = 0,
+        prefetch_factor: int = 2,
+        pin_memory: bool = True,
+        non_blocking_transfer: bool = True,
+        length_bucketing: bool = False,
         device: str | None = None,
     ) -> TransformerPredictor:
         tokenizer, model = load_trained_classifier(
@@ -322,6 +507,11 @@ class TransformerPredictor:
             model=model,
             batch_size=batch_size,
             dtype=dtype,
+            num_workers=num_workers,
+            prefetch_factor=prefetch_factor,
+            pin_memory=pin_memory,
+            non_blocking_transfer=non_blocking_transfer,
+            length_bucketing=length_bucketing,
         )
 
     @property
@@ -335,6 +525,11 @@ class TransformerPredictor:
             batch.prepared_pairs(),
             batch_size=self.batch_size,
             dtype=self.dtype,
+            num_workers=self.num_workers,
+            prefetch_factor=self.prefetch_factor,
+            pin_memory=self.pin_memory,
+            non_blocking_transfer=self.non_blocking_transfer,
+            length_bucketing=self.length_bucketing,
         )
 
     def predict_proba(self, batch: PredictionBatch) -> np.ndarray:
@@ -344,6 +539,11 @@ class TransformerPredictor:
             batch.prepared_pairs(),
             batch_size=self.batch_size,
             dtype=self.dtype,
+            num_workers=self.num_workers,
+            prefetch_factor=self.prefetch_factor,
+            pin_memory=self.pin_memory,
+            non_blocking_transfer=self.non_blocking_transfer,
+            length_bucketing=self.length_bucketing,
         )
 
     def predict_logit_margin(self, batch: PredictionBatch) -> np.ndarray:
@@ -353,6 +553,11 @@ class TransformerPredictor:
             batch.prepared_pairs(),
             batch_size=self.batch_size,
             dtype=self.dtype,
+            num_workers=self.num_workers,
+            prefetch_factor=self.prefetch_factor,
+            pin_memory=self.pin_memory,
+            non_blocking_transfer=self.non_blocking_transfer,
+            length_bucketing=self.length_bucketing,
         )
 
 
