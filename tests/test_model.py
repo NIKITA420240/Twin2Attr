@@ -8,6 +8,7 @@ import torch
 from transformers import BertConfig, BertForSequenceClassification, BertTokenizerFast
 
 from match.pair_encoding import (
+    PairEncodingCollator,
     PreparedPairDataset,
     encode_prepared_pair,
     infer_pair_max_length,
@@ -43,6 +44,17 @@ class TransformersV5BertTokenizer(FakeTokenizer):
     cls_token_id = 101
     sep_token_id = 102
     model_input_names = ["input_ids", "token_type_ids", "attention_mask"]
+
+    def pad(self, rows, *, padding, max_length=None, return_tensors):
+        self.last_padding = padding
+        self.last_max_length = max_length
+        target = max_length or max(len(row["input_ids"]) for row in rows)
+        result = {}
+        for key in rows[0]:
+            result[key] = torch.tensor(
+                [row[key] + [0] * (target - len(row[key])) for row in rows]
+            )
+        return result
 
 
 class TransformersV5BertTokenizerWithMissingPairMetadata(
@@ -116,6 +128,42 @@ class SequenceClassifierModelTests(unittest.TestCase):
 
         self.assertEqual(order.tolist(), [1, 2, 0])
         np.testing.assert_array_equal(restored, original)
+
+    def test_collator_pads_to_the_next_configured_length_bucket(self) -> None:
+        tokenizer = TransformersV5BertTokenizer()
+        pair = _pair(1, "left name", 2, "right name", 1)
+        encoded = encode_prepared_pair(
+            tokenizer,
+            pair,
+            max_length=32,
+            use_field_tokens=False,
+        )
+        expected_length = next(
+            bucket for bucket in (8, 16, 32)
+            if bucket >= len(encoded["input_ids"])
+        )
+        collator = PairEncodingCollator(
+            tokenizer,
+            32,
+            use_field_tokens=False,
+            include_labels=False,
+            padding_length_buckets=(8, 16, 32),
+        )
+
+        batch = collator([pair])
+
+        self.assertEqual(batch["input_ids"].shape[1], expected_length)
+        self.assertEqual(tokenizer.last_padding, "max_length")
+        self.assertEqual(tokenizer.last_max_length, expected_length)
+
+    def test_collator_requires_final_bucket_to_match_max_length(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must equal max_length"):
+            PairEncodingCollator(
+                TransformersV5BertTokenizer(),
+                32,
+                use_field_tokens=False,
+                padding_length_buckets=(8, 16),
+            )
 
     def test_infers_quantile_length_and_rounds_to_multiple_of_eight(self) -> None:
         pairs = [

@@ -207,6 +207,37 @@ class TorchCompileSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class LengthBucketingSettings:
+    enabled: bool = True
+    padding_length_buckets: tuple[int, ...] | None = None
+
+    def __post_init__(self) -> None:
+        buckets = self.padding_length_buckets
+        if buckets is None:
+            return
+        if not self.enabled:
+            raise ValueError(
+                "inference.transformer.length_bucketing.padding_length_buckets "
+                "requires length_bucketing.enabled=true"
+            )
+        if not buckets or any(
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 1
+            for value in buckets
+        ):
+            raise ValueError(
+                "inference.transformer.length_bucketing."
+                "padding_length_buckets must contain positive integers"
+            )
+        if tuple(sorted(set(buckets))) != buckets:
+            raise ValueError(
+                "inference.transformer.length_bucketing."
+                "padding_length_buckets must be strictly increasing"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class TransformerInferenceSettings:
     batch_size: int
     dtype: str
@@ -214,7 +245,7 @@ class TransformerInferenceSettings:
     prefetch_factor: int = 2
     pin_memory: bool = True
     non_blocking_transfer: bool = True
-    length_bucketing: bool = True
+    length_bucketing: LengthBucketingSettings = LengthBucketingSettings()
     torch_compile: TorchCompileSettings = TorchCompileSettings()
 
     def __post_init__(self) -> None:
@@ -874,6 +905,37 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         raise ValueError("config section 'inference' must be a mapping")
     inference = inference_value
     inference_transformer = _section(inference, "transformer")
+    length_bucketing_value = inference_transformer.get("length_bucketing", True)
+    if isinstance(length_bucketing_value, Mapping):
+        padding_length_buckets_value = length_bucketing_value.get(
+            "padding_length_buckets"
+        )
+        if padding_length_buckets_value is None:
+            padding_length_buckets = None
+        elif isinstance(padding_length_buckets_value, Sequence) and not isinstance(
+            padding_length_buckets_value, (str, bytes)
+        ):
+            padding_length_buckets = tuple(padding_length_buckets_value)
+        else:
+            raise ValueError(
+                "config field 'inference.transformer.length_bucketing."
+                "padding_length_buckets' must be a sequence or null"
+            )
+        length_bucketing = LengthBucketingSettings(
+            enabled=_bool(
+                length_bucketing_value.get("enabled", True),
+                "inference.transformer.length_bucketing.enabled",
+            ),
+            padding_length_buckets=padding_length_buckets,
+        )
+    else:
+        # Backward compatibility with manifests/configs that used a boolean.
+        length_bucketing = LengthBucketingSettings(
+            enabled=_bool(
+                length_bucketing_value,
+                "inference.transformer.length_bucketing",
+            )
+        )
     torch_compile_value = inference_transformer.get("torch_compile", {})
     if not isinstance(torch_compile_value, Mapping):
         raise ValueError(
@@ -1022,10 +1084,7 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     inference_transformer.get("non_blocking_transfer", True),
                     "inference.transformer.non_blocking_transfer",
                 ),
-                length_bucketing=_bool(
-                    inference_transformer.get("length_bucketing", True),
-                    "inference.transformer.length_bucketing",
-                ),
+                length_bucketing=length_bucketing,
                 torch_compile=TorchCompileSettings(
                     enabled=_bool(
                         torch_compile_value.get("enabled", False),
@@ -1463,6 +1522,7 @@ __all__ = [
     "FusionParameters",
     "InferenceSettings",
     "LoggingSettings",
+    "LengthBucketingSettings",
     "MaxPoolingParameters",
     "MixedDatasetSettings",
     "ModelDescriptionSettings",

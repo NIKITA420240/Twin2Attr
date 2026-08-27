@@ -500,11 +500,31 @@ class PairEncodingCollator:
         use_field_tokens: bool = True,
         max_attribute_value_tokens: int | None = DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
         include_labels: bool = True,
+        padding_length_buckets: tuple[int, ...] | None = None,
     ) -> None:
         if max_length < 1:
             raise ValueError("max_length must be positive")
         if max_attribute_value_tokens is not None and max_attribute_value_tokens < 1:
             raise ValueError("max_attribute_value_tokens must be positive or None")
+        if padding_length_buckets is not None:
+            if not padding_length_buckets or any(
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 1
+                for value in padding_length_buckets
+            ):
+                raise ValueError(
+                    "padding_length_buckets must contain positive integers"
+                )
+            if tuple(sorted(set(padding_length_buckets))) != padding_length_buckets:
+                raise ValueError(
+                    "padding_length_buckets must be strictly increasing"
+                )
+            if padding_length_buckets[-1] != max_length:
+                raise ValueError(
+                    "the final padding length bucket must equal max_length "
+                    f"({max_length})"
+                )
         if use_field_tokens:
             _require_pair_special_tokens(tokenizer)
         self.tokenizer = tokenizer
@@ -512,6 +532,7 @@ class PairEncodingCollator:
         self.use_field_tokens = use_field_tokens
         self.max_attribute_value_tokens = max_attribute_value_tokens
         self.include_labels = include_labels
+        self.padding_length_buckets = padding_length_buckets
         self.special_token_count = _pair_special_token_count(tokenizer)
         if max_length <= self.special_token_count:
             raise ValueError("max_length must leave room for pair content after special tokens")
@@ -530,9 +551,20 @@ class PairEncodingCollator:
             )
             for pair in pairs
         ]
+        padding: bool | str = True
+        padding_max_length: int | None = None
+        if self.padding_length_buckets is not None:
+            longest = max(len(encoded["input_ids"]) for encoded in encoded_pairs)
+            padding_max_length = next(
+                bucket
+                for bucket in self.padding_length_buckets
+                if bucket >= longest
+            )
+            padding = "max_length"
         batch = self.tokenizer.pad(
             encoded_pairs,
-            padding=True,
+            padding=padding,
+            max_length=padding_max_length,
             return_tensors="pt",
         )
 

@@ -49,7 +49,12 @@ class AppConfigTests(unittest.TestCase):
         self.assertTrue(
             self.config.inference.transformer.non_blocking_transfer
         )
-        self.assertTrue(self.config.inference.transformer.length_bucketing)
+        length_bucketing = self.config.inference.transformer.length_bucketing
+        self.assertTrue(length_bucketing.enabled)
+        self.assertEqual(
+            length_bucketing.padding_length_buckets,
+            (64, 96, 128, 160, 192, 224, 256),
+        )
         self.assertFalse(
             self.config.inference.transformer.torch_compile.enabled
         )

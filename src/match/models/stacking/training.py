@@ -55,6 +55,7 @@ class StackingTrainer:
         transformer_artifacts = self.transformer.train(data)
         if transformer_artifacts.transformer_dir is None:
             raise RuntimeError("Transformer trainer did not produce an artifact")
+        length_bucketing = self.config.inference.transformer.length_bucketing
         transformer = TransformerPredictor.load(
             transformer_artifacts.transformer_dir,
             batch_size=self.config.inference.transformer.batch_size,
@@ -65,9 +66,8 @@ class StackingTrainer:
             non_blocking_transfer=(
                 self.config.inference.transformer.non_blocking_transfer
             ),
-            length_bucketing=(
-                self.config.inference.transformer.length_bucketing
-            ),
+            length_bucketing=length_bucketing.enabled,
+            padding_length_buckets=length_bucketing.padding_length_buckets,
             compile_enabled=(
                 self.config.inference.transformer.torch_compile.enabled
             ),

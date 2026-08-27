@@ -55,6 +55,38 @@ def _artifact_path(value: Any, *, root: Path, name: str) -> Path:
     return path if path.is_absolute() else root / path
 
 
+def _length_bucketing_options(
+    solution: Mapping[str, Any],
+) -> tuple[bool, tuple[int, ...] | None]:
+    value = solution.get("length_bucketing", False)
+    if isinstance(value, Mapping):
+        buckets_value = value.get("padding_length_buckets")
+        if buckets_value is None:
+            buckets = None
+        elif isinstance(buckets_value, (list, tuple)):
+            if any(
+                isinstance(bucket, bool) or not isinstance(bucket, int)
+                for bucket in buckets_value
+            ):
+                raise ValueError(
+                    "solution field 'length_bucketing."
+                    "padding_length_buckets' must contain integers"
+                )
+            buckets = tuple(buckets_value)
+        else:
+            raise ValueError(
+                "solution field 'length_bucketing.padding_length_buckets' "
+                "must be an array or null"
+            )
+        return bool(value.get("enabled", True)), buckets
+    if isinstance(value, bool):
+        # Backward compatibility with older packaged manifests.
+        return value, None
+    raise ValueError(
+        "solution field 'length_bucketing' must be an object or boolean"
+    )
+
+
 def build_predictor(
     solution: Mapping[str, Any],
     solution_root: Path,
@@ -65,6 +97,9 @@ def build_predictor(
     torch_compile = solution.get("torch_compile", {})
     if not isinstance(torch_compile, Mapping):
         raise ValueError("solution field 'torch_compile' must be an object")
+    length_bucketing, padding_length_buckets = _length_bucketing_options(
+        solution
+    )
     transformer: TransformerPredictor | None = None
     if predictor_name in {"transformer", "fusion"}:
         from .transformer.predictor import TransformerPredictor
@@ -83,7 +118,8 @@ def build_predictor(
             non_blocking_transfer=bool(
                 solution.get("non_blocking_transfer", True)
             ),
-            length_bucketing=bool(solution.get("length_bucketing", False)),
+            length_bucketing=length_bucketing,
+            padding_length_buckets=padding_length_buckets,
             compile_enabled=bool(torch_compile.get("enabled", False)),
             compile_mode=str(torch_compile.get("mode", "reduce-overhead")),
             compile_dynamic=bool(torch_compile.get("dynamic", True)),
@@ -169,7 +205,8 @@ def build_predictor(
             non_blocking_transfer=bool(
                 solution.get("non_blocking_transfer", True)
             ),
-            length_bucketing=bool(solution.get("length_bucketing", False)),
+            length_bucketing=length_bucketing,
+            padding_length_buckets=padding_length_buckets,
             compile_enabled=bool(torch_compile.get("enabled", False)),
             compile_mode=str(torch_compile.get("mode", "reduce-overhead")),
             compile_dynamic=bool(torch_compile.get("dynamic", True)),
@@ -203,7 +240,8 @@ def build_predictor(
             non_blocking_transfer=bool(
                 solution.get("non_blocking_transfer", True)
             ),
-            length_bucketing=bool(solution.get("length_bucketing", False)),
+            length_bucketing=length_bucketing,
+            padding_length_buckets=padding_length_buckets,
             compile_enabled=bool(torch_compile.get("enabled", False)),
             compile_mode=str(torch_compile.get("mode", "reduce-overhead")),
             compile_dynamic=bool(torch_compile.get("dynamic", True)),
