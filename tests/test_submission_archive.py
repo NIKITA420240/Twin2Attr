@@ -114,6 +114,19 @@ class SubmissionArchiveTests(unittest.TestCase):
         (
             wheels / "orjson-3.11.9-cp312-cp312-manylinux2014_x86_64.whl"
         ).write_bytes(b"orjson")
+        (
+            wheels
+            / "onnxruntime_gpu-1.23.2-cp312-cp312-manylinux_2_27_x86_64.whl"
+        ).write_bytes(b"onnxruntime")
+        (wheels / "coloredlogs-15.0.1-py2.py3-none-any.whl").write_bytes(
+            b"coloredlogs"
+        )
+        (wheels / "flatbuffers-25.9.23-py2.py3-none-any.whl").write_bytes(
+            b"flatbuffers"
+        )
+        (wheels / "humanfriendly-10.0-py2.py3-none-any.whl").write_bytes(
+            b"humanfriendly"
+        )
 
     @staticmethod
     def _trained_transformer(root: Path) -> Path:
@@ -394,6 +407,10 @@ class SubmissionArchiveTests(unittest.TestCase):
                     transformer=replace(
                         self.config.inference.transformer,
                         backend="onnxruntime",
+                        onnxruntime=replace(
+                            self.config.inference.transformer.onnxruntime,
+                            fallback_to_pytorch=False,
+                        ),
                     ),
                 ),
                 submission=replace(
@@ -415,7 +432,12 @@ class SubmissionArchiveTests(unittest.TestCase):
                 solution = json.loads(archive.read("solution.json"))
 
         self.assertEqual(solution["backend"], "onnxruntime")
+        self.assertFalse(solution["onnxruntime"]["fallback_to_pytorch"])
         self.assertIn("models/transformer/onnx/classifier.onnx", names)
+        self.assertNotIn("models/transformer/model.safetensors", names)
+        self.assertTrue(
+            any(name.startswith("vendor_wheels/onnxruntime_gpu-") for name in names)
+        )
 
     def test_cascade_packages_both_models_and_catboost_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

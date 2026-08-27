@@ -383,11 +383,22 @@ inference:
     backend: onnxruntime
     batch_size: 2048
     onnxruntime:
-      provider: cuda
+      provider: tensorrt
       device_id: 0
       io_binding: true
       graph_optimization: all
       fallback_to_pytorch: true
+      tensorrt:
+        engine_cache:
+          enabled: true
+          path: onnx/trt_cache
+        timing_cache:
+          enabled: true
+        profiles:
+          min_batch_size: 1
+          opt_batch_size: 2048
+          max_batch_size: 2048
+          sequence_lengths: [64, 96, 128]
 ```
 
 `device_id` выбирает GPU (для единственной H100 это `0`). `io_binding` передаёт
@@ -396,7 +407,12 @@ CUDA-тензоры по адресу без промежуточного пре
 `fallback_to_pytorch: true` возвращает predictor к PyTorch. `torch_compile`
 используется только при PyTorch backend. Для TensorRT после проверки CUDA
 backend можно выбрать `provider: tensorrt`; TensorRT engine и timing cache
-создаются в `onnx/trt_cache`.
+создаются в `onnx/trt_cache`. Для TensorRT список `sequence_lengths`
+преобразуется в один поддерживаемый ONNX Runtime optimization profile:
+первое значение становится `min`, среднее — `opt`, последнее — `max`.
+Имена входов (`input_ids`, `attention_mask` и при наличии `token_type_ids`)
+добавляются автоматически. Значения профиля должны покрывать все формы,
+которые реально создаёт length bucketing.
 
 Пути моделей задаются рядом с их параметрами через `artifact_dir` или
 `artifact_path`. `training.resolved_config_path` задаёт место для полного

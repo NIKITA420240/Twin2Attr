@@ -10,6 +10,20 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+# The evaluator limits the total number of processes/threads. Normalization
+# already uses multiple worker processes, so allowing NumPy/OpenBLAS to create
+# another full thread pool in every process can exhaust that limit before the
+# Transformer is even imported.
+for _thread_environment_variable in (
+    "OPENBLAS_NUM_THREADS",
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "BLIS_NUM_THREADS",
+):
+    os.environ[_thread_environment_variable] = "1"
+os.environ["POLARS_MAX_THREADS"] = "8"
+
 if TYPE_CHECKING:
     from match.config import AppConfig
 
@@ -27,6 +41,7 @@ JOBLIB_VERSION = "1.5.3"
 LOGURU_VERSION = "0.7.3"
 PINT_VERSION = "0.25.3"
 ORJSON_VERSION = "3.11.9"
+ONNXRUNTIME_GPU_VERSION = "1.23.2"
 
 
 def ensure_polars_available() -> None:
@@ -236,6 +251,82 @@ def ensure_catboost_available(solution_path: str | Path | None = None) -> None:
     importlib.import_module("catboost")
 
 
+def ensure_onnxruntime_available(
+    solution_path: str | Path | None = None,
+) -> None:
+    """Install the bundled GPU runtime for an ONNX submission."""
+    import json
+
+    path = (
+        Path(solution_path)
+        if solution_path is not None
+        else Path(__file__).resolve().parent / "solution.json"
+    ).expanduser().resolve()
+    if not path.is_file():
+        return
+    solution = json.loads(path.read_text(encoding="utf-8"))
+    if solution.get("backend") != "onnxruntime":
+        return
+
+    wheels_dir = Path(__file__).resolve().parent / "vendor_wheels"
+    tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
+    runtime_wheels = sorted(
+        wheels_dir.glob(f"onnxruntime_gpu-*-{tag}-{tag}-*.whl")
+    )
+    if not runtime_wheels:
+        raise RuntimeError(
+            "ONNX Runtime GPU is not bundled for the evaluator's Python "
+            f"version ({tag})"
+        )
+    install_dir = (
+        Path(tempfile.gettempdir())
+        / f"twin2attr_onnxruntime_gpu_{ONNXRUNTIME_GPU_VERSION}_{tag}"
+    )
+    install_dir.mkdir(parents=True, exist_ok=True)
+    if not (install_dir / "onnxruntime").is_dir():
+        dependencies = [
+            *sorted(wheels_dir.glob("coloredlogs-*.whl")),
+            *sorted(wheels_dir.glob("flatbuffers-*.whl")),
+            *sorted(wheels_dir.glob("humanfriendly-*.whl")),
+        ]
+        if len(dependencies) != 3:
+            raise RuntimeError("bundled ONNX Runtime dependencies are incomplete")
+        print(
+            "Installing bundled ONNX Runtime GPU into "
+            f"{install_dir}"
+        )
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--no-index",
+                "--no-deps",
+                "--upgrade",
+                "--target",
+                str(install_dir),
+                str(runtime_wheels[-1]),
+                *(str(wheel) for wheel in dependencies),
+            ],
+            check=True,
+        )
+    sys.path.insert(0, str(install_dir))
+    importlib.invalidate_caches()
+    runtime = importlib.import_module("onnxruntime")
+    provider = str(solution.get("onnxruntime", {}).get("provider", "cuda"))
+    required_provider = {
+        "cuda": "CUDAExecutionProvider",
+        "tensorrt": "TensorrtExecutionProvider",
+    }.get(provider)
+    if required_provider and required_provider not in runtime.get_available_providers():
+        raise RuntimeError(
+            f"bundled ONNX Runtime does not expose {required_provider}; "
+            f"available providers: {runtime.get_available_providers()}"
+        )
+
+
 def _with_default_command(arguments: Sequence[str]) -> list[str]:
     """Treat the evaluator's argument-only invocation as ``predict``."""
     values = list(arguments)
@@ -353,6 +444,7 @@ def run_predict(args: argparse.Namespace) -> None:
     ensure_polars_available()
     ensure_preprocessing_runtime_available(solution_path)
     ensure_catboost_available(solution_path)
+    ensure_onnxruntime_available(solution_path)
 
     from match.submission import create_submission
 

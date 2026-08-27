@@ -121,6 +121,22 @@ class ModelTrainingStrategyTests(unittest.TestCase):
                 "io_binding": True,
                 "graph_optimization": "all",
                 "fallback_to_pytorch": True,
+                "tensorrt": {
+                    "engine_cache": {
+                        "enabled": True,
+                        "path": "onnx/trt_cache",
+                    },
+                    "timing_cache": {
+                        "enabled": True,
+                        "path": None,
+                    },
+                    "profiles": {
+                        "min_batch_size": 1,
+                        "opt_batch_size": 2048,
+                        "max_batch_size": 2048,
+                        "sequence_lengths": [64, 96, 128],
+                    },
+                },
             },
         )
         self.assertEqual(
