@@ -11,6 +11,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+import orjson
 import polars as pl
 import pymorphy3
 from joblib import Parallel, delayed
@@ -396,8 +397,10 @@ def _normalize_attribute_json(
         return None
     original = raw
     try:
-        attributes = dict(raw) if isinstance(raw, Mapping) else json.loads(str(raw))
-    except (json.JSONDecodeError, TypeError, ValueError):
+        attributes = (
+            dict(raw) if isinstance(raw, Mapping) else orjson.loads(str(raw))
+        )
+    except (orjson.JSONDecodeError, TypeError, ValueError):
         return str(original)
     if not isinstance(attributes, dict):
         return str(original)
