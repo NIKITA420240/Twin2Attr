@@ -323,7 +323,7 @@ def analyze_transformer_attribute_importance(
         model,
         tokenizer,
         pairs,
-        batch_size=config.model_description.transformer.batch_size,
+        batch_size=config.inference.transformer.batch_size,
         max_length=max_length,
         use_field_tokens=use_field_tokens,
         max_attribute_value_tokens=value_limit,

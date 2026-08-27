@@ -41,6 +41,8 @@ class AppConfigTests(unittest.TestCase):
             self.config.inference.solution_path,
             self.config.training.solution_path,
         )
+        self.assertEqual(self.config.inference.transformer.batch_size, 512)
+        self.assertEqual(self.config.inference.transformer.dtype, "bfloat16")
         self.assertFalse(hasattr(self.config, "artifacts"))
         self.assertEqual(
             self.config.analysis.analysis_model,
@@ -231,6 +233,13 @@ class AppConfigTests(unittest.TestCase):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
                 ["model_description.transformer.lr_scheduler_type=cyclic"],
+            )
+
+    def test_rejects_invalid_transformer_inference_dtype(self) -> None:
+        with self.assertRaisesRegex(ValueError, "inference.transformer.dtype"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                ["inference.transformer.dtype=int8"],
             )
 
     def test_rejects_incomplete_feature_execution_order(self) -> None:

@@ -57,7 +57,8 @@ class StackingTrainer:
             raise RuntimeError("Transformer trainer did not produce an artifact")
         transformer = TransformerPredictor.load(
             transformer_artifacts.transformer_dir,
-            batch_size=self.config.model_description.transformer.batch_size,
+            batch_size=self.config.inference.transformer.batch_size,
+            dtype=self.config.inference.transformer.dtype,
             device=self.config.runtime.device,
         )
         stacking_batch = PredictionBatch(

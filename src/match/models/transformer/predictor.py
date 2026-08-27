@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -38,12 +39,52 @@ def _resolve_device(device: str | torch.device | None = None) -> torch.device:
     return torch.device("cpu")
 
 
+def _normalize_inference_dtype(dtype: str) -> str:
+    normalized = dtype.lower()
+    if normalized not in {"float32", "float16", "bfloat16"}:
+        raise ValueError(
+            "dtype must be one of: float32, float16, bfloat16"
+        )
+    return normalized
+
+
+def _torch_inference_dtype(dtype: str) -> torch.dtype:
+    return {
+        "float32": torch.float32,
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+    }[_normalize_inference_dtype(dtype)]
+
+
+def _autocast_context(device: torch.device, dtype: str):
+    normalized = _normalize_inference_dtype(dtype)
+    if normalized == "float32":
+        return nullcontext()
+    if device.type == "cuda":
+        if normalized == "bfloat16" and not torch.cuda.is_bf16_supported():
+            raise RuntimeError("the selected CUDA device does not support bfloat16")
+        return torch.autocast(
+            device_type="cuda",
+            dtype=_torch_inference_dtype(normalized),
+        )
+    if device.type == "cpu" and normalized == "bfloat16":
+        return torch.autocast(device_type="cpu", dtype=torch.bfloat16)
+    raise RuntimeError(f"dtype={normalized!r} is not supported on {device.type}")
+
+
 def load_trained_classifier(
     model_dir: str | Path,
     *,
     device: str | torch.device | None = None,
+    dtype: str = "float32",
 ) -> tuple[PreTrainedTokenizerBase, PreTrainedModel]:
     target_device = _resolve_device(device)
+    target_dtype = _torch_inference_dtype(dtype)
+    if target_device.type == "cuda" and target_dtype == torch.bfloat16:
+        if not torch.cuda.is_bf16_supported():
+            raise RuntimeError("the selected CUDA device does not support bfloat16")
+    if target_device.type == "mps" and target_dtype == torch.bfloat16:
+        raise RuntimeError("bfloat16 inference is not supported on MPS")
     tokenizer = AutoTokenizer.from_pretrained(model_dir, use_fast=True)
     config_path = Path(model_dir) / "config.json"
     config_values = json.loads(config_path.read_text(encoding="utf-8"))
@@ -51,7 +92,7 @@ def load_trained_classifier(
         model = PoolingSequenceClassifier.from_pretrained(model_dir)
     else:
         model = AutoModelForSequenceClassification.from_pretrained(model_dir)
-    model.to(target_device).eval()
+    model.to(device=target_device, dtype=target_dtype).eval()
     return tokenizer, model
 
 
@@ -95,6 +136,7 @@ def predict_pair_logits(
     *,
     batch_size: int = 64,
     max_length: int | None = None,
+    dtype: str = "float32",
 ) -> np.ndarray:
     """Return the two classifier logits for every prepared pair."""
     if batch_size < 1:
@@ -129,7 +171,8 @@ def predict_pair_logits(
             with torch.inference_mode():
                 for batch in loader:
                     inputs = {key: value.to(device) for key, value in batch.items()}
-                    logits = model(**inputs).logits
+                    with _autocast_context(device, dtype):
+                        logits = model(**inputs).logits
                     if logits.ndim != 2 or logits.shape[1] != 2:
                         raise RuntimeError(
                             "stacking requires a binary Transformer classifier"
@@ -150,6 +193,7 @@ def predict_match_probabilities(
     *,
     batch_size: int = 64,
     max_length: int | None = None,
+    dtype: str = "float32",
 ) -> np.ndarray:
     logits = predict_pair_logits(
         model,
@@ -157,6 +201,7 @@ def predict_match_probabilities(
         pairs,
         batch_size=batch_size,
         max_length=max_length,
+        dtype=dtype,
     )
     if not len(logits):
         return np.empty(0, dtype=np.float32)
@@ -175,6 +220,7 @@ def predict_logit_margins(
     *,
     batch_size: int = 64,
     max_length: int | None = None,
+    dtype: str = "float32",
 ) -> np.ndarray:
     """Return ``match_logit - different_logit`` for stacking."""
     logits = predict_pair_logits(
@@ -183,6 +229,7 @@ def predict_logit_margins(
         pairs,
         batch_size=batch_size,
         max_length=max_length,
+        dtype=dtype,
     )
     if not len(logits):
         return np.empty(0, dtype=np.float32)
@@ -196,6 +243,7 @@ def encode_pair_cls(
     *,
     batch_size: int = 64,
     max_length: int | None = None,
+    dtype: str = "float32",
 ) -> np.ndarray:
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
@@ -229,10 +277,11 @@ def encode_pair_cls(
             with torch.inference_mode():
                 for batch in loader:
                     inputs = {key: value.to(device) for key, value in batch.items()}
-                    hidden_state = model.base_model(
-                        **inputs,
-                        return_dict=True,
-                    ).last_hidden_state
+                    with _autocast_context(device, dtype):
+                        hidden_state = model.base_model(
+                            **inputs,
+                            return_dict=True,
+                        ).last_hidden_state
                     chunks.append(hidden_state[:, 0, :].float().cpu().numpy())
             return np.concatenate(chunks).astype(np.float32, copy=False)
         except torch.cuda.OutOfMemoryError:
@@ -247,10 +296,12 @@ class TransformerPredictor:
     tokenizer: PreTrainedTokenizerBase
     model: PreTrainedModel
     batch_size: int = 64
+    dtype: str = "float32"
 
     def __post_init__(self) -> None:
         if self.batch_size < 1:
             raise ValueError("batch_size must be positive")
+        self.dtype = _normalize_inference_dtype(self.dtype)
 
     @classmethod
     def load(
@@ -258,10 +309,20 @@ class TransformerPredictor:
         model_directory: str | Path,
         *,
         batch_size: int = 64,
+        dtype: str = "float32",
         device: str | None = None,
     ) -> TransformerPredictor:
-        tokenizer, model = load_trained_classifier(model_directory, device=device)
-        return cls(tokenizer=tokenizer, model=model, batch_size=batch_size)
+        tokenizer, model = load_trained_classifier(
+            model_directory,
+            device=device,
+            dtype=dtype,
+        )
+        return cls(
+            tokenizer=tokenizer,
+            model=model,
+            batch_size=batch_size,
+            dtype=dtype,
+        )
 
     @property
     def output_dim(self) -> int:
@@ -273,6 +334,7 @@ class TransformerPredictor:
             self.tokenizer,
             batch.prepared_pairs(),
             batch_size=self.batch_size,
+            dtype=self.dtype,
         )
 
     def predict_proba(self, batch: PredictionBatch) -> np.ndarray:
@@ -281,6 +343,7 @@ class TransformerPredictor:
             self.tokenizer,
             batch.prepared_pairs(),
             batch_size=self.batch_size,
+            dtype=self.dtype,
         )
 
     def predict_logit_margin(self, batch: PredictionBatch) -> np.ndarray:
@@ -289,6 +352,7 @@ class TransformerPredictor:
             self.tokenizer,
             batch.prepared_pairs(),
             batch_size=self.batch_size,
+            dtype=self.dtype,
         )
 
 

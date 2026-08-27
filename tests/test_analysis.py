@@ -154,12 +154,18 @@ class AttributeImportanceAnalysisTests(unittest.TestCase):
             config = replace(
                 base,
                 runtime=replace(base.runtime, device="cpu"),
+                inference=replace(
+                    base.inference,
+                    transformer=replace(
+                        base.inference.transformer,
+                        batch_size=2,
+                    ),
+                ),
                 model_description=replace(
                     base.model_description,
                     transformer=replace(
                         base.model_description.transformer,
                         artifact_dir=checkpoint,
-                        batch_size=2,
                     ),
                 ),
                 analysis_models=replace(
