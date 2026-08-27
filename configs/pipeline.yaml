@@ -64,6 +64,10 @@ inference:
     non_blocking_transfer: true
     # Group similarly sized pairs to reduce dynamic-padding overhead.
     length_bucketing: true
+    torch_compile:
+      enabled: false
+      mode: reduce-overhead
+      dynamic: true
 
 analysis:
   analysis_model: attribute_importance

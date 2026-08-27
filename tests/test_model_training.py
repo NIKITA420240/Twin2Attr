@@ -90,6 +90,14 @@ class ModelTrainingStrategyTests(unittest.TestCase):
         self.assertTrue(solution["non_blocking_transfer"])
         self.assertTrue(solution["length_bucketing"])
         self.assertEqual(
+            solution["torch_compile"],
+            {
+                "enabled": True,
+                "mode": "reduce-overhead",
+                "dynamic": True,
+            },
+        )
+        self.assertEqual(
             solution["maxpooling_path"],
             "models/maxpooling.joblib",
         )

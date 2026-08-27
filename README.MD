@@ -320,6 +320,8 @@ uv run python run.py train \
 `prefetch_factor`, `pin_memory` и `non_blocking_transfer` управляют параллельной
 подготовкой и передачей батчей. `length_bucketing` группирует пары близкой длины
 и восстанавливает исходный порядок предсказаний после инференса.
+`torch_compile` включает оптимизированный PyTorch-граф; если compilation backend
+не поддерживает операцию, predictor автоматически продолжает в eager mode.
 
 Пути моделей задаются рядом с их параметрами через `artifact_dir` или
 `artifact_path`. `training.resolved_config_path` задаёт место для полного
@@ -411,7 +413,12 @@ OmegaConf используется только на границе загруз
   "predictor": "transformer",
   "model_directory": "models/twin2attr/transformer",
   "batch_size": 512,
-  "dtype": "bfloat16"
+  "dtype": "bfloat16",
+  "torch_compile": {
+    "enabled": true,
+    "mode": "reduce-overhead",
+    "dynamic": true
+  }
 }
 ```
 

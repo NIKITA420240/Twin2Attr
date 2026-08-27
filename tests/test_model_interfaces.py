@@ -13,6 +13,7 @@ from match.models import (
     PredictionBatch,
     TransformerPredictor,
 )
+from match.models.transformer.predictor import _CompiledForward
 
 
 def _batch() -> PredictionBatch:
@@ -25,6 +26,57 @@ def _batch() -> PredictionBatch:
 
 
 class ModelInterfaceTests(unittest.TestCase):
+    def test_transformer_compiles_classifier_and_backbone(self) -> None:
+        model = SimpleNamespace(
+            config=SimpleNamespace(hidden_size=16),
+            base_model=object(),
+        )
+        with patch(
+            "match.models.transformer.predictor.torch.compile",
+            side_effect=lambda module, **kwargs: Mock(),
+        ) as compile_model:
+            predictor = TransformerPredictor(
+                object(),
+                model,
+                compile_enabled=True,
+                compile_mode="reduce-overhead",
+                compile_dynamic=True,
+            )
+
+        self.assertIsNotNone(predictor._compiled_model)
+        self.assertIsNotNone(predictor._compiled_backbone)
+        self.assertEqual(compile_model.call_count, 2)
+        compile_model.assert_any_call(
+            model,
+            mode="reduce-overhead",
+            dynamic=True,
+        )
+        compile_model.assert_any_call(
+            model.base_model,
+            mode="reduce-overhead",
+            dynamic=True,
+        )
+
+    def test_compiled_forward_falls_back_to_eager_execution(self) -> None:
+        eager = Mock(return_value="eager result")
+        compiled = Mock(side_effect=RuntimeError("unsupported graph"))
+        with patch(
+            "match.models.transformer.predictor.torch.compile",
+            return_value=compiled,
+        ):
+            forward = _CompiledForward(
+                eager,
+                name="test model",
+                mode="reduce-overhead",
+                dynamic=True,
+            )
+
+        result = forward(input_ids=Mock())
+
+        self.assertEqual(result, "eager result")
+        compiled.assert_called_once()
+        eager.assert_called_once()
+
     def test_transformer_supports_encoding_and_prediction(self) -> None:
         model = SimpleNamespace(config=SimpleNamespace(hidden_size=16))
         predictor = TransformerPredictor(object(), model, batch_size=8)

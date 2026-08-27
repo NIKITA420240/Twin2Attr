@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 import numpy as np
 import torch
+from loguru import logger
 from torch.utils.data import DataLoader, Dataset
 from transformers import (
     AutoModelForSequenceClassification,
@@ -70,6 +71,49 @@ def _autocast_context(device: torch.device, dtype: str):
     if device.type == "cpu" and normalized == "bfloat16":
         return torch.autocast(device_type="cpu", dtype=torch.bfloat16)
     raise RuntimeError(f"dtype={normalized!r} is not supported on {device.type}")
+
+
+class _CompiledForward:
+    """Use a compiled callable while retaining a safe eager fallback."""
+
+    def __init__(
+        self,
+        eager: Any,
+        *,
+        name: str,
+        mode: str,
+        dynamic: bool,
+    ) -> None:
+        self._eager = eager
+        self._name = name
+        try:
+            self._compiled = torch.compile(
+                eager,
+                mode=mode,
+                dynamic=dynamic,
+            )
+        except Exception as error:
+            self._compiled = None
+            logger.warning(
+                "torch.compile setup failed for {}; using eager mode: {}",
+                name,
+                error,
+            )
+
+    def __call__(self, **inputs: torch.Tensor) -> Any:
+        if self._compiled is not None:
+            try:
+                return self._compiled(**inputs)
+            except torch.cuda.OutOfMemoryError:
+                raise
+            except Exception as error:
+                self._compiled = None
+                logger.warning(
+                    "torch.compile execution failed for {}; using eager mode: {}",
+                    self._name,
+                    error,
+                )
+        return self._eager(**inputs)
 
 
 def load_trained_classifier(
@@ -241,6 +285,7 @@ def predict_pair_logits(
     pin_memory: bool = True,
     non_blocking_transfer: bool = True,
     length_bucketing: bool = False,
+    _forward_model: Any | None = None,
 ) -> np.ndarray:
     """Return the two classifier logits for every prepared pair."""
     if batch_size < 1:
@@ -296,7 +341,10 @@ def predict_pair_logits(
                         for key, value in batch.items()
                     }
                     with _autocast_context(device, dtype):
-                        logits = model(**inputs).logits
+                        forward_model = (
+                            model if _forward_model is None else _forward_model
+                        )
+                        logits = forward_model(**inputs).logits
                     if logits.ndim != 2 or logits.shape[1] != 2:
                         raise RuntimeError(
                             "stacking requires a binary Transformer classifier"
@@ -324,6 +372,7 @@ def predict_match_probabilities(
     pin_memory: bool = True,
     non_blocking_transfer: bool = True,
     length_bucketing: bool = False,
+    _forward_model: Any | None = None,
 ) -> np.ndarray:
     logits = predict_pair_logits(
         model,
@@ -337,6 +386,7 @@ def predict_match_probabilities(
         pin_memory=pin_memory,
         non_blocking_transfer=non_blocking_transfer,
         length_bucketing=length_bucketing,
+        _forward_model=_forward_model,
     )
     if not len(logits):
         return np.empty(0, dtype=np.float32)
@@ -361,6 +411,7 @@ def predict_logit_margins(
     pin_memory: bool = True,
     non_blocking_transfer: bool = True,
     length_bucketing: bool = False,
+    _forward_model: Any | None = None,
 ) -> np.ndarray:
     """Return ``match_logit - different_logit`` for stacking."""
     logits = predict_pair_logits(
@@ -375,6 +426,7 @@ def predict_logit_margins(
         pin_memory=pin_memory,
         non_blocking_transfer=non_blocking_transfer,
         length_bucketing=length_bucketing,
+        _forward_model=_forward_model,
     )
     if not len(logits):
         return np.empty(0, dtype=np.float32)
@@ -394,6 +446,7 @@ def encode_pair_cls(
     pin_memory: bool = True,
     non_blocking_transfer: bool = True,
     length_bucketing: bool = False,
+    _backbone_model: Any | None = None,
 ) -> np.ndarray:
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
@@ -448,7 +501,12 @@ def encode_pair_cls(
                         for key, value in batch.items()
                     }
                     with _autocast_context(device, dtype):
-                        hidden_state = model.base_model(
+                        backbone_model = (
+                            model.base_model
+                            if _backbone_model is None
+                            else _backbone_model
+                        )
+                        hidden_state = backbone_model(
                             **inputs,
                             return_dict=True,
                         ).last_hidden_state
@@ -473,6 +531,15 @@ class TransformerPredictor:
     pin_memory: bool = True
     non_blocking_transfer: bool = True
     length_bucketing: bool = False
+    compile_enabled: bool = False
+    compile_mode: str = "reduce-overhead"
+    compile_dynamic: bool = True
+    _compiled_model: Any | None = field(init=False, default=None, repr=False)
+    _compiled_backbone: Any | None = field(
+        init=False,
+        default=None,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         if self.batch_size < 1:
@@ -482,6 +549,26 @@ class TransformerPredictor:
         if self.prefetch_factor < 1:
             raise ValueError("prefetch_factor must be positive")
         self.dtype = _normalize_inference_dtype(self.dtype)
+        if self.compile_mode not in {
+            "default",
+            "reduce-overhead",
+            "max-autotune",
+            "max-autotune-no-cudagraphs",
+        }:
+            raise ValueError("unsupported torch.compile mode")
+        if self.compile_enabled:
+            self._compiled_model = _CompiledForward(
+                self.model,
+                name="Transformer classifier",
+                mode=self.compile_mode,
+                dynamic=self.compile_dynamic,
+            )
+            self._compiled_backbone = _CompiledForward(
+                self.model.base_model,
+                name="Transformer backbone",
+                mode=self.compile_mode,
+                dynamic=self.compile_dynamic,
+            )
 
     @classmethod
     def load(
@@ -495,6 +582,9 @@ class TransformerPredictor:
         pin_memory: bool = True,
         non_blocking_transfer: bool = True,
         length_bucketing: bool = False,
+        compile_enabled: bool = False,
+        compile_mode: str = "reduce-overhead",
+        compile_dynamic: bool = True,
         device: str | None = None,
     ) -> TransformerPredictor:
         tokenizer, model = load_trained_classifier(
@@ -512,6 +602,9 @@ class TransformerPredictor:
             pin_memory=pin_memory,
             non_blocking_transfer=non_blocking_transfer,
             length_bucketing=length_bucketing,
+            compile_enabled=compile_enabled,
+            compile_mode=compile_mode,
+            compile_dynamic=compile_dynamic,
         )
 
     @property
@@ -530,6 +623,7 @@ class TransformerPredictor:
             pin_memory=self.pin_memory,
             non_blocking_transfer=self.non_blocking_transfer,
             length_bucketing=self.length_bucketing,
+            _backbone_model=self._compiled_backbone,
         )
 
     def predict_proba(self, batch: PredictionBatch) -> np.ndarray:
@@ -544,6 +638,7 @@ class TransformerPredictor:
             pin_memory=self.pin_memory,
             non_blocking_transfer=self.non_blocking_transfer,
             length_bucketing=self.length_bucketing,
+            _forward_model=self._compiled_model,
         )
 
     def predict_logit_margin(self, batch: PredictionBatch) -> np.ndarray:
@@ -558,6 +653,7 @@ class TransformerPredictor:
             pin_memory=self.pin_memory,
             non_blocking_transfer=self.non_blocking_transfer,
             length_bucketing=self.length_bucketing,
+            _forward_model=self._compiled_model,
         )
 
 

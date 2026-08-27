@@ -68,6 +68,13 @@ class StackingTrainer:
             length_bucketing=(
                 self.config.inference.transformer.length_bucketing
             ),
+            compile_enabled=(
+                self.config.inference.transformer.torch_compile.enabled
+            ),
+            compile_mode=self.config.inference.transformer.torch_compile.mode,
+            compile_dynamic=(
+                self.config.inference.transformer.torch_compile.dynamic
+            ),
             device=self.config.runtime.device,
         )
         stacking_batch = PredictionBatch(

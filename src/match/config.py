@@ -187,6 +187,26 @@ class TrainingSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class TorchCompileSettings:
+    enabled: bool = False
+    mode: str = "reduce-overhead"
+    dynamic: bool = True
+
+    def __post_init__(self) -> None:
+        if self.mode not in {
+            "default",
+            "reduce-overhead",
+            "max-autotune",
+            "max-autotune-no-cudagraphs",
+        }:
+            raise ValueError(
+                "inference.transformer.torch_compile.mode must be one of: "
+                "default, reduce-overhead, max-autotune, "
+                "max-autotune-no-cudagraphs"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class TransformerInferenceSettings:
     batch_size: int
     dtype: str
@@ -195,6 +215,7 @@ class TransformerInferenceSettings:
     pin_memory: bool = True
     non_blocking_transfer: bool = True
     length_bucketing: bool = True
+    torch_compile: TorchCompileSettings = TorchCompileSettings()
 
     def __post_init__(self) -> None:
         if self.batch_size < 1:
@@ -853,6 +874,11 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         raise ValueError("config section 'inference' must be a mapping")
     inference = inference_value
     inference_transformer = _section(inference, "transformer")
+    torch_compile_value = inference_transformer.get("torch_compile", {})
+    if not isinstance(torch_compile_value, Mapping):
+        raise ValueError(
+            "config section 'inference.transformer.torch_compile' must be a mapping"
+        )
     analysis = _section(resolved, "analysis")
     analysis_models = _section(resolved, "analysis_models")
     attribute_importance = _section(
@@ -999,6 +1025,19 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 length_bucketing=_bool(
                     inference_transformer.get("length_bucketing", True),
                     "inference.transformer.length_bucketing",
+                ),
+                torch_compile=TorchCompileSettings(
+                    enabled=_bool(
+                        torch_compile_value.get("enabled", False),
+                        "inference.transformer.torch_compile.enabled",
+                    ),
+                    mode=str(
+                        torch_compile_value.get("mode", "reduce-overhead")
+                    ),
+                    dynamic=_bool(
+                        torch_compile_value.get("dynamic", True),
+                        "inference.transformer.torch_compile.dynamic",
+                    ),
                 ),
             ),
         ),
@@ -1434,6 +1473,7 @@ __all__ = [
     "RuntimeSettings",
     "SubmissionSettings",
     "TrainingSettings",
+    "TorchCompileSettings",
     "TransformerHeadParameters",
     "TransformerInferenceSettings",
     "TransformerParameters",
