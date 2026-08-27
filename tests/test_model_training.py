@@ -92,7 +92,7 @@ class ModelTrainingStrategyTests(unittest.TestCase):
         self.assertEqual(
             solution["torch_compile"],
             {
-                "enabled": True,
+                "enabled": False,
                 "mode": "reduce-overhead",
                 "dynamic": True,
             },

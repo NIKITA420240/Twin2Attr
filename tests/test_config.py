@@ -50,7 +50,7 @@ class AppConfigTests(unittest.TestCase):
             self.config.inference.transformer.non_blocking_transfer
         )
         self.assertTrue(self.config.inference.transformer.length_bucketing)
-        self.assertTrue(
+        self.assertFalse(
             self.config.inference.transformer.torch_compile.enabled
         )
         self.assertEqual(
