@@ -187,11 +187,27 @@ class TrainingSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class TransformerInferenceSettings:
+    batch_size: int
+    dtype: str
+
+    def __post_init__(self) -> None:
+        if self.batch_size < 1:
+            raise ValueError("inference.transformer.batch_size must be positive")
+        if self.dtype not in {"float32", "float16", "bfloat16"}:
+            raise ValueError(
+                "inference.transformer.dtype must be one of: float32, float16, "
+                "bfloat16"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class InferenceSettings:
     model: str
     augmentation_model: str | None
     data_postprocessing_model: str | None
     solution_path: Path
+    transformer: TransformerInferenceSettings
 
     def __post_init__(self) -> None:
         if self.augmentation_model not in {None, "attribute_shuffle"}:
@@ -330,7 +346,6 @@ class TransformerParameters:
     max_grad_norm: float
     early_stopping_patience: int
     auto_find_batch_size: bool
-    batch_size: int
     embeddings_learning_rate: float | None = None
     train_new_token_embeddings_only: bool = False
     train_last_n_layers: int | None = None
@@ -370,7 +385,6 @@ class TransformerParameters:
             self.eval_batch_size,
             self.gradient_accumulation_steps,
             self.early_stopping_patience,
-            self.batch_size,
         ) < 1:
             raise ValueError("transformer batch and patience values must be positive")
         if not 0.0 <= self.warmup_ratio < 1.0:
@@ -825,6 +839,7 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     if not isinstance(inference_value, Mapping):
         raise ValueError("config section 'inference' must be a mapping")
     inference = inference_value
+    inference_transformer = _section(inference, "transformer")
     analysis = _section(resolved, "analysis")
     analysis_models = _section(resolved, "analysis_models")
     attribute_importance = _section(
@@ -952,6 +967,10 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             solution_path=_path(
                 _required(inference, "solution_path"),
                 "inference.solution_path",
+            ),
+            transformer=TransformerInferenceSettings(
+                batch_size=int(_required(inference_transformer, "batch_size")),
+                dtype=str(_required(inference_transformer, "dtype")).lower(),
             ),
         ),
         analysis=AnalysisSettings(
@@ -1119,7 +1138,6 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     _required(transformer, "auto_find_batch_size"),
                     "model_description.transformer.auto_find_batch_size",
                 ),
-                batch_size=int(_required(transformer, "batch_size")),
                 head=TransformerHeadParameters(
                     type=str(transformer_head.get("type", "default")),
                     poolings=tuple(
@@ -1388,6 +1406,7 @@ __all__ = [
     "SubmissionSettings",
     "TrainingSettings",
     "TransformerHeadParameters",
+    "TransformerInferenceSettings",
     "TransformerParameters",
     "load_app_config",
     "load_app_config_file",

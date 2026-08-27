@@ -1,7 +1,8 @@
 {
   "predictor": "transformer",
   "model_directory": "models\\twin2attr\\transformer",
-  "batch_size": 256,
+  "batch_size": 512,
+  "dtype": "bfloat16",
   "normalization": {
     "enabled": true,
     "source_column": "attributes",

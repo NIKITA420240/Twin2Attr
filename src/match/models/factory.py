@@ -73,6 +73,7 @@ def build_predictor(
                 name="model_directory",
             ),
             batch_size=int(solution.get("batch_size", 64)),
+            dtype=str(solution.get("dtype", "float32")),
             device=device,
         )
         if predictor_name == "transformer":
@@ -148,6 +149,7 @@ def build_predictor(
                 name="model_directory",
             ),
             batch_size=int(solution.get("batch_size", 64)),
+            dtype=str(solution.get("dtype", "float32")),
             device=device,
         )
         return CascadePredictor(
@@ -171,6 +173,7 @@ def build_predictor(
                 name="model_directory",
             ),
             batch_size=int(solution.get("batch_size", 64)),
+            dtype=str(solution.get("dtype", "float32")),
             device=device,
         )
         return StackingPredictor.load(

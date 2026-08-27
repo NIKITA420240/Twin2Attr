@@ -313,7 +313,10 @@ uv run python run.py train \
 
 При `hpo_trials > 1` итоговые `learning_rate` и `weight_decay` выбирает Optuna
 из диапазонов `hpo_learning_rate_min/max` и `hpo_weight_decay_min/max`.
-Поле `batch_size` относится только к финальному Transformer-инференсу.
+Параметры финального Transformer-инференса вынесены в секцию `inference`:
+`inference.transformer.batch_size` задаёт размер батча, а
+`inference.transformer.dtype` — точность вычислений (`float32`, `float16` или
+`bfloat16`). Для H100 рекомендуется `bfloat16`.
 
 Пути моделей задаются рядом с их параметрами через `artifact_dir` или
 `artifact_path`. `training.resolved_config_path` задаёт место для полного
@@ -404,7 +407,8 @@ OmegaConf используется только на границе загруз
 {
   "predictor": "transformer",
   "model_directory": "models/twin2attr/transformer",
-  "batch_size": 64
+  "batch_size": 512,
+  "dtype": "bfloat16"
 }
 ```
 

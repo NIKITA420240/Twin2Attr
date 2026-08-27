@@ -98,7 +98,8 @@ def build_solution_manifest(
 
     if artifacts.transformer_dir is not None:
         solution["model_directory"] = map_path(artifacts.transformer_dir)
-        solution["batch_size"] = config.model_description.transformer.batch_size
+        solution["batch_size"] = config.inference.transformer.batch_size
+        solution["dtype"] = config.inference.transformer.dtype
     if artifacts.maxpooling_path is not None:
         solution["maxpooling_path"] = map_path(artifacts.maxpooling_path)
         solution["maxpooling_batch_size"] = (

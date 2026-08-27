@@ -82,6 +82,8 @@ class ModelTrainingStrategyTests(unittest.TestCase):
 
         self.assertEqual(solution["predictor"], "fusion")
         self.assertEqual(solution["model_directory"], "models/transformer")
+        self.assertEqual(solution["batch_size"], 512)
+        self.assertEqual(solution["dtype"], "bfloat16")
         self.assertEqual(
             solution["maxpooling_path"],
             "models/maxpooling.joblib",

@@ -54,6 +54,9 @@ inference:
   augmentation_model: null
   data_postprocessing_model: null
   solution_path: ${training.solution_path}
+  transformer:
+    batch_size: 512
+    dtype: bfloat16
 
 analysis:
   analysis_model: attribute_importance
@@ -132,8 +135,6 @@ model_description:
     max_grad_norm: 1.0
     early_stopping_patience: 2
     auto_find_batch_size: true
-    # Batch size used by predict after the trained model is loaded.
-    batch_size: 256
     head:
       # default keeps the Hugging Face CLS head; pooling builds the branches below.
       type: pooling
