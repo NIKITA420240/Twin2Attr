@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -40,14 +40,21 @@ DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS = 32
 class PreparedPairDataset(Dataset):
     """Expose prepared pairs to a PyTorch ``DataLoader`` without copying them."""
 
-    def __init__(self, pairs: Sequence[PreparedPair]) -> None:
+    def __init__(
+        self,
+        pairs: Sequence[PreparedPair],
+        *,
+        transform: Callable[[PreparedPair], PreparedPair] | None = None,
+    ) -> None:
         self._pairs = pairs
+        self._transform = transform
 
     def __len__(self) -> int:
         return len(self._pairs)
 
     def __getitem__(self, index: int) -> PreparedPair:
-        return self._pairs[index]
+        pair = self._pairs[index]
+        return pair if self._transform is None else self._transform(pair)
 
 
 def add_pair_special_tokens(

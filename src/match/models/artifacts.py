@@ -76,7 +76,6 @@ def build_solution_manifest(
         augmentation = config.augmentation_models.attribute_shuffle
         solution["augmentation_models"] = {
             "attribute_shuffle": {
-                "type": augmentation.type,
                 "shuffled_copies": augmentation.shuffled_copies,
                 "keep_original": augmentation.keep_original,
                 "seed": augmentation.seed,

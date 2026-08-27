@@ -143,7 +143,6 @@ def apply_manifest_augmentation(
         return value
 
     settings = AttributeShuffleSettings(
-        type=str(values.get("type", "")),
         shuffled_copies=int(values.get("shuffled_copies", 0)),
         keep_original=boolean("keep_original"),
         seed=int(values.get("seed", 0)),

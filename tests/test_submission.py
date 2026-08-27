@@ -219,7 +219,6 @@ class PredictorLoadingTests(unittest.TestCase):
             "augmentation_model": "attribute_shuffle",
             "augmentation_models": {
                 "attribute_shuffle": {
-                    "type": "attribute_shuffle",
                     "shuffled_copies": 2,
                     "keep_original": False,
                     "seed": 42,

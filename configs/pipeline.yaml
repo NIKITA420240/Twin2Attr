@@ -2,7 +2,7 @@
 training:
   model: stacking
   data_model: base_dataset
-  augmentation_model: null
+  augmentation_model: attribute_word_dropout
   data_postprocessing_model: null
   resolved_config_path: models/twin2attr/pipeline_config.yaml
   solution_path: solution.json
@@ -63,12 +63,19 @@ analysis:
 
 augmentation_models:
   attribute_shuffle:
-    type: attribute_shuffle
     shuffled_copies: 1
     keep_original: false
     seed: ${runtime.seed}
     shuffle_cards_independently: true
     skip_oversized: true
+
+  attribute_word_dropout:
+    pair_probability: 0.5
+    attribute_dropout_probability: 0.15
+    word_dropout_probability: 0.03
+    keyboard_typo_probability: 0.01
+    word_shuffle_probability: 0.0
+    seed: ${runtime.seed}
 
 data_postprocessing_models:
   attribute_sort:
