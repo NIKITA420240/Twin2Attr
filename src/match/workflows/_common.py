@@ -37,6 +37,7 @@ def resolve_max_length(
         sample_size=encoding.sample_size,
         hard_cap=encoding.hard_cap,
         use_field_tokens=encoding.use_field_tokens,
+        max_attribute_value_chars=encoding.max_attribute_value_chars,
         max_attribute_value_tokens=encoding.max_attribute_value_tokens,
     )
     logger.info("Pair encoding resolved max_length={}", max_length)

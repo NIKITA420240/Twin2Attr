@@ -27,6 +27,7 @@ class SequenceClassifierConfig:
     auto_find_batch_size: bool = True
     seed: int = 42
     use_field_tokens: bool = True
+    max_attribute_value_chars: int | None = None
     max_attribute_value_tokens: int | None = DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS
     max_length: int | None = None
     max_length_quantile: float = 0.95
@@ -80,6 +81,11 @@ class SequenceClassifierConfig:
         if self.early_stopping_patience < 1:
             raise ValueError("early_stopping_patience must be positive")
         if (
+            self.max_attribute_value_chars is not None
+            and self.max_attribute_value_chars < 1
+        ):
+            raise ValueError("max_attribute_value_chars must be positive or None")
+        if (
             self.max_attribute_value_tokens is not None
             and self.max_attribute_value_tokens < 1
         ):
@@ -127,6 +133,7 @@ class ResolvedTrainingConfig:
     layerwise_lr_decay: float
     weight_decay: float
     use_field_tokens: bool
+    max_attribute_value_chars: int | None
     max_attribute_value_tokens: int | None
     warmup_ratio: float
     lr_scheduler_type: str

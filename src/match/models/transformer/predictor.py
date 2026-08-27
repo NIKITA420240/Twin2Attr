@@ -140,9 +140,12 @@ def load_trained_classifier(
     return tokenizer, model
 
 
-def _encoding_settings(model: PreTrainedModel) -> tuple[bool, int | None]:
+def _encoding_settings(
+    model: PreTrainedModel,
+) -> tuple[bool, int | None, int | None]:
     return (
         bool(getattr(model.config, "match_use_field_tokens", True)),
+        getattr(model.config, "match_max_attribute_value_chars", None),
         getattr(
             model.config,
             "match_max_attribute_value_tokens",
@@ -156,8 +159,12 @@ def _inference_settings(
     tokenizer: PreTrainedTokenizerBase,
     pairs: Sequence[PreparedPair],
     max_length: int | None,
-) -> tuple[int, bool, int | None]:
-    use_field_tokens, max_attribute_value_tokens = _encoding_settings(model)
+) -> tuple[int, bool, int | None, int | None]:
+    (
+        use_field_tokens,
+        max_attribute_value_chars,
+        max_attribute_value_tokens,
+    ) = _encoding_settings(model)
     resolved_length = (
         max_length
         if max_length is not None
@@ -168,21 +175,31 @@ def _inference_settings(
             tokenizer,
             pairs,
             use_field_tokens=use_field_tokens,
+            max_attribute_value_chars=max_attribute_value_chars,
             max_attribute_value_tokens=max_attribute_value_tokens,
         )
-    return resolved_length, use_field_tokens, max_attribute_value_tokens
+    return (
+        resolved_length,
+        use_field_tokens,
+        max_attribute_value_chars,
+        max_attribute_value_tokens,
+    )
 
 
 def _estimated_card_length(
     card: PreparedCard,
+    max_attribute_value_chars: int | None,
     max_attribute_value_tokens: int | None,
 ) -> int:
     """Estimate token demand cheaply, without running the tokenizer twice."""
-    value_character_limit = (
-        None
-        if max_attribute_value_tokens is None
-        else max_attribute_value_tokens * 4
-    )
+    value_character_limit = max_attribute_value_chars
+    if max_attribute_value_tokens is not None:
+        token_estimate_limit = max_attribute_value_tokens * 4
+        value_character_limit = (
+            token_estimate_limit
+            if value_character_limit is None
+            else min(value_character_limit, token_estimate_limit)
+        )
     demand = len(card.name) + len(card.category)
     for key, value in card.attributes:
         value_length = len(value)
@@ -195,12 +212,21 @@ def _estimated_card_length(
 def _length_bucket_order(
     pairs: Sequence[PreparedPair],
     max_attribute_value_tokens: int | None,
+    max_attribute_value_chars: int | None = None,
 ) -> np.ndarray:
     """Return sorted-position to original-position indices for bucketing."""
     estimates = np.fromiter(
         (
-            _estimated_card_length(pair.left, max_attribute_value_tokens)
-            + _estimated_card_length(pair.right, max_attribute_value_tokens)
+            _estimated_card_length(
+                pair.left,
+                max_attribute_value_chars,
+                max_attribute_value_tokens,
+            )
+            + _estimated_card_length(
+                pair.right,
+                max_attribute_value_chars,
+                max_attribute_value_tokens,
+            )
             for pair in pairs
         ),
         dtype=np.int64,
@@ -229,11 +255,16 @@ def _inference_dataset(
     pairs: Sequence[PreparedPair],
     *,
     length_bucketing: bool,
+    max_attribute_value_chars: int | None,
     max_attribute_value_tokens: int | None,
 ) -> tuple[Dataset, np.ndarray | None]:
     if not length_bucketing or len(pairs) < 2:
         return PreparedPairDataset(pairs), None
-    order = _length_bucket_order(pairs, max_attribute_value_tokens)
+    order = _length_bucket_order(
+        pairs,
+        max_attribute_value_tokens,
+        max_attribute_value_chars,
+    )
     return _OrderedPreparedPairDataset(pairs, order), order
 
 
@@ -297,7 +328,7 @@ def predict_pair_logits(
         raise ValueError("prefetch_factor must be positive")
     if not pairs:
         return np.empty((0, 2), dtype=np.float32)
-    max_length, use_field_tokens, value_limit = _inference_settings(
+    max_length, use_field_tokens, char_limit, value_limit = _inference_settings(
         model,
         tokenizer,
         pairs,
@@ -307,14 +338,18 @@ def predict_pair_logits(
         tokenizer,
         max_length,
         use_field_tokens=use_field_tokens,
+        max_attribute_value_chars=char_limit,
         max_attribute_value_tokens=value_limit,
         include_labels=False,
-        padding_length_buckets=padding_length_buckets,
+        padding_length_buckets=(
+            padding_length_buckets if length_bucketing else None
+        ),
     )
     device = next(model.parameters()).device
     dataset, order = _inference_dataset(
         pairs,
         length_bucketing=length_bucketing,
+        max_attribute_value_chars=char_limit,
         max_attribute_value_tokens=value_limit,
     )
     current_batch_size = batch_size
@@ -463,7 +498,7 @@ def encode_pair_cls(
         raise ValueError("prefetch_factor must be positive")
     if not pairs:
         return np.empty((0, model.config.hidden_size), dtype=np.float32)
-    max_length, use_field_tokens, value_limit = _inference_settings(
+    max_length, use_field_tokens, char_limit, value_limit = _inference_settings(
         model,
         tokenizer,
         pairs,
@@ -473,14 +508,18 @@ def encode_pair_cls(
         tokenizer,
         max_length,
         use_field_tokens=use_field_tokens,
+        max_attribute_value_chars=char_limit,
         max_attribute_value_tokens=value_limit,
         include_labels=False,
-        padding_length_buckets=padding_length_buckets,
+        padding_length_buckets=(
+            padding_length_buckets if length_bucketing else None
+        ),
     )
     device = next(model.parameters()).device
     dataset, order = _inference_dataset(
         pairs,
         length_bucketing=length_bucketing,
+        max_attribute_value_chars=char_limit,
         max_attribute_value_tokens=value_limit,
     )
     current_batch_size = batch_size
@@ -557,10 +596,6 @@ class TransformerPredictor:
             raise ValueError("num_workers must not be negative")
         if self.prefetch_factor < 1:
             raise ValueError("prefetch_factor must be positive")
-        if self.padding_length_buckets is not None and not self.length_bucketing:
-            raise ValueError(
-                "padding_length_buckets requires length_bucketing=True"
-            )
         self.dtype = _normalize_inference_dtype(self.dtype)
         if self.compile_mode not in {
             "default",

@@ -68,6 +68,9 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
         )()
         model.config.match_max_length = max_length
         model.config.match_use_field_tokens = encoding.use_field_tokens
+        model.config.match_max_attribute_value_chars = (
+            encoding.max_attribute_value_chars
+        )
         model.config.match_max_attribute_value_tokens = (
             encoding.max_attribute_value_tokens
         )
@@ -84,6 +87,7 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
             "head_config": head_config.to_dict(),
             "max_length": max_length,
             "use_field_tokens": encoding.use_field_tokens,
+            "max_attribute_value_chars": encoding.max_attribute_value_chars,
             "max_attribute_value_tokens": encoding.max_attribute_value_tokens,
         }
         (output_path / "initialization_metadata.json").write_text(

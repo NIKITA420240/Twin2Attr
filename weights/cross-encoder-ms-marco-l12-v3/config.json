@@ -105,6 +105,7 @@
     "match": 1
   },
   "match_head_type": "pooling",
+  "match_max_attribute_value_chars": 256,
   "match_max_attribute_value_tokens": 16,
   "match_max_length": 256,
   "match_use_field_tokens": true,

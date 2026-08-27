@@ -236,9 +236,15 @@ augmentation и перед `PairEncoding`. В training и analysis по умол
 ```bash
 uv run python run.py train \
   features.normalization.enabled=true \
+  model_description.transformer.pair_encoding.max_attribute_value_chars=256 \
   model_description.transformer.pair_encoding.max_attribute_value_tokens=48 \
   model_description.transformer.pair_encoding.max_length=256
 ```
+
+`max_attribute_value_chars` ограничивает значение атрибута до токенизации,
+а `max_attribute_value_tokens` — после неё. Значение `null` отключает
+соответствующий предел. Обе настройки сохраняются в Transformer-артефакте и
+одинаково применяются при обучении и инференсе.
 
 Источник данных выбирается через `training.data_model`. `base_dataset` обучается
 только на человеческой разметке и создаёт group-aware validation. Для него пути

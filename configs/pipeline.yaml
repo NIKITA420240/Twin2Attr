@@ -122,6 +122,8 @@ model_description:
     artifact_dir: models/twin2attr/stacking/transformer
     pair_encoding:
       use_field_tokens: true
+      # null disables the pre-tokenization character hard cap.
+      max_attribute_value_chars: 256
       # null disables per-attribute value truncation.
       max_attribute_value_tokens: 16
       # null lets the training data determine the limit.
