@@ -127,6 +127,11 @@ class AppConfigTests(unittest.TestCase):
             "models/rubert-base-cased",
         )
         encoding = self.config.model_description.transformer.pair_encoding
+        batch_fields = (
+            self.config.model_description.transformer.tokenizer.batch_fields
+        )
+        self.assertTrue(batch_fields.enabled)
+        self.assertEqual(batch_fields.chunk_size, 16384)
         self.assertTrue(encoding.use_field_tokens)
         self.assertFalse(
             self.config.model_description.transformer.train_new_token_embeddings_only
@@ -251,6 +256,16 @@ class AppConfigTests(unittest.TestCase):
                 [
                     "model_description.transformer.pair_encoding."
                     "max_attribute_value_chars=0"
+                ],
+            )
+
+    def test_rejects_non_positive_tokenizer_field_chunk_size(self) -> None:
+        with self.assertRaisesRegex(ValueError, "chunk_size"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                [
+                    "model_description.transformer.tokenizer.batch_fields."
+                    "chunk_size=0"
                 ],
             )
 

@@ -246,6 +246,21 @@ uv run python run.py train \
 соответствующий предел. Обе настройки сохраняются в Transformer-артефакте и
 одинаково применяются при обучении и инференсе.
 
+Батчевое кодирование отдельных полей настраивается отдельно от правил сборки
+пары и не меняет итоговые token IDs:
+
+```yaml
+model_description:
+  transformer:
+    tokenizer:
+      batch_fields:
+        enabled: true
+        chunk_size: 16384
+```
+
+`chunk_size` здесь означает число названий, категорий, ключей и значений в
+одном вызове fast tokenizer, а не число товарных пар для Transformer.
+
 Источник данных выбирается через `training.data_model`. `base_dataset` обучается
 только на человеческой разметке и создаёт group-aware validation. Для него пути
 и параметры разделения находятся в `data_model_description.base_dataset`:

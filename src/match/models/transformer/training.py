@@ -183,6 +183,8 @@ def train_sequence_classifier(
         use_field_tokens=config.use_field_tokens,
         max_attribute_value_chars=config.max_attribute_value_chars,
         max_attribute_value_tokens=config.max_attribute_value_tokens,
+        batch_fields=config.batch_fields,
+        field_chunk_size=config.field_chunk_size,
     )
     initialize_model = model_factory(
         config.model_path,
@@ -296,6 +298,8 @@ def train_sequence_classifier(
         layerwise_lr_decay=learning_rate_multipliers.layerwise_decay,
         weight_decay=best_hyperparameters["weight_decay"],
         use_field_tokens=config.use_field_tokens,
+        batch_fields=config.batch_fields,
+        field_chunk_size=config.field_chunk_size,
         max_attribute_value_chars=config.max_attribute_value_chars,
         max_attribute_value_tokens=config.max_attribute_value_tokens,
         warmup_ratio=config.warmup_ratio,
@@ -325,6 +329,7 @@ def train_sequence_classifier(
 def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
     parameters = config.model_description.transformer
     encoding = parameters.pair_encoding
+    batch_fields = parameters.tokenizer.batch_fields
     return SequenceClassifierConfig(
         model_path=parameters.pretrained_model_path,
         max_epochs=parameters.max_epochs,
@@ -350,6 +355,8 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
         auto_find_batch_size=parameters.auto_find_batch_size,
         seed=config.runtime.seed,
         use_field_tokens=encoding.use_field_tokens,
+        batch_fields=batch_fields.enabled,
+        field_chunk_size=batch_fields.chunk_size,
         max_attribute_value_chars=encoding.max_attribute_value_chars,
         max_attribute_value_tokens=encoding.max_attribute_value_tokens,
         max_length=encoding.max_length,

@@ -171,18 +171,19 @@ def _encode_card_sections(
     max_attribute_value_tokens: int | None,
     preserve_attribute_order: bool = False,
 ) -> tuple[list[int], list[tuple[str, list[int]]], int]:
+    required_texts, attribute_texts = _card_section_texts(
+        card,
+        use_field_tokens=use_field_tokens,
+        max_attribute_value_chars=max_attribute_value_chars,
+    )
     required: list[int] = []
-    for key, value in (("name", card.name), ("category", card.category)):
-        text = f"{KEY_TOKEN} {key} {VAL_TOKEN} {value}" if use_field_tokens else f"{key}: {value}"
+    for text in required_texts:
         required.extend(tokenizer.encode(text, add_special_tokens=False))
 
     attributes: list[tuple[str, list[int]]] = []
-    for key, value in card.attributes:
-        if max_attribute_value_chars is not None:
-            value = value[:max_attribute_value_chars]
-        prefix = f"{KEY_TOKEN} {key} {VAL_TOKEN}" if use_field_tokens else f"{key}:"
+    for key, prefix, value in attribute_texts:
         prefix_ids = tokenizer.encode(prefix, add_special_tokens=False)
-        value_ids = tokenizer.encode(f" {value}", add_special_tokens=False)
+        value_ids = tokenizer.encode(value, add_special_tokens=False)
         if max_attribute_value_tokens is not None:
             value_ids = value_ids[:max_attribute_value_tokens]
         attributes.append((str(key), prefix_ids + value_ids))
@@ -190,6 +191,114 @@ def _encode_card_sections(
         attributes.sort(key=lambda attribute: len(attribute[1]))
     demand = len(required) + sum(len(token_ids) for _, token_ids in attributes)
     return required, attributes, demand
+
+
+def _card_section_texts(
+    card: PreparedCard,
+    *,
+    use_field_tokens: bool,
+    max_attribute_value_chars: int | None,
+) -> tuple[tuple[str, str], list[tuple[str, str, str]]]:
+    required = tuple(
+        f"{KEY_TOKEN} {key} {VAL_TOKEN} {value}"
+        if use_field_tokens
+        else f"{key}: {value}"
+        for key, value in (("name", card.name), ("category", card.category))
+    )
+    attributes: list[tuple[str, str, str]] = []
+    for key, value in card.attributes:
+        if max_attribute_value_chars is not None:
+            value = value[:max_attribute_value_chars]
+        prefix = (
+            f"{KEY_TOKEN} {key} {VAL_TOKEN}"
+            if use_field_tokens
+            else f"{key}:"
+        )
+        attributes.append((str(key), prefix, f" {value}"))
+    return required, attributes
+
+
+class _PreencodedTokenizer:
+    """Replay batched field encodings through the scalar assembly path."""
+
+    def __init__(
+        self,
+        tokenizer: PreTrainedTokenizerBase,
+        texts: Sequence[str],
+        input_ids: Sequence[Sequence[int]],
+    ) -> None:
+        self._tokenizer = tokenizer
+        self._texts = texts
+        self._input_ids = input_ids
+        self._index = 0
+
+    def __getattr__(self, name: str):
+        return getattr(self._tokenizer, name)
+
+    def encode(self, text: str, *, add_special_tokens: bool = False) -> list[int]:
+        if add_special_tokens:
+            raise ValueError("batched field encoding does not add special tokens")
+        if self._index >= len(self._texts) or self._texts[self._index] != text:
+            raise RuntimeError("batched field tokenization order is inconsistent")
+        result = list(self._input_ids[self._index])
+        self._index += 1
+        return result
+
+    def require_consumed(self) -> None:
+        if self._index != len(self._texts):
+            raise RuntimeError("batched field tokenization left unused encodings")
+
+
+def _batch_encode_prepared_pairs(
+    tokenizer: PreTrainedTokenizerBase,
+    pairs: Sequence[PreparedPair],
+    *,
+    max_length: int,
+    special_token_count: int,
+    use_field_tokens: bool,
+    max_attribute_value_chars: int | None,
+    max_attribute_value_tokens: int | None,
+    field_chunk_size: int,
+) -> list[dict[str, list[int]]]:
+    texts: list[str] = []
+    for pair in pairs:
+        for card in (pair.left, pair.right):
+            required, attributes = _card_section_texts(
+                card,
+                use_field_tokens=use_field_tokens,
+                max_attribute_value_chars=max_attribute_value_chars,
+            )
+            texts.extend(required)
+            for _, prefix, value in attributes:
+                texts.extend((prefix, value))
+
+    input_ids: list[list[int]] = []
+    for offset in range(0, len(texts), field_chunk_size):
+        encoded = tokenizer(
+            texts[offset : offset + field_chunk_size],
+            add_special_tokens=False,
+            padding=False,
+            truncation=False,
+            return_attention_mask=False,
+            return_token_type_ids=False,
+        )
+        input_ids.extend(encoded["input_ids"])
+
+    queued_tokenizer = _PreencodedTokenizer(tokenizer, texts, input_ids)
+    encoded_pairs = [
+        _encode_prepared_pair(
+            queued_tokenizer,
+            pair,
+            max_length=max_length,
+            special_token_count=special_token_count,
+            use_field_tokens=use_field_tokens,
+            max_attribute_value_chars=max_attribute_value_chars,
+            max_attribute_value_tokens=max_attribute_value_tokens,
+        )
+        for pair in pairs
+    ]
+    queued_tokenizer.require_consumed()
+    return encoded_pairs
 
 
 @dataclass(frozen=True, slots=True)
@@ -519,6 +628,8 @@ class PairEncodingCollator:
         max_attribute_value_tokens: int | None = DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
         include_labels: bool = True,
         padding_length_buckets: tuple[int, ...] | None = None,
+        batch_fields: bool = False,
+        field_chunk_size: int = 16_384,
     ) -> None:
         if max_length < 1:
             raise ValueError("max_length must be positive")
@@ -526,6 +637,8 @@ class PairEncodingCollator:
             raise ValueError("max_attribute_value_chars must be positive or None")
         if max_attribute_value_tokens is not None and max_attribute_value_tokens < 1:
             raise ValueError("max_attribute_value_tokens must be positive or None")
+        if field_chunk_size < 1:
+            raise ValueError("field_chunk_size must be positive")
         if padding_length_buckets is not None:
             if not padding_length_buckets or any(
                 isinstance(value, bool)
@@ -554,6 +667,8 @@ class PairEncodingCollator:
         self.max_attribute_value_tokens = max_attribute_value_tokens
         self.include_labels = include_labels
         self.padding_length_buckets = padding_length_buckets
+        self.batch_fields = batch_fields
+        self.field_chunk_size = field_chunk_size
         self.special_token_count = _pair_special_token_count(tokenizer)
         if max_length <= self.special_token_count:
             raise ValueError("max_length must leave room for pair content after special tokens")
@@ -561,18 +676,30 @@ class PairEncodingCollator:
     def __call__(self, pairs: list[PreparedPair]) -> dict[str, torch.Tensor]:
         if not pairs:
             raise ValueError("cannot collate an empty batch")
-        encoded_pairs = [
-            _encode_prepared_pair(
+        if self.batch_fields:
+            encoded_pairs = _batch_encode_prepared_pairs(
                 self.tokenizer,
-                pair,
+                pairs,
                 max_length=self.max_length,
                 special_token_count=self.special_token_count,
                 use_field_tokens=self.use_field_tokens,
                 max_attribute_value_chars=self.max_attribute_value_chars,
                 max_attribute_value_tokens=self.max_attribute_value_tokens,
+                field_chunk_size=self.field_chunk_size,
             )
-            for pair in pairs
-        ]
+        else:
+            encoded_pairs = [
+                _encode_prepared_pair(
+                    self.tokenizer,
+                    pair,
+                    max_length=self.max_length,
+                    special_token_count=self.special_token_count,
+                    use_field_tokens=self.use_field_tokens,
+                    max_attribute_value_chars=self.max_attribute_value_chars,
+                    max_attribute_value_tokens=self.max_attribute_value_tokens,
+                )
+                for pair in pairs
+            ]
         padding: bool | str = True
         padding_max_length: int | None = None
         if self.padding_length_buckets is not None:

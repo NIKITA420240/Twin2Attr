@@ -97,6 +97,12 @@ def build_predictor(
     torch_compile = solution.get("torch_compile", {})
     if not isinstance(torch_compile, Mapping):
         raise ValueError("solution field 'torch_compile' must be an object")
+    tokenizer = solution.get("tokenizer", {})
+    if not isinstance(tokenizer, Mapping):
+        raise ValueError("solution field 'tokenizer' must be an object")
+    batch_fields = tokenizer.get("batch_fields", {})
+    if not isinstance(batch_fields, Mapping):
+        raise ValueError("solution field 'tokenizer.batch_fields' must be an object")
     length_bucketing, padding_length_buckets = _length_bucketing_options(
         solution
     )
@@ -120,6 +126,8 @@ def build_predictor(
             ),
             length_bucketing=length_bucketing,
             padding_length_buckets=padding_length_buckets,
+            batch_fields=bool(batch_fields.get("enabled", False)),
+            field_chunk_size=int(batch_fields.get("chunk_size", 16_384)),
             compile_enabled=bool(torch_compile.get("enabled", False)),
             compile_mode=str(torch_compile.get("mode", "reduce-overhead")),
             compile_dynamic=bool(torch_compile.get("dynamic", True)),
@@ -207,6 +215,8 @@ def build_predictor(
             ),
             length_bucketing=length_bucketing,
             padding_length_buckets=padding_length_buckets,
+            batch_fields=bool(batch_fields.get("enabled", False)),
+            field_chunk_size=int(batch_fields.get("chunk_size", 16_384)),
             compile_enabled=bool(torch_compile.get("enabled", False)),
             compile_mode=str(torch_compile.get("mode", "reduce-overhead")),
             compile_dynamic=bool(torch_compile.get("dynamic", True)),
@@ -242,6 +252,8 @@ def build_predictor(
             ),
             length_bucketing=length_bucketing,
             padding_length_buckets=padding_length_buckets,
+            batch_fields=bool(batch_fields.get("enabled", False)),
+            field_chunk_size=int(batch_fields.get("chunk_size", 16_384)),
             compile_enabled=bool(torch_compile.get("enabled", False)),
             compile_mode=str(torch_compile.get("mode", "reduce-overhead")),
             compile_dynamic=bool(torch_compile.get("dynamic", True)),

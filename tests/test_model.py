@@ -46,6 +46,24 @@ class TransformersV5BertTokenizer(FakeTokenizer):
     sep_token_id = 102
     model_input_names = ["input_ids", "token_type_ids", "attention_mask"]
 
+    def __call__(
+        self,
+        texts,
+        *,
+        add_special_tokens,
+        padding,
+        truncation,
+        return_attention_mask,
+        return_token_type_ids,
+    ):
+        del padding, truncation, return_attention_mask, return_token_type_ids
+        return {
+            "input_ids": [
+                self.encode(text, add_special_tokens=add_special_tokens)
+                for text in texts
+            ]
+        }
+
     def pad(self, rows, *, padding, max_length=None, return_tensors):
         self.last_padding = padding
         self.last_max_length = max_length
@@ -165,6 +183,46 @@ class SequenceClassifierModelTests(unittest.TestCase):
         self.assertEqual(batch["input_ids"].shape[1], expected_length)
         self.assertEqual(tokenizer.last_padding, "max_length")
         self.assertEqual(tokenizer.last_max_length, expected_length)
+
+    def test_batched_field_tokenization_matches_scalar_encoding(self) -> None:
+        tokenizer = TransformersV5BertTokenizer()
+        pairs = [
+            PreparedPair(
+                PreparedCard(
+                    1,
+                    "left product",
+                    "category",
+                    (("color", "deep black"), ("memory", "256 gb")),
+                ),
+                PreparedCard(
+                    2,
+                    "right product",
+                    "category",
+                    (("color", "black"),),
+                ),
+                None,
+                "category",
+            ),
+            _pair(3, "short", 4, "another product", 1),
+        ]
+        scalar = PairEncodingCollator(
+            tokenizer,
+            32,
+            use_field_tokens=False,
+            include_labels=False,
+        )(pairs)
+        batched = PairEncodingCollator(
+            tokenizer,
+            32,
+            use_field_tokens=False,
+            include_labels=False,
+            batch_fields=True,
+            field_chunk_size=3,
+        )(pairs)
+
+        self.assertEqual(set(scalar), set(batched))
+        for name in scalar:
+            torch.testing.assert_close(scalar[name], batched[name])
 
     def test_collator_requires_final_bucket_to_match_max_length(self) -> None:
         with self.assertRaisesRegex(ValueError, "must equal max_length"):

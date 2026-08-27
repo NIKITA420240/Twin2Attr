@@ -120,6 +120,10 @@ model_description:
   transformer:
     pretrained_model_path: models/rubert-base-cased
     artifact_dir: models/twin2attr/stacking/transformer
+    tokenizer:
+      batch_fields:
+        enabled: false
+        chunk_size: 16384
     pair_encoding:
       use_field_tokens: true
       # null disables the pre-tokenization character hard cap.

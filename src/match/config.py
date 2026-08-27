@@ -352,6 +352,24 @@ class PairEncodingSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class BatchFieldsSettings:
+    enabled: bool = False
+    chunk_size: int = 16_384
+
+    def __post_init__(self) -> None:
+        if self.chunk_size < 1:
+            raise ValueError(
+                "model_description.transformer.tokenizer.batch_fields."
+                "chunk_size must be positive"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class TransformerTokenizerSettings:
+    batch_fields: BatchFieldsSettings = BatchFieldsSettings()
+
+
+@dataclass(frozen=True, slots=True)
 class TransformerHeadParameters:
     type: str = "default"
     poolings: tuple[str, ...] = ("cls",)
@@ -401,6 +419,7 @@ class TransformerHeadParameters:
 class TransformerParameters:
     pretrained_model_path: str
     artifact_dir: Path
+    tokenizer: TransformerTokenizerSettings
     pair_encoding: PairEncodingSettings
     max_epochs: int
     hpo_trials: int
@@ -966,6 +985,14 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     attribute_sort = _section(data_postprocessing_models, "attribute_sort")
     model_description = _section(resolved, "model_description")
     transformer = _section(model_description, "transformer")
+    tokenizer_value = transformer.get("tokenizer", {})
+    if not isinstance(tokenizer_value, Mapping):
+        raise ValueError("config section 'transformer.tokenizer' must be a mapping")
+    batch_fields_value = tokenizer_value.get("batch_fields", {})
+    if not isinstance(batch_fields_value, Mapping):
+        raise ValueError(
+            "config section 'transformer.tokenizer.batch_fields' must be a mapping"
+        )
     encoding = _section(transformer, "pair_encoding")
     transformer_head_value = transformer.get("head", {})
     if not isinstance(transformer_head_value, Mapping):
@@ -1200,6 +1227,18 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 artifact_dir=_path(
                     _required(transformer, "artifact_dir"),
                     "model_description.transformer.artifact_dir",
+                ),
+                tokenizer=TransformerTokenizerSettings(
+                    batch_fields=BatchFieldsSettings(
+                        enabled=_bool(
+                            batch_fields_value.get("enabled", False),
+                            "model_description.transformer.tokenizer."
+                            "batch_fields.enabled",
+                        ),
+                        chunk_size=int(
+                            batch_fields_value.get("chunk_size", 16_384)
+                        ),
+                    )
                 ),
                 pair_encoding=PairEncodingSettings(
                     use_field_tokens=_bool(
@@ -1520,6 +1559,7 @@ __all__ = [
     "AttributeWordDropoutSettings",
     "AugmentationModelsSettings",
     "BaseDatasetSettings",
+    "BatchFieldsSettings",
     "BoostingParameters",
     "CascadeParameters",
     "ConfigSource",
@@ -1546,6 +1586,7 @@ __all__ = [
     "TransformerHeadParameters",
     "TransformerInferenceSettings",
     "TransformerParameters",
+    "TransformerTokenizerSettings",
     "load_app_config",
     "load_app_config_file",
     "save_app_config",

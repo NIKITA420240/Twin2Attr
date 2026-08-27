@@ -317,6 +317,8 @@ def predict_pair_logits(
     non_blocking_transfer: bool = True,
     length_bucketing: bool = False,
     padding_length_buckets: tuple[int, ...] | None = None,
+    batch_fields: bool = False,
+    field_chunk_size: int = 16_384,
     _forward_model: Any | None = None,
 ) -> np.ndarray:
     """Return the two classifier logits for every prepared pair."""
@@ -344,6 +346,8 @@ def predict_pair_logits(
         padding_length_buckets=(
             padding_length_buckets if length_bucketing else None
         ),
+        batch_fields=batch_fields,
+        field_chunk_size=field_chunk_size,
     )
     device = next(model.parameters()).device
     dataset, order = _inference_dataset(
@@ -410,6 +414,8 @@ def predict_match_probabilities(
     non_blocking_transfer: bool = True,
     length_bucketing: bool = False,
     padding_length_buckets: tuple[int, ...] | None = None,
+    batch_fields: bool = False,
+    field_chunk_size: int = 16_384,
     _forward_model: Any | None = None,
 ) -> np.ndarray:
     logits = predict_pair_logits(
@@ -425,6 +431,8 @@ def predict_match_probabilities(
         non_blocking_transfer=non_blocking_transfer,
         length_bucketing=length_bucketing,
         padding_length_buckets=padding_length_buckets,
+        batch_fields=batch_fields,
+        field_chunk_size=field_chunk_size,
         _forward_model=_forward_model,
     )
     if not len(logits):
@@ -451,6 +459,8 @@ def predict_logit_margins(
     non_blocking_transfer: bool = True,
     length_bucketing: bool = False,
     padding_length_buckets: tuple[int, ...] | None = None,
+    batch_fields: bool = False,
+    field_chunk_size: int = 16_384,
     _forward_model: Any | None = None,
 ) -> np.ndarray:
     """Return ``match_logit - different_logit`` for stacking."""
@@ -467,6 +477,8 @@ def predict_logit_margins(
         non_blocking_transfer=non_blocking_transfer,
         length_bucketing=length_bucketing,
         padding_length_buckets=padding_length_buckets,
+        batch_fields=batch_fields,
+        field_chunk_size=field_chunk_size,
         _forward_model=_forward_model,
     )
     if not len(logits):
@@ -488,6 +500,8 @@ def encode_pair_cls(
     non_blocking_transfer: bool = True,
     length_bucketing: bool = False,
     padding_length_buckets: tuple[int, ...] | None = None,
+    batch_fields: bool = False,
+    field_chunk_size: int = 16_384,
     _backbone_model: Any | None = None,
 ) -> np.ndarray:
     if batch_size < 1:
@@ -514,6 +528,8 @@ def encode_pair_cls(
         padding_length_buckets=(
             padding_length_buckets if length_bucketing else None
         ),
+        batch_fields=batch_fields,
+        field_chunk_size=field_chunk_size,
     )
     device = next(model.parameters()).device
     dataset, order = _inference_dataset(
@@ -579,6 +595,8 @@ class TransformerPredictor:
     non_blocking_transfer: bool = True
     length_bucketing: bool = False
     padding_length_buckets: tuple[int, ...] | None = None
+    batch_fields: bool = False
+    field_chunk_size: int = 16_384
     compile_enabled: bool = False
     compile_mode: str = "reduce-overhead"
     compile_dynamic: bool = True
@@ -596,6 +614,8 @@ class TransformerPredictor:
             raise ValueError("num_workers must not be negative")
         if self.prefetch_factor < 1:
             raise ValueError("prefetch_factor must be positive")
+        if self.field_chunk_size < 1:
+            raise ValueError("field_chunk_size must be positive")
         self.dtype = _normalize_inference_dtype(self.dtype)
         if self.compile_mode not in {
             "default",
@@ -631,6 +651,8 @@ class TransformerPredictor:
         non_blocking_transfer: bool = True,
         length_bucketing: bool = False,
         padding_length_buckets: tuple[int, ...] | None = None,
+        batch_fields: bool = False,
+        field_chunk_size: int = 16_384,
         compile_enabled: bool = False,
         compile_mode: str = "reduce-overhead",
         compile_dynamic: bool = True,
@@ -652,6 +674,8 @@ class TransformerPredictor:
             non_blocking_transfer=non_blocking_transfer,
             length_bucketing=length_bucketing,
             padding_length_buckets=padding_length_buckets,
+            batch_fields=batch_fields,
+            field_chunk_size=field_chunk_size,
             compile_enabled=compile_enabled,
             compile_mode=compile_mode,
             compile_dynamic=compile_dynamic,
@@ -674,6 +698,8 @@ class TransformerPredictor:
             non_blocking_transfer=self.non_blocking_transfer,
             length_bucketing=self.length_bucketing,
             padding_length_buckets=self.padding_length_buckets,
+            batch_fields=self.batch_fields,
+            field_chunk_size=self.field_chunk_size,
             _backbone_model=self._compiled_backbone,
         )
 
@@ -690,6 +716,8 @@ class TransformerPredictor:
             non_blocking_transfer=self.non_blocking_transfer,
             length_bucketing=self.length_bucketing,
             padding_length_buckets=self.padding_length_buckets,
+            batch_fields=self.batch_fields,
+            field_chunk_size=self.field_chunk_size,
             _forward_model=self._compiled_model,
         )
 
@@ -706,6 +734,8 @@ class TransformerPredictor:
             non_blocking_transfer=self.non_blocking_transfer,
             length_bucketing=self.length_bucketing,
             padding_length_buckets=self.padding_length_buckets,
+            batch_fields=self.batch_fields,
+            field_chunk_size=self.field_chunk_size,
             _forward_model=self._compiled_model,
         )
 
