@@ -222,6 +222,21 @@ def _validate_transformer_artifact(directory: Path) -> None:
             ) from error
 
 
+def _validate_onnx_artifacts(directory: Path, *, predictor: str) -> None:
+    onnx_directory = directory / "onnx"
+    required = (
+        ("encoder.onnx",)
+        if predictor == "fusion"
+        else ("classifier.onnx",)
+    )
+    missing = [name for name in required if not (onnx_directory / name).is_file()]
+    if missing:
+        raise FileNotFoundError(
+            "ONNX Runtime backend requires exported Transformer graphs in "
+            f"{onnx_directory}: {missing}"
+        )
+
+
 def _skip_file(path: Path, *, source_root: Path) -> bool:
     relative = path.relative_to(source_root)
     if any(part in _SKIPPED_DIRECTORY_NAMES for part in relative.parts):
@@ -339,6 +354,11 @@ def build_submission_archive(
         _validate_resource(resource)
     if artifacts.transformer_dir is not None:
         _validate_transformer_artifact(artifacts.transformer_dir)
+        if config.inference.transformer.backend == "onnxruntime":
+            _validate_onnx_artifacts(
+                artifacts.transformer_dir,
+                predictor=artifacts.predictor,
+            )
 
     solution = build_solution_manifest(
         config,

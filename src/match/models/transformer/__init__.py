@@ -4,15 +4,33 @@ from importlib import import_module
 from typing import Any
 
 _EXPORTS = {
+    "OnnxExportResult": (".onnx_export", "OnnxExportResult"),
+    "OnnxRuntimeTransformerExecutor": (
+        ".onnx_runtime",
+        "OnnxRuntimeTransformerExecutor",
+    ),
+    "PyTorchTransformerExecutor": (
+        ".pytorch_executor",
+        "PyTorchTransformerExecutor",
+    ),
     "ResolvedTrainingConfig": (".config", "ResolvedTrainingConfig"),
     "SequenceClassifierConfig": (".config", "SequenceClassifierConfig"),
     "TrainingResult": (".config", "TrainingResult"),
     "TransformerPredictor": (".predictor", "TransformerPredictor"),
+    "TransformerExecutor": (".executor", "TransformerExecutor"),
+    "TransformerExecutorOutOfMemoryError": (
+        ".executor",
+        "TransformerExecutorOutOfMemoryError",
+    ),
     "TransformerTrainer": (".training", "TransformerTrainer"),
     "compute_class_weights": (".metrics", "compute_class_weights"),
     "compute_macro_pr_auc": (".metrics", "compute_macro_pr_auc"),
     "compute_pr_auc": (".metrics", "compute_pr_auc"),
     "encode_pair_cls": (".predictor", "encode_pair_cls"),
+    "export_transformer_to_onnx": (
+        ".onnx_export",
+        "export_transformer_to_onnx",
+    ),
     "load_trained_classifier": (".predictor", "load_trained_classifier"),
     "predict_match_probabilities": (".predictor", "predict_match_probabilities"),
     "predict_logit_margins": (".predictor", "predict_logit_margins"),

@@ -70,6 +70,129 @@ class PredictorLoadingTests(unittest.TestCase):
         )
         load_maxpooling.assert_not_called()
 
+    def test_loads_onnxruntime_transformer_backend(self) -> None:
+        transformer = Mock()
+        with (
+            patch(
+                "match.models.transformer.factory.build_transformer_predictor",
+                return_value=transformer,
+            ) as load_transformer,
+            patch(
+                "match.models.transformer.predictor.TransformerPredictor.load"
+            ) as load_pytorch,
+        ):
+            result = build_predictor(
+                {
+                    "predictor": "transformer",
+                    "backend": "onnxruntime",
+                    "model_directory": "models/transformer",
+                    "batch_size": 2048,
+                    "onnxruntime": {
+                        "provider": "cuda",
+                        "io_binding": True,
+                        "graph_optimization": "all",
+                        "fallback_to_pytorch": False,
+                    },
+                    "onnx_artifacts": {
+                        "classifier_path": "onnx/classifier.onnx",
+                        "encoder_path": "onnx/encoder.onnx",
+                    },
+                },
+                self.root,
+            )
+
+        self.assertIs(result, transformer)
+        load_transformer.assert_called_once()
+        call = load_transformer.call_args
+        self.assertEqual(call.args[1], self.root)
+        self.assertEqual(call.kwargs, {"usage": "classifier"})
+        load_pytorch.assert_not_called()
+
+    def test_onnx_fallback_handles_only_expected_initialization_errors(self) -> None:
+        transformer = object()
+        solution = {
+            "predictor": "transformer",
+            "backend": "onnxruntime",
+            "model_directory": "models/transformer",
+            "onnxruntime": {"fallback_to_pytorch": True},
+        }
+        executor = Mock()
+        executor.validate.side_effect = FileNotFoundError("graph missing")
+        with (
+            patch(
+                "match.models.transformer.factory.AutoTokenizer.from_pretrained",
+                return_value=object(),
+            ),
+            patch("pathlib.Path.read_text", return_value="{}"),
+            patch(
+                "match.models.transformer.factory.OnnxRuntimeTransformerExecutor",
+                return_value=executor,
+            ),
+            patch(
+                "match.models.transformer.predictor.TransformerPredictor.load",
+                return_value=transformer,
+            ) as load_pytorch,
+        ):
+            result = build_predictor(solution, self.root)
+
+        self.assertIs(result, transformer)
+        load_pytorch.assert_called_once()
+
+    def test_onnx_fallback_does_not_hide_configuration_errors(self) -> None:
+        solution = {
+            "predictor": "transformer",
+            "backend": "onnxruntime",
+            "model_directory": "models/transformer",
+            "onnxruntime": {"fallback_to_pytorch": True},
+        }
+        with (
+            patch(
+                "match.models.transformer.factory.AutoTokenizer.from_pretrained",
+                side_effect=ValueError("invalid tokenizer configuration"),
+            ),
+            patch(
+                "match.models.transformer.predictor.TransformerPredictor.load"
+            ) as load_pytorch,
+            self.assertRaisesRegex(ValueError, "invalid tokenizer"),
+        ):
+            build_predictor(solution, self.root)
+
+        load_pytorch.assert_not_called()
+
+    def test_onnx_factory_passes_device_id_to_executor(self) -> None:
+        solution = {
+            "predictor": "transformer",
+            "backend": "onnxruntime",
+            "model_directory": "models/transformer",
+            "onnxruntime": {
+                "provider": "cuda",
+                "device_id": 2,
+                "fallback_to_pytorch": False,
+            },
+        }
+        executor = Mock()
+        predictor = object()
+        with (
+            patch(
+                "match.models.transformer.factory.AutoTokenizer.from_pretrained",
+                return_value=object(),
+            ),
+            patch("pathlib.Path.read_text", return_value="{}"),
+            patch(
+                "match.models.transformer.factory.OnnxRuntimeTransformerExecutor",
+                return_value=executor,
+            ) as executor_type,
+            patch(
+                "match.models.transformer.factory.TransformerPredictor",
+                return_value=predictor,
+            ),
+        ):
+            result = build_predictor(solution, self.root)
+
+        self.assertIs(result, predictor)
+        self.assertEqual(executor_type.call_args.kwargs["device_id"], 2)
+        executor.validate.assert_called_once_with(classifier=True, encoder=False)
+
     def test_loads_only_maxpooling_for_maxpooling_prediction(self) -> None:
         maxpooling = object()
         with (

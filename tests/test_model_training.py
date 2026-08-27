@@ -82,6 +82,7 @@ class ModelTrainingStrategyTests(unittest.TestCase):
 
         self.assertEqual(solution["predictor"], "fusion")
         self.assertEqual(solution["model_directory"], "models/transformer")
+        self.assertEqual(solution["backend"], "pytorch")
         self.assertEqual(solution["batch_size"], 512)
         self.assertEqual(solution["dtype"], "bfloat16")
         self.assertEqual(solution["num_workers"], 8)
@@ -110,6 +111,28 @@ class ModelTrainingStrategyTests(unittest.TestCase):
                 "enabled": False,
                 "mode": "reduce-overhead",
                 "dynamic": True,
+            },
+        )
+        self.assertEqual(
+            solution["onnxruntime"],
+            {
+                "provider": "cuda",
+                "device_id": 0,
+                "io_binding": True,
+                "graph_optimization": "all",
+                "fallback_to_pytorch": True,
+            },
+        )
+        self.assertEqual(
+            solution["onnx_artifacts"],
+            {
+                "enabled": False,
+                "precision": "float16",
+                "opset": 18,
+                "classifier_path": "onnx/classifier.onnx",
+                "encoder_path": "onnx/encoder.onnx",
+                "dynamic_batch": True,
+                "dynamic_sequence_length": True,
             },
         )
         self.assertEqual(

@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 import polars as pl
+import torch
 
 from match.models import (
     FusionPredictor,
@@ -14,6 +15,30 @@ from match.models import (
     TransformerPredictor,
 )
 from match.models.transformer.predictor import _CompiledForward
+from match.models.transformer.pytorch_executor import PyTorchTransformerExecutor
+
+
+class _FakeExecutor:
+    device = torch.device("cpu")
+    output_dim = 16
+    max_length = 32
+    use_field_tokens = False
+    max_attribute_value_chars = None
+    max_attribute_value_tokens = 16
+
+    def predict_logits(self, batch, *, non_blocking):
+        del batch, non_blocking
+        return np.array([[0.0, 1.0]], dtype=np.float32)
+
+    def encode_cls(self, batch, *, non_blocking):
+        del batch, non_blocking
+        return np.ones((1, 16), dtype=np.float32)
+
+    def validate(self, *, classifier, encoder):
+        del classifier, encoder
+
+    def clear_cache(self):
+        pass
 
 
 def _batch() -> PredictionBatch:
@@ -30,21 +55,21 @@ class ModelInterfaceTests(unittest.TestCase):
         model = SimpleNamespace(
             config=SimpleNamespace(hidden_size=16),
             base_model=object(),
+            eval=Mock(),
         )
         with patch(
-            "match.models.transformer.predictor.torch.compile",
+            "match.models.transformer.pytorch_executor.torch.compile",
             side_effect=lambda module, **kwargs: Mock(),
         ) as compile_model:
-            predictor = TransformerPredictor(
-                object(),
+            executor = PyTorchTransformerExecutor(
                 model,
                 compile_enabled=True,
                 compile_mode="reduce-overhead",
                 compile_dynamic=True,
             )
 
-        self.assertIsNotNone(predictor._compiled_model)
-        self.assertIsNotNone(predictor._compiled_backbone)
+        self.assertIsNotNone(executor._compiled_model)
+        self.assertIsNotNone(executor._compiled_backbone)
         self.assertEqual(compile_model.call_count, 2)
         compile_model.assert_any_call(
             model,
@@ -61,7 +86,7 @@ class ModelInterfaceTests(unittest.TestCase):
         eager = Mock(return_value="eager result")
         compiled = Mock(side_effect=RuntimeError("unsupported graph"))
         with patch(
-            "match.models.transformer.predictor.torch.compile",
+            "match.models.transformer.pytorch_executor.torch.compile",
             return_value=compiled,
         ):
             forward = _CompiledForward(
@@ -78,18 +103,15 @@ class ModelInterfaceTests(unittest.TestCase):
         eager.assert_called_once()
 
     def test_transformer_supports_encoding_and_prediction(self) -> None:
-        model = SimpleNamespace(config=SimpleNamespace(hidden_size=16))
-        predictor = TransformerPredictor(object(), model, batch_size=8)
+        predictor = TransformerPredictor(object(), _FakeExecutor(), batch_size=8)
         encoded = np.ones((1, 16), dtype=np.float32)
         probabilities = np.array([0.8], dtype=np.float32)
 
         with (
-            patch(
-                "match.models.transformer.predictor.encode_pair_cls",
-                return_value=encoded,
-            ),
-            patch(
-                "match.models.transformer.predictor.predict_match_probabilities",
+            patch.object(TransformerPredictor, "encode", return_value=encoded),
+            patch.object(
+                TransformerPredictor,
+                "predict_proba",
                 return_value=probabilities,
             ),
         ):

@@ -98,6 +98,7 @@ def build_solution_manifest(
 
     if artifacts.transformer_dir is not None:
         solution["model_directory"] = map_path(artifacts.transformer_dir)
+        solution["backend"] = config.inference.transformer.backend
         solution["batch_size"] = config.inference.transformer.batch_size
         solution["dtype"] = config.inference.transformer.dtype
         solution["num_workers"] = config.inference.transformer.num_workers
@@ -130,6 +131,24 @@ def build_solution_manifest(
             "enabled": config.inference.transformer.torch_compile.enabled,
             "mode": config.inference.transformer.torch_compile.mode,
             "dynamic": config.inference.transformer.torch_compile.dynamic,
+        }
+        onnxruntime = config.inference.transformer.onnxruntime
+        solution["onnxruntime"] = {
+            "provider": onnxruntime.provider,
+            "device_id": onnxruntime.device_id,
+            "io_binding": onnxruntime.io_binding,
+            "graph_optimization": onnxruntime.graph_optimization,
+            "fallback_to_pytorch": onnxruntime.fallback_to_pytorch,
+        }
+        onnx_export = config.model_description.transformer.export.onnx
+        solution["onnx_artifacts"] = {
+            "enabled": onnx_export.enabled,
+            "precision": onnx_export.precision,
+            "opset": onnx_export.opset,
+            "classifier_path": "onnx/classifier.onnx",
+            "encoder_path": "onnx/encoder.onnx",
+            "dynamic_batch": onnx_export.dynamic_batch,
+            "dynamic_sequence_length": onnx_export.dynamic_sequence_length,
         }
     if artifacts.maxpooling_path is not None:
         solution["maxpooling_path"] = map_path(artifacts.maxpooling_path)

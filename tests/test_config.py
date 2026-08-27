@@ -43,6 +43,7 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(self.config.inference.transformer.batch_size, 512)
         self.assertEqual(self.config.inference.transformer.dtype, "bfloat16")
+        self.assertEqual(self.config.inference.transformer.backend, "pytorch")
         self.assertEqual(self.config.inference.transformer.num_workers, 8)
         self.assertEqual(self.config.inference.transformer.prefetch_factor, 2)
         self.assertTrue(self.config.inference.transformer.pin_memory)
@@ -65,6 +66,12 @@ class AppConfigTests(unittest.TestCase):
         self.assertTrue(
             self.config.inference.transformer.torch_compile.dynamic
         )
+        onnxruntime = self.config.inference.transformer.onnxruntime
+        self.assertEqual(onnxruntime.provider, "cuda")
+        self.assertEqual(onnxruntime.device_id, 0)
+        self.assertTrue(onnxruntime.io_binding)
+        self.assertEqual(onnxruntime.graph_optimization, "all")
+        self.assertTrue(onnxruntime.fallback_to_pytorch)
         self.assertFalse(hasattr(self.config, "artifacts"))
         self.assertEqual(
             self.config.analysis.analysis_model,
@@ -132,6 +139,12 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertTrue(batch_fields.enabled)
         self.assertEqual(batch_fields.chunk_size, 16384)
+        onnx_export = self.config.model_description.transformer.export.onnx
+        self.assertFalse(onnx_export.enabled)
+        self.assertEqual(onnx_export.opset, 18)
+        self.assertEqual(onnx_export.precision, "float16")
+        self.assertTrue(onnx_export.export_classifier)
+        self.assertTrue(onnx_export.export_encoder)
         self.assertTrue(encoding.use_field_tokens)
         self.assertFalse(
             self.config.model_description.transformer.train_new_token_embeddings_only
@@ -288,6 +301,34 @@ class AppConfigTests(unittest.TestCase):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
                 ["inference.transformer.dtype=int8"],
+            )
+
+    def test_rejects_unknown_transformer_backend(self) -> None:
+        with self.assertRaisesRegex(ValueError, "backend"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                ["inference.transformer.backend=unknown"],
+            )
+
+    def test_rejects_unknown_onnxruntime_provider(self) -> None:
+        with self.assertRaisesRegex(ValueError, "provider"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                ["inference.transformer.onnxruntime.provider=unknown"],
+            )
+
+    def test_rejects_negative_onnxruntime_device_id(self) -> None:
+        with self.assertRaisesRegex(ValueError, "device_id"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                ["inference.transformer.onnxruntime.device_id=-1"],
+            )
+
+    def test_rejects_invalid_onnx_export_precision(self) -> None:
+        with self.assertRaisesRegex(ValueError, "precision"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                ["model_description.transformer.export.onnx.precision=int8"],
             )
 
     def test_rejects_negative_transformer_inference_workers(self) -> None:
