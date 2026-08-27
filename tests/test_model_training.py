@@ -89,6 +89,15 @@ class ModelTrainingStrategyTests(unittest.TestCase):
         self.assertTrue(solution["pin_memory"])
         self.assertTrue(solution["non_blocking_transfer"])
         self.assertEqual(
+            solution["tokenizer"],
+            {
+                "batch_fields": {
+                    "enabled": True,
+                    "chunk_size": 16384,
+                }
+            },
+        )
+        self.assertEqual(
             solution["length_bucketing"],
             {
                 "enabled": False,

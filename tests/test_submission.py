@@ -35,6 +35,12 @@ class PredictorLoadingTests(unittest.TestCase):
                         "enabled": True,
                         "padding_length_buckets": [64, 128],
                     },
+                    "tokenizer": {
+                        "batch_fields": {
+                            "enabled": True,
+                            "chunk_size": 8192,
+                        }
+                    },
                     "torch_compile": {
                         "enabled": True,
                         "mode": "reduce-overhead",
@@ -55,6 +61,8 @@ class PredictorLoadingTests(unittest.TestCase):
             non_blocking_transfer=True,
             length_bucketing=True,
             padding_length_buckets=(64, 128),
+            batch_fields=True,
+            field_chunk_size=8192,
             compile_enabled=True,
             compile_mode="reduce-overhead",
             compile_dynamic=True,
@@ -172,6 +180,8 @@ class PredictorLoadingTests(unittest.TestCase):
             non_blocking_transfer=True,
             length_bucketing=False,
             padding_length_buckets=None,
+            batch_fields=False,
+            field_chunk_size=16384,
             compile_enabled=False,
             compile_mode="reduce-overhead",
             compile_dynamic=True,
@@ -221,6 +231,8 @@ class PredictorLoadingTests(unittest.TestCase):
             non_blocking_transfer=True,
             length_bucketing=False,
             padding_length_buckets=None,
+            batch_fields=False,
+            field_chunk_size=16384,
             compile_enabled=False,
             compile_mode="reduce-overhead",
             compile_dynamic=True,

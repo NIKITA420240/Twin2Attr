@@ -108,6 +108,15 @@ def build_solution_manifest(
         solution["non_blocking_transfer"] = (
             config.inference.transformer.non_blocking_transfer
         )
+        batch_fields = (
+            config.model_description.transformer.tokenizer.batch_fields
+        )
+        solution["tokenizer"] = {
+            "batch_fields": {
+                "enabled": batch_fields.enabled,
+                "chunk_size": batch_fields.chunk_size,
+            }
+        }
         length_bucketing = config.inference.transformer.length_bucketing
         solution["length_bucketing"] = {
             "enabled": length_bucketing.enabled,

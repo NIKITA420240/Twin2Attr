@@ -7,6 +7,12 @@
   "prefetch_factor": 2,
   "pin_memory": true,
   "non_blocking_transfer": true,
+  "tokenizer": {
+    "batch_fields": {
+      "enabled": true,
+      "chunk_size": 16384
+    }
+  },
   "length_bucketing": {
     "enabled": true,
     "padding_length_buckets": [64, 96, 128, 160, 192, 224, 256]
