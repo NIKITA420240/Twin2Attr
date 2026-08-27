@@ -30,6 +30,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+onnx-cpu = [
+    "onnx>=1.16",
+    "onnxconverter-common>=1.14",
+    "onnxruntime>=1.18",
+]
+onnx-gpu = [
+    "onnx>=1.16",
+    "onnxconverter-common>=1.14",
+    "onnxruntime-gpu>=1.18",
+]
 notebooks = [
     "ipykernel>=6.29",
     "jupyterlab>=4.2",

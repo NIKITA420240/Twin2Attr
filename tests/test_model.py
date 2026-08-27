@@ -8,6 +8,18 @@ import numpy as np
 import torch
 from transformers import BertConfig, BertForSequenceClassification, BertTokenizerFast
 
+from match.models.transformer import (
+    SequenceClassifierConfig,
+    compute_class_weights,
+    compute_pr_auc,
+    train_sequence_classifier,
+)
+from match.models.transformer.onnx_export import _ClassifierGraph, _EncoderGraph
+from match.models.transformer.predictor import (
+    _length_bucket_order,
+    _restore_original_order,
+    predict_logit_margins,
+)
 from match.pair_encoding import (
     PairEncodingCollator,
     PreparedPairDataset,
@@ -15,17 +27,6 @@ from match.pair_encoding import (
     infer_pair_max_length,
 )
 from match.prepare_data import PreparedCard, PreparedPair
-from match.models.transformer import (
-    SequenceClassifierConfig,
-    compute_class_weights,
-    compute_pr_auc,
-    train_sequence_classifier,
-)
-from match.models.transformer.predictor import (
-    _length_bucket_order,
-    _restore_original_order,
-    predict_logit_margins,
-)
 
 
 class FakeTokenizer:
@@ -132,6 +133,46 @@ def _pair(
 
 
 class SequenceClassifierModelTests(unittest.TestCase):
+    def test_onnx_wrappers_match_pytorch_outputs(self) -> None:
+        model = BertForSequenceClassification(
+            BertConfig(
+                vocab_size=32,
+                hidden_size=16,
+                num_hidden_layers=1,
+                num_attention_heads=2,
+                intermediate_size=32,
+                num_labels=2,
+            )
+        ).eval()
+        input_ids = torch.randint(0, 32, (3, 8))
+        attention_mask = torch.ones_like(input_ids)
+        token_type_ids = torch.zeros_like(input_ids)
+
+        with torch.inference_mode():
+            expected_logits = model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+            ).logits
+            expected_cls = model.base_model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+            ).last_hidden_state[:, 0, :]
+            logits = _ClassifierGraph(model, token_type_ids=True)(
+                input_ids,
+                attention_mask,
+                token_type_ids,
+            )
+            cls_embedding = _EncoderGraph(model, token_type_ids=True)(
+                input_ids,
+                attention_mask,
+                token_type_ids,
+            )
+
+        torch.testing.assert_close(logits, expected_logits)
+        torch.testing.assert_close(cls_embedding, expected_cls)
+
     def test_config_rejects_invalid_compute_budget(self) -> None:
         with self.assertRaises(ValueError):
             SequenceClassifierConfig("checkpoint", hpo_trials=0)

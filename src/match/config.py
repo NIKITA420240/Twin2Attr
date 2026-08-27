@@ -207,6 +207,37 @@ class TorchCompileSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class OnnxRuntimeSettings:
+    provider: str = "cuda"
+    device_id: int = 0
+    io_binding: bool = True
+    graph_optimization: str = "all"
+    fallback_to_pytorch: bool = True
+
+    def __post_init__(self) -> None:
+        if isinstance(self.device_id, bool) or self.device_id < 0:
+            raise ValueError(
+                "inference.transformer.onnxruntime.device_id must be a "
+                "non-negative integer"
+            )
+        if self.provider not in {"cpu", "cuda", "tensorrt"}:
+            raise ValueError(
+                "inference.transformer.onnxruntime.provider must be one of: "
+                "cpu, cuda, tensorrt"
+            )
+        if self.graph_optimization not in {
+            "disabled",
+            "basic",
+            "extended",
+            "all",
+        }:
+            raise ValueError(
+                "inference.transformer.onnxruntime.graph_optimization must be "
+                "one of: disabled, basic, extended, all"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class LengthBucketingSettings:
     enabled: bool = True
     padding_length_buckets: tuple[int, ...] | None = None
@@ -236,12 +267,14 @@ class LengthBucketingSettings:
 class TransformerInferenceSettings:
     batch_size: int
     dtype: str
+    backend: str = "pytorch"
     num_workers: int = 0
     prefetch_factor: int = 2
     pin_memory: bool = True
     non_blocking_transfer: bool = True
     length_bucketing: LengthBucketingSettings = LengthBucketingSettings()
     torch_compile: TorchCompileSettings = TorchCompileSettings()
+    onnxruntime: OnnxRuntimeSettings = OnnxRuntimeSettings()
 
     def __post_init__(self) -> None:
         if self.batch_size < 1:
@@ -258,6 +291,11 @@ class TransformerInferenceSettings:
             raise ValueError(
                 "inference.transformer.dtype must be one of: float32, float16, "
                 "bfloat16"
+            )
+        if self.backend not in {"pytorch", "onnxruntime"}:
+            raise ValueError(
+                "inference.transformer.backend must be one of: pytorch, "
+                "onnxruntime"
             )
 
 
@@ -370,6 +408,38 @@ class TransformerTokenizerSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class OnnxExportSettings:
+    enabled: bool = False
+    opset: int = 18
+    precision: str = "float16"
+    dynamic_batch: bool = True
+    dynamic_sequence_length: bool = True
+    export_classifier: bool = True
+    export_encoder: bool = True
+
+    def __post_init__(self) -> None:
+        if self.opset < 14:
+            raise ValueError(
+                "model_description.transformer.export.onnx.opset must be at "
+                "least 14"
+            )
+        if self.precision not in {"float32", "float16"}:
+            raise ValueError(
+                "model_description.transformer.export.onnx.precision must be "
+                "float32 or float16"
+            )
+        if self.enabled and not (self.export_classifier or self.export_encoder):
+            raise ValueError(
+                "enabled ONNX export requires classifier or encoder output"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class TransformerExportSettings:
+    onnx: OnnxExportSettings = OnnxExportSettings()
+
+
+@dataclass(frozen=True, slots=True)
 class TransformerHeadParameters:
     type: str = "default"
     poolings: tuple[str, ...] = ("cls",)
@@ -421,6 +491,7 @@ class TransformerParameters:
     artifact_dir: Path
     tokenizer: TransformerTokenizerSettings
     pair_encoding: PairEncodingSettings
+    export: TransformerExportSettings
     max_epochs: int
     hpo_trials: int
     learning_rate: float
@@ -839,6 +910,15 @@ def _optional_int(value: Any) -> int | None:
     return int(value)
 
 
+def _int(value: Any, name: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"config value {name!r} must be an integer")
+    try:
+        return int(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"config value {name!r} must be an integer") from error
+
+
 def _bool(value: Any, name: str) -> bool:
     if isinstance(value, bool):
         return value
@@ -966,6 +1046,11 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         raise ValueError(
             "config section 'inference.transformer.torch_compile' must be a mapping"
         )
+    onnxruntime_value = inference_transformer.get("onnxruntime", {})
+    if not isinstance(onnxruntime_value, Mapping):
+        raise ValueError(
+            "config section 'inference.transformer.onnxruntime' must be a mapping"
+        )
     analysis = _section(resolved, "analysis")
     analysis_models = _section(resolved, "analysis_models")
     attribute_importance = _section(
@@ -992,6 +1077,14 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     if not isinstance(batch_fields_value, Mapping):
         raise ValueError(
             "config section 'transformer.tokenizer.batch_fields' must be a mapping"
+        )
+    transformer_export_value = transformer.get("export", {})
+    if not isinstance(transformer_export_value, Mapping):
+        raise ValueError("config section 'transformer.export' must be a mapping")
+    onnx_export_value = transformer_export_value.get("onnx", {})
+    if not isinstance(onnx_export_value, Mapping):
+        raise ValueError(
+            "config section 'transformer.export.onnx' must be a mapping"
         )
     encoding = _section(transformer, "pair_encoding")
     transformer_head_value = transformer.get("head", {})
@@ -1105,6 +1198,9 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             transformer=TransformerInferenceSettings(
                 batch_size=int(_required(inference_transformer, "batch_size")),
                 dtype=str(_required(inference_transformer, "dtype")).lower(),
+                backend=str(
+                    inference_transformer.get("backend", "pytorch")
+                ).lower(),
                 num_workers=int(inference_transformer.get("num_workers", 0)),
                 prefetch_factor=int(
                     inference_transformer.get("prefetch_factor", 2)
@@ -1129,6 +1225,26 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     dynamic=_bool(
                         torch_compile_value.get("dynamic", True),
                         "inference.transformer.torch_compile.dynamic",
+                    ),
+                ),
+                onnxruntime=OnnxRuntimeSettings(
+                    provider=str(
+                        onnxruntime_value.get("provider", "cuda")
+                    ).lower(),
+                    device_id=_int(
+                        onnxruntime_value.get("device_id", 0),
+                        "inference.transformer.onnxruntime.device_id",
+                    ),
+                    io_binding=_bool(
+                        onnxruntime_value.get("io_binding", True),
+                        "inference.transformer.onnxruntime.io_binding",
+                    ),
+                    graph_optimization=str(
+                        onnxruntime_value.get("graph_optimization", "all")
+                    ).lower(),
+                    fallback_to_pytorch=_bool(
+                        onnxruntime_value.get("fallback_to_pytorch", True),
+                        "inference.transformer.onnxruntime.fallback_to_pytorch",
                     ),
                 ),
             ),
@@ -1237,6 +1353,40 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                         ),
                         chunk_size=int(
                             batch_fields_value.get("chunk_size", 16_384)
+                        ),
+                    )
+                ),
+                export=TransformerExportSettings(
+                    onnx=OnnxExportSettings(
+                        enabled=_bool(
+                            onnx_export_value.get("enabled", False),
+                            "model_description.transformer.export.onnx.enabled",
+                        ),
+                        opset=int(onnx_export_value.get("opset", 18)),
+                        precision=str(
+                            onnx_export_value.get("precision", "float16")
+                        ).lower(),
+                        dynamic_batch=_bool(
+                            onnx_export_value.get("dynamic_batch", True),
+                            "model_description.transformer.export.onnx."
+                            "dynamic_batch",
+                        ),
+                        dynamic_sequence_length=_bool(
+                            onnx_export_value.get(
+                                "dynamic_sequence_length", True
+                            ),
+                            "model_description.transformer.export.onnx."
+                            "dynamic_sequence_length",
+                        ),
+                        export_classifier=_bool(
+                            onnx_export_value.get("export_classifier", True),
+                            "model_description.transformer.export.onnx."
+                            "export_classifier",
+                        ),
+                        export_encoder=_bool(
+                            onnx_export_value.get("export_encoder", True),
+                            "model_description.transformer.export.onnx."
+                            "export_encoder",
                         ),
                     )
                 ),
@@ -1577,12 +1727,15 @@ __all__ = [
     "ModelDescriptionSettings",
     "NerSettings",
     "NormalizationSettings",
+    "OnnxExportSettings",
+    "OnnxRuntimeSettings",
     "PairEncodingSettings",
     "PhysicalFeatureSettings",
     "RuntimeSettings",
     "SubmissionSettings",
     "TrainingSettings",
     "TorchCompileSettings",
+    "TransformerExportSettings",
     "TransformerHeadParameters",
     "TransformerInferenceSettings",
     "TransformerParameters",

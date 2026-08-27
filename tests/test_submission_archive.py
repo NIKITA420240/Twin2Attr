@@ -379,6 +379,44 @@ class SubmissionArchiveTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "trained Twin2Attr classifier"):
                 build_submission_archive(config, project_root=root)
 
+    def test_onnx_backend_requires_and_packages_classifier_graph(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._project(root)
+            transformer = self._trained_transformer(root)
+            config = replace(
+                self._with_model_artifacts(
+                    self.config,
+                    transformer=transformer,
+                ),
+                inference=replace(
+                    self.config.inference,
+                    transformer=replace(
+                        self.config.inference.transformer,
+                        backend="onnxruntime",
+                    ),
+                ),
+                submission=replace(
+                    self.config.submission,
+                    output_path=root / "submission.zip",
+                ),
+            )
+
+            with self.assertRaisesRegex(FileNotFoundError, "classifier.onnx"):
+                build_submission_archive(config, project_root=root)
+
+            onnx_directory = transformer / "onnx"
+            onnx_directory.mkdir()
+            (onnx_directory / "classifier.onnx").write_bytes(b"onnx")
+            result = build_submission_archive(config, project_root=root)
+
+            with ZipFile(result.path) as archive:
+                names = set(archive.namelist())
+                solution = json.loads(archive.read("solution.json"))
+
+        self.assertEqual(solution["backend"], "onnxruntime")
+        self.assertIn("models/transformer/onnx/classifier.onnx", names)
+
     def test_cascade_packages_both_models_and_catboost_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

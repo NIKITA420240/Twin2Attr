@@ -55,6 +55,9 @@ inference:
   data_postprocessing_model: null
   solution_path: ${training.solution_path}
   transformer:
+    # Keep PyTorch as the default until the exported ONNX graphs pass the
+    # accuracy and end-to-end H100 benchmark gates.
+    backend: pytorch
     batch_size: 512
     dtype: bfloat16
     # Prepare and prefetch batches in parallel while the GPU runs the model.
@@ -77,6 +80,12 @@ inference:
       enabled: false
       mode: reduce-overhead
       dynamic: true
+    onnxruntime:
+      provider: cuda
+      device_id: 0
+      io_binding: true
+      graph_optimization: all
+      fallback_to_pytorch: true
 
 analysis:
   analysis_model: attribute_importance
@@ -122,8 +131,17 @@ model_description:
     artifact_dir: models/twin2attr/stacking/transformer
     tokenizer:
       batch_fields:
-        enabled: false
+        enabled: true
         chunk_size: 16384
+    export:
+      onnx:
+        enabled: false
+        opset: 18
+        precision: float16
+        dynamic_batch: true
+        dynamic_sequence_length: true
+        export_classifier: true
+        export_encoder: true
     pair_encoding:
       use_field_tokens: true
       # null disables the pre-tokenization character hard cap.

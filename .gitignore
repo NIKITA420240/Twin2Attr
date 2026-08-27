@@ -25,5 +25,6 @@ __pycache__/
 Thumbs.db
 
 *.log
+:memory:.ses
 /artifacts/
 /experiments/

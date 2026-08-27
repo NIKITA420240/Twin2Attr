@@ -348,6 +348,56 @@ uv run python run.py train \
 `torch_compile` включает оптимизированный PyTorch-граф; если compilation backend
 не поддерживает операцию, predictor автоматически продолжает в eager mode.
 
+Готовый Transformer можно дополнительно экспортировать в два ONNX-графа:
+`onnx/classifier.onnx` возвращает logits, а `onnx/encoder.onnx` — CLS embedding
+для fusion. Stacking использует classifier-граф для logit margin. Экспорт
+выполняется после сохранения обученной модели:
+
+```yaml
+model_description:
+  transformer:
+    export:
+      onnx:
+        enabled: true
+        opset: 18
+        precision: float16
+        dynamic_batch: true
+        dynamic_sequence_length: true
+        export_classifier: true
+        export_encoder: true
+```
+
+Существующий артефакт можно экспортировать без повторного обучения:
+
+```bash
+uv run --extra onnx-cpu python -m match.models.transformer.onnx_export \
+  models/twin2attr/transformer --precision float16
+```
+
+На машине с NVIDIA GPU вместо `onnx-cpu` устанавливается extra `onnx-gpu`.
+Backend выбирается независимо от экспорта:
+
+```yaml
+inference:
+  transformer:
+    backend: onnxruntime
+    batch_size: 2048
+    onnxruntime:
+      provider: cuda
+      device_id: 0
+      io_binding: true
+      graph_optimization: all
+      fallback_to_pytorch: true
+```
+
+`device_id` выбирает GPU (для единственной H100 это `0`). `io_binding` передаёт
+CUDA-тензоры по адресу без промежуточного преобразования в NumPy. При
+недоступном ONNX Runtime/provider или ошибке загрузки графа
+`fallback_to_pytorch: true` возвращает predictor к PyTorch. `torch_compile`
+используется только при PyTorch backend. Для TensorRT после проверки CUDA
+backend можно выбрать `provider: tensorrt`; TensorRT engine и timing cache
+создаются в `onnx/trt_cache`.
+
 Пути моделей задаются рядом с их параметрами через `artifact_dir` или
 `artifact_path`. `training.resolved_config_path` задаёт место для полного
 resolved-конфига, а `training.solution_path` — место записи inference manifest.

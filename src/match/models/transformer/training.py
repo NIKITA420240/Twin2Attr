@@ -271,6 +271,18 @@ def train_sequence_classifier(
     )
     trainer.save_model(str(output_path))
     tokenizer.save_pretrained(output_path)
+    if config.onnx_export_enabled:
+        from .onnx_export import export_transformer_to_onnx
+
+        export_transformer_to_onnx(
+            output_path,
+            opset=config.onnx_opset,
+            precision=config.onnx_precision,
+            dynamic_batch=config.onnx_dynamic_batch,
+            dynamic_sequence_length=config.onnx_dynamic_sequence_length,
+            export_classifier=config.onnx_export_classifier,
+            export_encoder=config.onnx_export_encoder,
+        )
 
     actual_batch_size = int(
         getattr(
@@ -330,6 +342,7 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
     parameters = config.model_description.transformer
     encoding = parameters.pair_encoding
     batch_fields = parameters.tokenizer.batch_fields
+    onnx_export = parameters.export.onnx
     return SequenceClassifierConfig(
         model_path=parameters.pretrained_model_path,
         max_epochs=parameters.max_epochs,
@@ -371,6 +384,13 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
             attention_hidden_dim=parameters.head.attention_hidden_dim,
             attention_num_heads=parameters.head.attention_num_heads,
         ),
+        onnx_export_enabled=onnx_export.enabled,
+        onnx_opset=onnx_export.opset,
+        onnx_precision=onnx_export.precision,
+        onnx_dynamic_batch=onnx_export.dynamic_batch,
+        onnx_dynamic_sequence_length=onnx_export.dynamic_sequence_length,
+        onnx_export_classifier=onnx_export.export_classifier,
+        onnx_export_encoder=onnx_export.export_encoder,
     )
 
 

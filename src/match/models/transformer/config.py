@@ -43,6 +43,13 @@ class SequenceClassifierConfig:
     lr_scheduler_type: str = "linear"
     head_learning_rate: float | None = None
     layerwise_lr_decay: float = 1.0
+    onnx_export_enabled: bool = False
+    onnx_opset: int = 18
+    onnx_precision: str = "float16"
+    onnx_dynamic_batch: bool = True
+    onnx_dynamic_sequence_length: bool = True
+    onnx_export_classifier: bool = True
+    onnx_export_encoder: bool = True
 
     def __post_init__(self) -> None:
         if not self.model_path.strip():
@@ -112,6 +119,14 @@ class SequenceClassifierConfig:
             raise ValueError("train_last_n_layers must be positive or None")
         if self.lr_scheduler_type not in {"linear", "cosine"}:
             raise ValueError("lr_scheduler_type must be 'linear' or 'cosine'")
+        if self.onnx_opset < 14:
+            raise ValueError("onnx_opset must be at least 14")
+        if self.onnx_precision not in {"float32", "float16"}:
+            raise ValueError("onnx_precision must be float32 or float16")
+        if self.onnx_export_enabled and not (
+            self.onnx_export_classifier or self.onnx_export_encoder
+        ):
+            raise ValueError("enabled ONNX export requires at least one graph")
 
     @property
     def resolved_embeddings_learning_rate(self) -> float:

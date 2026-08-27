@@ -1,6 +1,7 @@
 {
   "predictor": "transformer",
   "model_directory": "models\\twin2attr\\transformer",
+  "backend": "pytorch",
   "batch_size": 512,
   "dtype": "bfloat16",
   "num_workers": 8,
@@ -21,6 +22,22 @@
     "enabled": true,
     "mode": "reduce-overhead",
     "dynamic": true
+  },
+  "onnxruntime": {
+    "provider": "cuda",
+    "device_id": 0,
+    "io_binding": true,
+    "graph_optimization": "all",
+    "fallback_to_pytorch": true
+  },
+  "onnx_artifacts": {
+    "enabled": false,
+    "precision": "float16",
+    "opset": 18,
+    "classifier_path": "onnx/classifier.onnx",
+    "encoder_path": "onnx/encoder.onnx",
+    "dynamic_batch": true,
+    "dynamic_sequence_length": true
   },
   "normalization": {
     "enabled": true,
