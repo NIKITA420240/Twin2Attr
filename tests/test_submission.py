@@ -159,7 +159,7 @@ class PredictorLoadingTests(unittest.TestCase):
 
         load_pytorch.assert_not_called()
 
-    def test_onnx_factory_passes_device_id_to_executor(self) -> None:
+    def test_onnx_factory_passes_runtime_options_to_executor(self) -> None:
         solution = {
             "predictor": "transformer",
             "backend": "onnxruntime",
@@ -168,14 +168,37 @@ class PredictorLoadingTests(unittest.TestCase):
                 "provider": "cuda",
                 "device_id": 2,
                 "fallback_to_pytorch": False,
+                "tensorrt": {
+                    "engine_cache": {
+                        "enabled": True,
+                        "path": "cache/engines",
+                    },
+                    "timing_cache": {
+                        "enabled": True,
+                        "path": "cache/timing",
+                    },
+                    "profiles": {
+                        "min_batch_size": 1,
+                        "opt_batch_size": 512,
+                        "max_batch_size": 1024,
+                        "sequence_lengths": [64, 96, 128],
+                    },
+                },
             },
+            "onnx_artifacts": {"precision": "float16"},
         }
         executor = Mock()
         predictor = object()
         with (
             patch(
                 "match.models.transformer.factory.AutoTokenizer.from_pretrained",
-                return_value=object(),
+                return_value=SimpleNamespace(
+                    model_input_names=[
+                        "input_ids",
+                        "attention_mask",
+                        "token_type_ids",
+                    ]
+                ),
             ),
             patch("pathlib.Path.read_text", return_value="{}"),
             patch(
@@ -190,7 +213,18 @@ class PredictorLoadingTests(unittest.TestCase):
             result = build_predictor(solution, self.root)
 
         self.assertIs(result, predictor)
-        self.assertEqual(executor_type.call_args.kwargs["device_id"], 2)
+        executor_kwargs = executor_type.call_args.kwargs
+        self.assertEqual(executor_kwargs["device_id"], 2)
+        tensorrt = executor_kwargs["tensorrt"]
+        self.assertEqual(
+            tensorrt.engine_cache_path,
+            self.root / "models/transformer/cache/engines",
+        )
+        self.assertEqual(tensorrt.opt_batch_size, 512)
+        self.assertEqual(tensorrt.max_batch_size, 1024)
+        self.assertEqual(tensorrt.sequence_lengths, (64, 96, 128))
+        self.assertIn("token_type_ids", tensorrt.input_names)
+        self.assertTrue(tensorrt.fp16_enabled)
         executor.validate.assert_called_once_with(classifier=True, encoder=False)
 
     def test_loads_only_maxpooling_for_maxpooling_prediction(self) -> None:

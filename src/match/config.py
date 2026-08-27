@@ -207,12 +207,85 @@ class TorchCompileSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class TensorRTEngineCacheSettings:
+    enabled: bool = True
+    path: str = "onnx/trt_cache"
+
+    def __post_init__(self) -> None:
+        if self.enabled and not self.path.strip():
+            raise ValueError(
+                "inference.transformer.onnxruntime.tensorrt.engine_cache.path "
+                "must not be empty when the cache is enabled"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class TensorRTTimingCacheSettings:
+    enabled: bool = True
+    path: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.path is not None and not self.path.strip():
+            raise ValueError(
+                "inference.transformer.onnxruntime.tensorrt.timing_cache.path "
+                "must be null or a non-empty path"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class TensorRTProfileSettings:
+    min_batch_size: int = 1
+    opt_batch_size: int = 2048
+    max_batch_size: int = 2048
+    sequence_lengths: tuple[int, ...] = (64, 96, 128)
+
+    def __post_init__(self) -> None:
+        batches = (
+            self.min_batch_size,
+            self.opt_batch_size,
+            self.max_batch_size,
+        )
+        if any(isinstance(value, bool) or value < 1 for value in batches):
+            raise ValueError(
+                "TensorRT profile batch sizes must be positive integers"
+            )
+        if not (
+            self.min_batch_size
+            <= self.opt_batch_size
+            <= self.max_batch_size
+        ):
+            raise ValueError(
+                "TensorRT profile batch sizes must satisfy min <= opt <= max"
+            )
+        lengths = self.sequence_lengths
+        if not lengths or any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 1
+            for value in lengths
+        ):
+            raise ValueError(
+                "TensorRT profile sequence_lengths must contain positive integers"
+            )
+        if tuple(sorted(set(lengths))) != lengths:
+            raise ValueError(
+                "TensorRT profile sequence_lengths must be strictly increasing"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class TensorRTRuntimeSettings:
+    engine_cache: TensorRTEngineCacheSettings = TensorRTEngineCacheSettings()
+    timing_cache: TensorRTTimingCacheSettings = TensorRTTimingCacheSettings()
+    profiles: TensorRTProfileSettings = TensorRTProfileSettings()
+
+
+@dataclass(frozen=True, slots=True)
 class OnnxRuntimeSettings:
     provider: str = "cuda"
     device_id: int = 0
     io_binding: bool = True
     graph_optimization: str = "all"
     fallback_to_pytorch: bool = True
+    tensorrt: TensorRTRuntimeSettings = TensorRTRuntimeSettings()
 
     def __post_init__(self) -> None:
         if isinstance(self.device_id, bool) or self.device_id < 0:
@@ -933,6 +1006,76 @@ def _bool(value: Any, name: str) -> bool:
     raise ValueError(f"config value {name!r} must be a boolean")
 
 
+def _tensorrt_runtime_settings(
+    onnxruntime: Mapping[str, Any],
+) -> TensorRTRuntimeSettings:
+    value = onnxruntime.get("tensorrt", {})
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            "config section 'inference.transformer.onnxruntime.tensorrt' "
+            "must be a mapping"
+        )
+    engine_cache = value.get("engine_cache", {})
+    timing_cache = value.get("timing_cache", {})
+    profiles = value.get("profiles", {})
+    for name, section in (
+        ("engine_cache", engine_cache),
+        ("timing_cache", timing_cache),
+        ("profiles", profiles),
+    ):
+        if not isinstance(section, Mapping):
+            raise ValueError(
+                "config section 'inference.transformer.onnxruntime.tensorrt."
+                f"{name}' must be a mapping"
+            )
+    lengths_value = profiles.get("sequence_lengths", (64, 96, 128))
+    if not isinstance(lengths_value, Sequence) or isinstance(
+        lengths_value,
+        (str, bytes),
+    ):
+        raise ValueError(
+            "config field 'inference.transformer.onnxruntime.tensorrt."
+            "profiles.sequence_lengths' must be a sequence"
+        )
+    timing_path = timing_cache.get("path")
+    return TensorRTRuntimeSettings(
+        engine_cache=TensorRTEngineCacheSettings(
+            enabled=_bool(
+                engine_cache.get("enabled", True),
+                "inference.transformer.onnxruntime.tensorrt."
+                "engine_cache.enabled",
+            ),
+            path=str(engine_cache.get("path", "onnx/trt_cache")),
+        ),
+        timing_cache=TensorRTTimingCacheSettings(
+            enabled=_bool(
+                timing_cache.get("enabled", True),
+                "inference.transformer.onnxruntime.tensorrt."
+                "timing_cache.enabled",
+            ),
+            path=None if timing_path is None else str(timing_path),
+        ),
+        profiles=TensorRTProfileSettings(
+            min_batch_size=_int(
+                profiles.get("min_batch_size", 1),
+                "inference.transformer.onnxruntime.tensorrt."
+                "profiles.min_batch_size",
+            ),
+            opt_batch_size=_int(
+                profiles.get("opt_batch_size", 2048),
+                "inference.transformer.onnxruntime.tensorrt."
+                "profiles.opt_batch_size",
+            ),
+            max_batch_size=_int(
+                profiles.get("max_batch_size", 2048),
+                "inference.transformer.onnxruntime.tensorrt."
+                "profiles.max_batch_size",
+            ),
+            sequence_lengths=tuple(lengths_value),
+        ),
+    )
+
+
 def _dataset_splitter(
     values: Mapping[str, Any],
 ) -> DatasetSplitterSettings:
@@ -1246,6 +1389,7 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                         onnxruntime_value.get("fallback_to_pytorch", True),
                         "inference.transformer.onnxruntime.fallback_to_pytorch",
                     ),
+                    tensorrt=_tensorrt_runtime_settings(onnxruntime_value),
                 ),
             ),
         ),
@@ -1733,6 +1877,10 @@ __all__ = [
     "PhysicalFeatureSettings",
     "RuntimeSettings",
     "SubmissionSettings",
+    "TensorRTEngineCacheSettings",
+    "TensorRTProfileSettings",
+    "TensorRTRuntimeSettings",
+    "TensorRTTimingCacheSettings",
     "TrainingSettings",
     "TorchCompileSettings",
     "TransformerExportSettings",

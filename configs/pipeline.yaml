@@ -50,7 +50,7 @@ data_model_description:
 
 # transformer | maxpooling | fusion | boosting | cascade | stacking
 inference:
-  model: stacking
+  model: transformer
   augmentation_model: null
   data_postprocessing_model: null
   solution_path: ${training.solution_path}
@@ -86,6 +86,20 @@ inference:
       io_binding: true
       graph_optimization: all
       fallback_to_pytorch: true
+      tensorrt:
+        engine_cache:
+          enabled: true
+          path: onnx/trt_cache
+        timing_cache:
+          enabled: true
+        profiles:
+          min_batch_size: 1
+          opt_batch_size: 2048
+          max_batch_size: 2048
+          sequence_lengths:
+            - 64
+            - 96
+            - 128
 
 analysis:
   analysis_model: attribute_importance

@@ -28,7 +28,23 @@
     "device_id": 0,
     "io_binding": true,
     "graph_optimization": "all",
-    "fallback_to_pytorch": true
+    "fallback_to_pytorch": true,
+    "tensorrt": {
+      "engine_cache": {
+        "enabled": true,
+        "path": "onnx/trt_cache"
+      },
+      "timing_cache": {
+        "enabled": true,
+        "path": null
+      },
+      "profiles": {
+        "min_batch_size": 1,
+        "opt_batch_size": 2048,
+        "max_batch_size": 2048,
+        "sequence_lengths": [64, 96, 128]
+      }
+    }
   },
   "onnx_artifacts": {
     "enabled": false,

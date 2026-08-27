@@ -139,14 +139,44 @@ def build_solution_manifest(
             "io_binding": onnxruntime.io_binding,
             "graph_optimization": onnxruntime.graph_optimization,
             "fallback_to_pytorch": onnxruntime.fallback_to_pytorch,
+            "tensorrt": {
+                "engine_cache": {
+                    "enabled": onnxruntime.tensorrt.engine_cache.enabled,
+                    "path": onnxruntime.tensorrt.engine_cache.path,
+                },
+                "timing_cache": {
+                    "enabled": onnxruntime.tensorrt.timing_cache.enabled,
+                    "path": onnxruntime.tensorrt.timing_cache.path,
+                },
+                "profiles": {
+                    "min_batch_size": (
+                        onnxruntime.tensorrt.profiles.min_batch_size
+                    ),
+                    "opt_batch_size": (
+                        onnxruntime.tensorrt.profiles.opt_batch_size
+                    ),
+                    "max_batch_size": (
+                        onnxruntime.tensorrt.profiles.max_batch_size
+                    ),
+                    "sequence_lengths": list(
+                        onnxruntime.tensorrt.profiles.sequence_lengths
+                    ),
+                },
+            },
         }
         onnx_export = config.model_description.transformer.export.onnx
         solution["onnx_artifacts"] = {
             "enabled": onnx_export.enabled,
             "precision": onnx_export.precision,
             "opset": onnx_export.opset,
-            "classifier_path": "onnx/classifier.onnx",
-            "encoder_path": "onnx/encoder.onnx",
+            "classifier_path": (
+                "onnx/classifier.onnx"
+                if onnx_export.export_classifier
+                else None
+            ),
+            "encoder_path": (
+                "onnx/encoder.onnx" if onnx_export.export_encoder else None
+            ),
             "dynamic_batch": onnx_export.dynamic_batch,
             "dynamic_sequence_length": onnx_export.dynamic_sequence_length,
         }

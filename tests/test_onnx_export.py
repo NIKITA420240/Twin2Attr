@@ -63,7 +63,7 @@ class OnnxExportIntegrationTests(unittest.TestCase):
             config.match_max_attribute_value_chars = 256
             config.match_max_attribute_value_tokens = 16
             BertForSequenceClassification(config).save_pretrained(root)
-            export_transformer_to_onnx(root, precision="float32")
+            export_transformer_to_onnx(root, precision="float16")
 
             tokenizer, model = load_trained_classifier(root, device="cpu")
             pair = PreparedPair(
@@ -86,12 +86,12 @@ class OnnxExportIntegrationTests(unittest.TestCase):
             torch_logits = predict_pair_logits(model, tokenizer, pairs, batch_size=2)
             torch_embeddings = encode_pair_cls(model, tokenizer, pairs, batch_size=2)
 
-        np.testing.assert_allclose(onnx_logits, torch_logits, atol=1e-6, rtol=1e-5)
+        np.testing.assert_allclose(onnx_logits, torch_logits, atol=5e-3, rtol=5e-3)
         np.testing.assert_allclose(
             onnx_embeddings,
             torch_embeddings,
-            atol=1e-5,
-            rtol=1e-5,
+            atol=5e-3,
+            rtol=5e-3,
         )
 
 

@@ -1,0 +1,15 @@
+{
+  "directory": ".",
+  "classifier_path": "classifier.onnx",
+  "encoder_path": null,
+  "precision": "float16",
+  "opset": 18,
+  "max_length": 472,
+  "dynamic_batch": true,
+  "dynamic_sequence_length": true,
+  "input_names": [
+    "input_ids",
+    "attention_mask",
+    "token_type_ids"
+  ]
+}

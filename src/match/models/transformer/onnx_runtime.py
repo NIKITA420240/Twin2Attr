@@ -22,6 +22,51 @@ class OnnxRuntimeInitializationError(RuntimeError):
     """An exported graph could not be initialized by ONNX Runtime."""
 
 
+@dataclass(frozen=True, slots=True)
+class TensorRTExecutionOptions:
+    engine_cache_enabled: bool = True
+    engine_cache_path: Path | None = None
+    timing_cache_enabled: bool = True
+    timing_cache_path: Path | None = None
+    min_batch_size: int = 1
+    opt_batch_size: int = 2048
+    max_batch_size: int = 2048
+    sequence_lengths: tuple[int, ...] | None = None
+    input_names: tuple[str, ...] = ("input_ids", "attention_mask")
+    fp16_enabled: bool = False
+
+    def __post_init__(self) -> None:
+        batches = (
+            self.min_batch_size,
+            self.opt_batch_size,
+            self.max_batch_size,
+        )
+        if any(isinstance(value, bool) or value < 1 for value in batches):
+            raise ValueError("TensorRT profile batch sizes must be positive")
+        if not (
+            self.min_batch_size
+            <= self.opt_batch_size
+            <= self.max_batch_size
+        ):
+            raise ValueError("TensorRT batch profile must satisfy min <= opt <= max")
+        if self.sequence_lengths is not None:
+            if not self.sequence_lengths or any(
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 1
+                for value in self.sequence_lengths
+            ):
+                raise ValueError(
+                    "TensorRT sequence lengths must be positive integers"
+                )
+            if tuple(sorted(set(self.sequence_lengths))) != self.sequence_lengths:
+                raise ValueError(
+                    "TensorRT sequence lengths must be non-empty and increasing"
+                )
+        if not self.input_names or any(not name.strip() for name in self.input_names):
+            raise ValueError("TensorRT profile input names must not be empty")
+
+
 def _require_onnxruntime() -> Any:
     try:
         import onnxruntime as ort
@@ -70,6 +115,7 @@ class OnnxRuntimeTransformerExecutor:
     graph_optimization: str = "all"
     classifier_path: Path | None = None
     encoder_path: Path | None = None
+    tensorrt: TensorRTExecutionOptions = TensorRTExecutionOptions()
     _ort: Any = field(init=False, repr=False)
     _providers: list[Any] = field(init=False, repr=False)
     _device: torch.device = field(init=False, repr=False)
@@ -134,20 +180,64 @@ class OnnxRuntimeTransformerExecutor:
                 "CPUExecutionProvider",
             ], device
 
-        cache_path = self.model_directory / ONNX_DIRECTORY_NAME / "trt_cache"
-        cache_path.mkdir(parents=True, exist_ok=True)
+        default_cache_path = (
+            self.model_directory / ONNX_DIRECTORY_NAME / "trt_cache"
+        )
+        engine_cache_path = self.tensorrt.engine_cache_path or default_cache_path
+        timing_cache_path = self.tensorrt.timing_cache_path or engine_cache_path
+        try:
+            if self.tensorrt.engine_cache_enabled:
+                engine_cache_path.mkdir(parents=True, exist_ok=True)
+            if self.tensorrt.timing_cache_enabled:
+                timing_cache_path.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise OnnxRuntimeInitializationError(
+                f"failed to create TensorRT cache directory: {error}"
+            ) from error
         tensorrt_options = {
             "device_id": self.device_id,
             "user_compute_stream": compute_stream,
-            "trt_engine_cache_enable": True,
-            "trt_engine_cache_path": str(cache_path),
-            "trt_timing_cache_enable": True,
+            "trt_fp16_enable": self.tensorrt.fp16_enabled,
+            "trt_engine_cache_enable": self.tensorrt.engine_cache_enabled,
+            "trt_engine_cache_path": str(engine_cache_path),
+            "trt_timing_cache_enable": self.tensorrt.timing_cache_enabled,
+            "trt_timing_cache_path": str(timing_cache_path),
         }
+        tensorrt_options.update(self._profile_options())
         return [
             (requested, tensorrt_options),
             ("CUDAExecutionProvider", cuda_options),
             "CPUExecutionProvider",
         ], device
+
+    def _profile_options(self) -> dict[str, str]:
+        lengths = self.tensorrt.sequence_lengths
+        if lengths is None:
+            return {}
+        min_length = lengths[0]
+        opt_length = lengths[len(lengths) // 2]
+        max_length = lengths[-1]
+
+        def shapes(batch_size: int, sequence_length: int) -> str:
+            return ",".join(
+                f"{name}:{batch_size}x{sequence_length}"
+                for name in self.tensorrt.input_names
+            )
+
+        return {
+            "trt_profile_min_shapes": shapes(
+                self.tensorrt.min_batch_size,
+                min_length,
+            ),
+            "trt_profile_opt_shapes": shapes(
+                self.tensorrt.opt_batch_size,
+                opt_length,
+            ),
+            "trt_profile_max_shapes": shapes(
+                self.tensorrt.max_batch_size,
+                max_length,
+            ),
+        }
 
     @property
     def device(self) -> torch.device:
@@ -322,4 +412,5 @@ __all__ = [
     "OnnxRuntimeInitializationError",
     "OnnxRuntimeTransformerExecutor",
     "OnnxRuntimeUnavailableError",
+    "TensorRTExecutionOptions",
 ]

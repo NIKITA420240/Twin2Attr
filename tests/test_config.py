@@ -26,7 +26,7 @@ class AppConfigTests(unittest.TestCase):
             "attribute_word_dropout",
         )
         self.assertIsNone(self.config.training.data_postprocessing_model)
-        self.assertEqual(self.config.inference.model, "stacking")
+        self.assertEqual(self.config.inference.model, "transformer")
         self.assertIsNone(self.config.inference.augmentation_model)
         self.assertIsNone(self.config.inference.data_postprocessing_model)
         self.assertEqual(
@@ -72,6 +72,15 @@ class AppConfigTests(unittest.TestCase):
         self.assertTrue(onnxruntime.io_binding)
         self.assertEqual(onnxruntime.graph_optimization, "all")
         self.assertTrue(onnxruntime.fallback_to_pytorch)
+        tensorrt = onnxruntime.tensorrt
+        self.assertTrue(tensorrt.engine_cache.enabled)
+        self.assertEqual(tensorrt.engine_cache.path, "onnx/trt_cache")
+        self.assertTrue(tensorrt.timing_cache.enabled)
+        self.assertIsNone(tensorrt.timing_cache.path)
+        self.assertEqual(tensorrt.profiles.min_batch_size, 1)
+        self.assertEqual(tensorrt.profiles.opt_batch_size, 2048)
+        self.assertEqual(tensorrt.profiles.max_batch_size, 2048)
+        self.assertEqual(tensorrt.profiles.sequence_lengths, (64, 96, 128))
         self.assertFalse(hasattr(self.config, "artifacts"))
         self.assertEqual(
             self.config.analysis.analysis_model,
@@ -322,6 +331,16 @@ class AppConfigTests(unittest.TestCase):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
                 ["inference.transformer.onnxruntime.device_id=-1"],
+            )
+
+    def test_rejects_invalid_tensorrt_profile(self) -> None:
+        with self.assertRaisesRegex(ValueError, "min <= opt <= max"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                [
+                    "inference.transformer.onnxruntime.tensorrt."
+                    "profiles.min_batch_size=4096"
+                ],
             )
 
     def test_rejects_invalid_onnx_export_precision(self) -> None:

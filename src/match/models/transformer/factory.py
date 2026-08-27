@@ -14,6 +14,7 @@ from .onnx_runtime import (
     OnnxRuntimeInitializationError,
     OnnxRuntimeTransformerExecutor,
     OnnxRuntimeUnavailableError,
+    TensorRTExecutionOptions,
 )
 from .predictor import TransformerPredictor
 
@@ -79,6 +80,97 @@ def _artifact_path(model_directory: Path, value: Any) -> Path | None:
     return path if path.is_absolute() else model_directory / path
 
 
+def _mapping(value: Any, name: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"solution field {name!r} must be an object")
+    return value
+
+
+def _tensorrt_options(
+    runtime: Mapping[str, Any],
+    artifacts: Mapping[str, Any],
+    model_directory: Path,
+    tokenizer: Any,
+) -> TensorRTExecutionOptions:
+    value = runtime.get("tensorrt")
+    if value is None:
+        return TensorRTExecutionOptions(
+            fp16_enabled=str(artifacts.get("precision", "float32")) == "float16"
+        )
+    tensorrt = _mapping(value, "onnxruntime.tensorrt")
+    engine_cache = _mapping(
+        tensorrt.get("engine_cache", {}),
+        "onnxruntime.tensorrt.engine_cache",
+    )
+    timing_cache = _mapping(
+        tensorrt.get("timing_cache", {}),
+        "onnxruntime.tensorrt.timing_cache",
+    )
+    profiles = _mapping(
+        tensorrt.get("profiles", {}),
+        "onnxruntime.tensorrt.profiles",
+    )
+    lengths_value = profiles.get("sequence_lengths", (64, 96, 128))
+    if not isinstance(lengths_value, (list, tuple)):
+        raise ValueError(
+            "solution field 'onnxruntime.tensorrt.profiles."
+            "sequence_lengths' must be an array"
+        )
+    model_inputs = getattr(tokenizer, "model_input_names", ())
+    input_names = ["input_ids", "attention_mask"]
+    if "token_type_ids" in model_inputs:
+        input_names.append("token_type_ids")
+    timing_path = timing_cache.get("path")
+    return TensorRTExecutionOptions(
+        engine_cache_enabled=bool(engine_cache.get("enabled", True)),
+        engine_cache_path=_artifact_path(
+            model_directory,
+            engine_cache.get("path", "onnx/trt_cache"),
+        ),
+        timing_cache_enabled=bool(timing_cache.get("enabled", True)),
+        timing_cache_path=_artifact_path(model_directory, timing_path),
+        min_batch_size=int(profiles.get("min_batch_size", 1)),
+        opt_batch_size=int(profiles.get("opt_batch_size", 2048)),
+        max_batch_size=int(profiles.get("max_batch_size", 2048)),
+        sequence_lengths=tuple(lengths_value),
+        input_names=tuple(input_names),
+        fp16_enabled=str(artifacts.get("precision", "float32")) == "float16",
+    )
+
+
+def _validate_tensorrt_profile(
+    options: TensorRTExecutionOptions,
+    batching: Mapping[str, Any],
+    model_config: Mapping[str, Any],
+) -> None:
+    lengths = options.sequence_lengths
+    if lengths is None:
+        return
+    batch_size = int(batching["batch_size"])
+    if batch_size > options.max_batch_size:
+        raise ValueError(
+            f"Transformer batch_size={batch_size} exceeds TensorRT profile "
+            f"max_batch_size={options.max_batch_size}"
+        )
+    model_max_length = model_config.get("match_max_length")
+    if model_max_length is not None and int(model_max_length) > lengths[-1]:
+        raise ValueError(
+            f"Transformer max_length={model_max_length} exceeds TensorRT "
+            f"profile maximum sequence length={lengths[-1]}"
+        )
+    if not bool(batching["length_bucketing"]) and lengths[0] > 1:
+        raise ValueError(
+            "TensorRT profile with minimum sequence length greater than 1 "
+            "requires length_bucketing to be enabled"
+        )
+    buckets = batching.get("padding_length_buckets")
+    if buckets and (buckets[0] < lengths[0] or buckets[-1] > lengths[-1]):
+        raise ValueError(
+            "length_bucketing padding lengths must fit inside the TensorRT "
+            "sequence-length profile"
+        )
+
+
 def _build_pytorch_predictor(
     solution: Mapping[str, Any],
     model_directory: Path,
@@ -136,6 +228,14 @@ def build_transformer_predictor(
         (model_directory / "config.json").read_text(encoding="utf-8")
     )
     try:
+        tensorrt = _tensorrt_options(
+            runtime,
+            artifacts,
+            model_directory,
+            tokenizer,
+        )
+        if str(runtime.get("provider", "cuda")).lower() == "tensorrt":
+            _validate_tensorrt_profile(tensorrt, batching, model_config)
         executor = OnnxRuntimeTransformerExecutor(
             model_directory=model_directory,
             model_config=model_config,
@@ -151,6 +251,7 @@ def build_transformer_predictor(
                 model_directory,
                 artifacts.get("encoder_path"),
             ),
+            tensorrt=tensorrt,
         )
         executor.validate(
             classifier=usage == "classifier",

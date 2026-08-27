@@ -92,6 +92,26 @@ def _convert_to_float16(source: Path, destination: Path) -> None:
         keep_io_types=True,
         disable_shape_infer=False,
     )
+    # onnxconverter-common does not currently update Cast(to=FLOAT) nodes
+    # whose inferred output annotation it changed to FLOAT16. Such a graph
+    # passes onnx.checker but ONNX Runtime rejects it as internally
+    # inconsistent. Keep the Cast attribute aligned with the converted type.
+    value_types = {
+        value.name: value.type.tensor_type.elem_type
+        for value in (
+            *converted.graph.value_info,
+            *converted.graph.output,
+        )
+        if value.type.HasField("tensor_type")
+    }
+    for node in converted.graph.node:
+        if node.op_type != "Cast" or not node.output:
+            continue
+        if value_types.get(node.output[0]) != onnx.TensorProto.FLOAT16:
+            continue
+        for attribute in node.attribute:
+            if attribute.name == "to" and attribute.i == onnx.TensorProto.FLOAT:
+                attribute.i = onnx.TensorProto.FLOAT16
     onnx.save(converted, str(destination))
 
 

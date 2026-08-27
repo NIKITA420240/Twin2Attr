@@ -9,6 +9,10 @@ _EXPORTS = {
         ".onnx_runtime",
         "OnnxRuntimeTransformerExecutor",
     ),
+    "TensorRTExecutionOptions": (
+        ".onnx_runtime",
+        "TensorRTExecutionOptions",
+    ),
     "PyTorchTransformerExecutor": (
         ".pytorch_executor",
         "PyTorchTransformerExecutor",

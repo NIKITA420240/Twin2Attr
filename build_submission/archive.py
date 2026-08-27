@@ -34,6 +34,12 @@ _PREPROCESSING_WHEEL_PATTERNS = (
     "win32_setctime-*.whl",
     "orjson-*.whl",
 )
+_ONNX_RUNTIME_WHEEL_PATTERNS = (
+    "onnxruntime_gpu-*.whl",
+    "coloredlogs-*.whl",
+    "flatbuffers-*.whl",
+    "humanfriendly-*.whl",
+)
 _SKIPPED_DIRECTORY_NAMES = {".cache", "__pycache__"}
 _STORED_SUFFIXES = {
     ".bin",
@@ -43,6 +49,14 @@ _STORED_SUFFIXES = {
     ".safetensors",
     ".whl",
 }
+_TRANSFORMER_WEIGHT_PATTERNS = (
+    "model.safetensors",
+    "model.safetensors.index.json",
+    "model-*.safetensors",
+    "pytorch_model.bin",
+    "pytorch_model.bin.index.json",
+    "pytorch_model-*.bin",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +170,11 @@ def _validate_resource(path: Path) -> None:
         raise ValueError(f"unsupported submission artifact: {path}")
 
 
-def _validate_transformer_artifact(directory: Path) -> None:
+def _validate_transformer_artifact(
+    directory: Path,
+    *,
+    require_pytorch_weights: bool = True,
+) -> None:
     """Reject raw language checkpoints before they reach the evaluator."""
     config_path = directory / "config.json"
     if not config_path.is_file():
@@ -199,7 +217,9 @@ def _validate_transformer_artifact(directory: Path) -> None:
         "pytorch_model.bin",
         "pytorch_model.bin.index.json",
     )
-    if not any((directory / name).is_file() for name in weight_patterns):
+    if require_pytorch_weights and not any(
+        (directory / name).is_file() for name in weight_patterns
+    ):
         raise FileNotFoundError(
             f"trained Transformer weights are missing in {directory}"
         )
@@ -237,11 +257,22 @@ def _validate_onnx_artifacts(directory: Path, *, predictor: str) -> None:
         )
 
 
-def _skip_file(path: Path, *, source_root: Path) -> bool:
+def _skip_file(
+    path: Path,
+    *,
+    source_root: Path,
+    skip_transformer_weights: bool = False,
+) -> bool:
     relative = path.relative_to(source_root)
     if any(part in _SKIPPED_DIRECTORY_NAMES for part in relative.parts):
         return True
     if any(part.startswith("checkpoint-") for part in relative.parts[:-1]):
+        return True
+    if (
+        skip_transformer_weights
+        and len(relative.parts) == 1
+        and any(relative.match(pattern) for pattern in _TRANSFORMER_WEIGHT_PATTERNS)
+    ):
         return True
     return path.suffix in {".pyc", ".pyo"}
 
@@ -249,12 +280,18 @@ def _skip_file(path: Path, *, source_root: Path) -> bool:
 def _files_for_path(
     source: Path,
     archive_path: PurePosixPath,
+    *,
+    skip_transformer_weights: bool = False,
 ) -> Iterable[_ArchiveInput]:
     if source.is_file():
         yield _ArchiveInput(source, archive_path)
         return
     for candidate in sorted(source.rglob("*")):
-        if not candidate.is_file() or _skip_file(candidate, source_root=source):
+        if not candidate.is_file() or _skip_file(
+            candidate,
+            source_root=source,
+            skip_transformer_weights=skip_transformer_weights,
+        ):
             continue
         relative = candidate.relative_to(source)
         yield _ArchiveInput(
@@ -269,6 +306,9 @@ def _collect_inputs(
     project_root: Path,
     include_catboost: bool,
     include_preprocessing_runtime: bool,
+    include_onnxruntime: bool,
+    transformer_dir: Path | None = None,
+    skip_transformer_weights: bool = False,
 ) -> tuple[_ArchiveInput, ...]:
     sources = [project_root / name for name in _REQUIRED_PROJECT_FILES]
     sources.append(project_root / "src" / "match")
@@ -277,7 +317,16 @@ def _collect_inputs(
     for source in sources:
         _validate_resource(source)
         archive_path = _archive_path(source, project_root=project_root)
-        for entry in _files_for_path(source, archive_path):
+        omit_weights = (
+            skip_transformer_weights
+            and transformer_dir is not None
+            and source.resolve() == transformer_dir.resolve()
+        )
+        for entry in _files_for_path(
+            source,
+            archive_path,
+            skip_transformer_weights=omit_weights,
+        ):
             previous = entries.get(entry.archive_path)
             if previous is not None and previous.source != entry.source:
                 raise ValueError(
@@ -293,6 +342,9 @@ def _collect_inputs(
     if include_catboost:
         _validate_catboost_wheels(wheels_source)
         wheel_patterns.append("catboost-*.whl")
+    if include_onnxruntime:
+        _validate_onnxruntime_wheels(wheels_source)
+        wheel_patterns.extend(_ONNX_RUNTIME_WHEEL_PATTERNS)
     for pattern in wheel_patterns:
         for wheel in sorted(wheels_source.glob(pattern)):
             entry = _ArchiveInput(wheel, _VENDOR_WHEELS_TARGET / wheel.name)
@@ -336,6 +388,18 @@ def _validate_preprocessing_wheels(directory: Path) -> None:
         )
 
 
+def _validate_onnxruntime_wheels(directory: Path) -> None:
+    missing = [
+        pattern
+        for pattern in _ONNX_RUNTIME_WHEEL_PATTERNS
+        if not any(directory.glob(pattern))
+    ]
+    if missing:
+        raise FileNotFoundError(
+            f"bundled ONNX Runtime wheels are missing in {directory}: {missing}"
+        )
+
+
 def _compression(path: Path) -> int:
     return ZIP_STORED if path.suffix.lower() in _STORED_SUFFIXES else ZIP_DEFLATED
 
@@ -350,10 +414,17 @@ def build_submission_archive(
     root = project_root.expanduser().resolve()
     artifacts = _selected_artifacts(config)
     resources = _required_resources(config, artifacts)
+    onnx_only = (
+        config.inference.transformer.backend == "onnxruntime"
+        and not config.inference.transformer.onnxruntime.fallback_to_pytorch
+    )
     for resource in resources:
         _validate_resource(resource)
     if artifacts.transformer_dir is not None:
-        _validate_transformer_artifact(artifacts.transformer_dir)
+        _validate_transformer_artifact(
+            artifacts.transformer_dir,
+            require_pytorch_weights=not onnx_only,
+        )
         if config.inference.transformer.backend == "onnxruntime":
             _validate_onnx_artifacts(
                 artifacts.transformer_dir,
@@ -374,6 +445,11 @@ def build_submission_archive(
             or config.features.ner.enabled
             or config.features.physical.enabled
         ),
+        include_onnxruntime=(
+            config.inference.transformer.backend == "onnxruntime"
+        ),
+        transformer_dir=artifacts.transformer_dir,
+        skip_transformer_weights=onnx_only,
     )
     target = Path(output_path or config.submission.output_path).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
