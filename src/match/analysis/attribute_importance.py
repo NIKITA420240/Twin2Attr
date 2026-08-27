@@ -83,6 +83,7 @@ def _batch_observations(
     *,
     max_length: int,
     use_field_tokens: bool,
+    max_attribute_value_chars: int | None,
     max_attribute_value_tokens: int | None,
 ) -> list[_Observation]:
     encoded = [
@@ -91,6 +92,7 @@ def _batch_observations(
             pair,
             max_length=max_length,
             use_field_tokens=use_field_tokens,
+            max_attribute_value_chars=max_attribute_value_chars,
             max_attribute_value_tokens=max_attribute_value_tokens,
         )
         for pair in pairs
@@ -158,6 +160,7 @@ def _collect_observations(
     batch_size: int,
     max_length: int,
     use_field_tokens: bool,
+    max_attribute_value_chars: int | None,
     max_attribute_value_tokens: int | None,
 ) -> list[_Observation]:
     observations: list[_Observation] = []
@@ -173,6 +176,7 @@ def _collect_observations(
                     batch,
                     max_length=max_length,
                     use_field_tokens=use_field_tokens,
+                    max_attribute_value_chars=max_attribute_value_chars,
                     max_attribute_value_tokens=max_attribute_value_tokens,
                 )
             )
@@ -277,7 +281,7 @@ def _aggregate(
 def _validate_model(
     model: Any,
     model_path: Path,
-) -> tuple[PoolingSequenceClassifier, int, bool, int | None]:
+) -> tuple[PoolingSequenceClassifier, int, bool, int | None, int | None]:
     if not isinstance(model, PoolingSequenceClassifier):
         raise TypeError(
             "attribute_importance requires a trained pooling Transformer; "
@@ -294,12 +298,17 @@ def _validate_model(
     if not isinstance(max_length, int) or max_length < 1:
         raise ValueError("trained Transformer does not define match_max_length")
     use_field_tokens = bool(getattr(model.config, "match_use_field_tokens", True))
+    char_limit = getattr(
+        model.config,
+        "match_max_attribute_value_chars",
+        None,
+    )
     value_limit = getattr(
         model.config,
         "match_max_attribute_value_tokens",
         None,
     )
-    return model, max_length, use_field_tokens, value_limit
+    return model, max_length, use_field_tokens, char_limit, value_limit
 
 
 def analyze_transformer_attribute_importance(
@@ -315,7 +324,7 @@ def analyze_transformer_attribute_importance(
         model_path,
         device=config.runtime.device,
     )
-    model, max_length, use_field_tokens, value_limit = _validate_model(
+    model, max_length, use_field_tokens, char_limit, value_limit = _validate_model(
         loaded_model,
         model_path,
     )
@@ -326,6 +335,7 @@ def analyze_transformer_attribute_importance(
         batch_size=config.inference.transformer.batch_size,
         max_length=max_length,
         use_field_tokens=use_field_tokens,
+        max_attribute_value_chars=char_limit,
         max_attribute_value_tokens=value_limit,
     )
     frame = _aggregate(
@@ -354,6 +364,7 @@ def analyze_transformer_attribute_importance(
         "seed": config.runtime.seed,
         "max_length": max_length,
         "use_field_tokens": use_field_tokens,
+        "max_attribute_value_chars": char_limit,
         "max_attribute_value_tokens": value_limit,
         "attention_num_heads": int(
             model.config.head_config.get("attention_num_heads", 1)

@@ -91,7 +91,7 @@ class ModelTrainingStrategyTests(unittest.TestCase):
         self.assertEqual(
             solution["length_bucketing"],
             {
-                "enabled": True,
+                "enabled": False,
                 "padding_length_buckets": [64, 96, 128, 160, 192, 224, 256],
             },
         )

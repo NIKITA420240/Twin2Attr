@@ -50,7 +50,7 @@ class AppConfigTests(unittest.TestCase):
             self.config.inference.transformer.non_blocking_transfer
         )
         length_bucketing = self.config.inference.transformer.length_bucketing
-        self.assertTrue(length_bucketing.enabled)
+        self.assertFalse(length_bucketing.enabled)
         self.assertEqual(
             length_bucketing.padding_length_buckets,
             (64, 96, 128, 160, 192, 224, 256),
@@ -142,6 +142,7 @@ class AppConfigTests(unittest.TestCase):
             encoding.max_attribute_value_tokens,
             int,
         )
+        self.assertEqual(encoding.max_attribute_value_chars, 256)
         self.assertEqual(encoding.max_length, 256)
         self.assertEqual(base.stacking_train_fraction, 0.15)
         self.assertEqual(
@@ -241,6 +242,16 @@ class AppConfigTests(unittest.TestCase):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
                 ["model_description.transformer.learning_rate=0"],
+            )
+
+    def test_rejects_non_positive_attribute_value_character_limit(self) -> None:
+        with self.assertRaisesRegex(ValueError, "max_attribute_value_chars"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                [
+                    "model_description.transformer.pair_encoding."
+                    "max_attribute_value_chars=0"
+                ],
             )
 
     def test_rejects_non_positive_trainable_layer_count(self) -> None:

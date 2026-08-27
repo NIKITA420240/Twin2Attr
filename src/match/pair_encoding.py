@@ -167,6 +167,7 @@ def _encode_card_sections(
     card: PreparedCard,
     *,
     use_field_tokens: bool,
+    max_attribute_value_chars: int | None,
     max_attribute_value_tokens: int | None,
     preserve_attribute_order: bool = False,
 ) -> tuple[list[int], list[tuple[str, list[int]]], int]:
@@ -177,6 +178,8 @@ def _encode_card_sections(
 
     attributes: list[tuple[str, list[int]]] = []
     for key, value in card.attributes:
+        if max_attribute_value_chars is not None:
+            value = value[:max_attribute_value_chars]
         prefix = f"{KEY_TOKEN} {key} {VAL_TOKEN}" if use_field_tokens else f"{key}:"
         prefix_ids = tokenizer.encode(prefix, add_special_tokens=False)
         value_ids = tokenizer.encode(f" {value}", add_special_tokens=False)
@@ -268,6 +271,7 @@ def _encode_prepared_pair_with_fitted(
     max_length: int,
     special_token_count: int,
     use_field_tokens: bool,
+    max_attribute_value_chars: int | None,
     max_attribute_value_tokens: int | None,
 ) -> tuple[dict[str, list[int]], _FittedCard, _FittedCard]:
     content_budget = max_length - special_token_count
@@ -278,6 +282,7 @@ def _encode_prepared_pair_with_fitted(
         tokenizer,
         pair.left,
         use_field_tokens=use_field_tokens,
+        max_attribute_value_chars=max_attribute_value_chars,
         max_attribute_value_tokens=max_attribute_value_tokens,
         preserve_attribute_order=pair.preserve_attribute_order,
     )
@@ -285,6 +290,7 @@ def _encode_prepared_pair_with_fitted(
         tokenizer,
         pair.right,
         use_field_tokens=use_field_tokens,
+        max_attribute_value_chars=max_attribute_value_chars,
         max_attribute_value_tokens=max_attribute_value_tokens,
         preserve_attribute_order=pair.preserve_attribute_order,
     )
@@ -353,6 +359,7 @@ def _encode_prepared_pair(
     max_length: int,
     special_token_count: int,
     use_field_tokens: bool,
+    max_attribute_value_chars: int | None,
     max_attribute_value_tokens: int | None,
 ) -> dict[str, list[int]]:
     encoded, _, _ = _encode_prepared_pair_with_fitted(
@@ -361,6 +368,7 @@ def _encode_prepared_pair(
         max_length=max_length,
         special_token_count=special_token_count,
         use_field_tokens=use_field_tokens,
+        max_attribute_value_chars=max_attribute_value_chars,
         max_attribute_value_tokens=max_attribute_value_tokens,
     )
     return encoded
@@ -372,6 +380,7 @@ def encode_prepared_pair(
     *,
     max_length: int,
     use_field_tokens: bool = True,
+    max_attribute_value_chars: int | None = None,
     max_attribute_value_tokens: int | None = DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
 ) -> dict[str, list[int]]:
     """Tokenize a pair while dropping attributes only at field boundaries.
@@ -383,9 +392,12 @@ def encode_prepared_pair(
 
     ``use_field_tokens=False`` disables ``[KEY]`` and ``[VAL]`` without
     affecting the model-specific pair tokens such as ``[CLS]`` and ``[SEP]``.
-    ``max_attribute_value_tokens`` limits each attribute value independently;
-    ``None`` disables this per-value limit.
+    ``max_attribute_value_chars`` is applied before tokenization and
+    ``max_attribute_value_tokens`` afterwards. ``None`` disables the
+    corresponding per-value limit.
     """
+    if max_attribute_value_chars is not None and max_attribute_value_chars < 1:
+        raise ValueError("max_attribute_value_chars must be positive or None")
     if max_attribute_value_tokens is not None and max_attribute_value_tokens < 1:
         raise ValueError("max_attribute_value_tokens must be positive or None")
     if use_field_tokens:
@@ -396,6 +408,7 @@ def encode_prepared_pair(
         max_length=max_length,
         special_token_count=_pair_special_token_count(tokenizer),
         use_field_tokens=use_field_tokens,
+        max_attribute_value_chars=max_attribute_value_chars,
         max_attribute_value_tokens=max_attribute_value_tokens,
     )
 
@@ -451,9 +464,12 @@ def encode_prepared_pair_with_attributes(
     *,
     max_length: int,
     use_field_tokens: bool = True,
+    max_attribute_value_chars: int | None = None,
     max_attribute_value_tokens: int | None = DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
 ) -> PairEncodingWithAttributes:
     """Encode one pair and preserve token-to-raw-attribute alignment."""
+    if max_attribute_value_chars is not None and max_attribute_value_chars < 1:
+        raise ValueError("max_attribute_value_chars must be positive or None")
     if max_attribute_value_tokens is not None and max_attribute_value_tokens < 1:
         raise ValueError("max_attribute_value_tokens must be positive or None")
     if use_field_tokens:
@@ -465,6 +481,7 @@ def encode_prepared_pair_with_attributes(
         max_length=max_length,
         special_token_count=special_token_count,
         use_field_tokens=use_field_tokens,
+        max_attribute_value_chars=max_attribute_value_chars,
         max_attribute_value_tokens=max_attribute_value_tokens,
     )
     token_attributes = _pair_token_attributes(
@@ -498,12 +515,15 @@ class PairEncodingCollator:
         max_length: int,
         *,
         use_field_tokens: bool = True,
+        max_attribute_value_chars: int | None = None,
         max_attribute_value_tokens: int | None = DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
         include_labels: bool = True,
         padding_length_buckets: tuple[int, ...] | None = None,
     ) -> None:
         if max_length < 1:
             raise ValueError("max_length must be positive")
+        if max_attribute_value_chars is not None and max_attribute_value_chars < 1:
+            raise ValueError("max_attribute_value_chars must be positive or None")
         if max_attribute_value_tokens is not None and max_attribute_value_tokens < 1:
             raise ValueError("max_attribute_value_tokens must be positive or None")
         if padding_length_buckets is not None:
@@ -530,6 +550,7 @@ class PairEncodingCollator:
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.use_field_tokens = use_field_tokens
+        self.max_attribute_value_chars = max_attribute_value_chars
         self.max_attribute_value_tokens = max_attribute_value_tokens
         self.include_labels = include_labels
         self.padding_length_buckets = padding_length_buckets
@@ -547,6 +568,7 @@ class PairEncodingCollator:
                 max_length=self.max_length,
                 special_token_count=self.special_token_count,
                 use_field_tokens=self.use_field_tokens,
+                max_attribute_value_chars=self.max_attribute_value_chars,
                 max_attribute_value_tokens=self.max_attribute_value_tokens,
             )
             for pair in pairs
@@ -590,6 +612,7 @@ def infer_pair_max_length(
     sample_size: int = 10_000,
     hard_cap: int = 512,
     use_field_tokens: bool = True,
+    max_attribute_value_chars: int | None = None,
     max_attribute_value_tokens: int | None = DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
 ) -> int:
     """Infer a rounded token limit from complete structured pair lengths."""
@@ -599,6 +622,8 @@ def infer_pair_max_length(
         raise ValueError("quantile must be in (0, 1]")
     if sample_size < 1 or hard_cap < 8:
         raise ValueError("sample_size must be positive and hard_cap at least 8")
+    if max_attribute_value_chars is not None and max_attribute_value_chars < 1:
+        raise ValueError("max_attribute_value_chars must be positive or None")
     if max_attribute_value_tokens is not None and max_attribute_value_tokens < 1:
         raise ValueError("max_attribute_value_tokens must be positive or None")
     if use_field_tokens:
@@ -617,12 +642,14 @@ def infer_pair_max_length(
                 tokenizer,
                 pair.left,
                 use_field_tokens=use_field_tokens,
+                max_attribute_value_chars=max_attribute_value_chars,
                 max_attribute_value_tokens=max_attribute_value_tokens,
             )[2]
             + _encode_card_sections(
                 tokenizer,
                 pair.right,
                 use_field_tokens=use_field_tokens,
+                max_attribute_value_chars=max_attribute_value_chars,
                 max_attribute_value_tokens=max_attribute_value_tokens,
             )[2]
             + special_token_count

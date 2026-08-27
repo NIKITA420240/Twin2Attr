@@ -215,11 +215,6 @@ class LengthBucketingSettings:
         buckets = self.padding_length_buckets
         if buckets is None:
             return
-        if not self.enabled:
-            raise ValueError(
-                "inference.transformer.length_bucketing.padding_length_buckets "
-                "requires length_bucketing.enabled=true"
-            )
         if not buckets or any(
             isinstance(value, bool)
             or not isinstance(value, int)
@@ -338,11 +333,22 @@ class NormalizationSettings:
 @dataclass(frozen=True, slots=True)
 class PairEncodingSettings:
     use_field_tokens: bool
+    max_attribute_value_chars: int | None
     max_attribute_value_tokens: int | None
     max_length: int | None
     quantile: float
     sample_size: int
     hard_cap: int
+
+    def __post_init__(self) -> None:
+        if (
+            self.max_attribute_value_chars is not None
+            and self.max_attribute_value_chars < 1
+        ):
+            raise ValueError(
+                "model_description.transformer.pair_encoding."
+                "max_attribute_value_chars must be positive or null"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1199,6 +1205,9 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     use_field_tokens=_bool(
                         _required(encoding, "use_field_tokens"),
                         "model_description.transformer.pair_encoding.use_field_tokens",
+                    ),
+                    max_attribute_value_chars=_optional_int(
+                        encoding.get("max_attribute_value_chars")
                     ),
                     max_attribute_value_tokens=_optional_int(
                         encoding.get("max_attribute_value_tokens")

@@ -167,6 +167,7 @@ def train_sequence_classifier(
             sample_size=config.max_length_sample_size,
             hard_cap=config.max_length_hard_cap,
             use_field_tokens=config.use_field_tokens,
+            max_attribute_value_chars=config.max_attribute_value_chars,
             max_attribute_value_tokens=config.max_attribute_value_tokens,
         )
     logger.info("Max input length: {}", max_length)
@@ -180,6 +181,7 @@ def train_sequence_classifier(
         tokenizer,
         max_length,
         use_field_tokens=config.use_field_tokens,
+        max_attribute_value_chars=config.max_attribute_value_chars,
         max_attribute_value_tokens=config.max_attribute_value_tokens,
     )
     initialize_model = model_factory(
@@ -259,6 +261,9 @@ def train_sequence_classifier(
     metrics = trainer.evaluate()
     trainer.model.config.match_max_length = max_length
     trainer.model.config.match_use_field_tokens = config.use_field_tokens
+    trainer.model.config.match_max_attribute_value_chars = (
+        config.max_attribute_value_chars
+    )
     trainer.model.config.match_max_attribute_value_tokens = (
         config.max_attribute_value_tokens
     )
@@ -291,6 +296,7 @@ def train_sequence_classifier(
         layerwise_lr_decay=learning_rate_multipliers.layerwise_decay,
         weight_decay=best_hyperparameters["weight_decay"],
         use_field_tokens=config.use_field_tokens,
+        max_attribute_value_chars=config.max_attribute_value_chars,
         max_attribute_value_tokens=config.max_attribute_value_tokens,
         warmup_ratio=config.warmup_ratio,
         lr_scheduler_type=config.lr_scheduler_type,
@@ -344,6 +350,7 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
         auto_find_batch_size=parameters.auto_find_batch_size,
         seed=config.runtime.seed,
         use_field_tokens=encoding.use_field_tokens,
+        max_attribute_value_chars=encoding.max_attribute_value_chars,
         max_attribute_value_tokens=encoding.max_attribute_value_tokens,
         max_length=encoding.max_length,
         max_length_quantile=encoding.quantile,

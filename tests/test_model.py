@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -55,6 +56,15 @@ class TransformersV5BertTokenizer(FakeTokenizer):
                 [row[key] + [0] * (target - len(row[key])) for row in rows]
             )
         return result
+
+
+class RecordingBertTokenizer(TransformersV5BertTokenizer):
+    def __init__(self):
+        self.encoded_texts = []
+
+    def encode(self, text, *, add_special_tokens=False):
+        self.encoded_texts.append(text)
+        return super().encode(text, add_special_tokens=add_special_tokens)
 
 
 class TransformersV5BertTokenizerWithMissingPairMetadata(
@@ -164,6 +174,27 @@ class SequenceClassifierModelTests(unittest.TestCase):
                 use_field_tokens=False,
                 padding_length_buckets=(8, 16),
             )
+
+    def test_attribute_value_character_limit_is_applied_before_tokenization(self) -> None:
+        tokenizer = RecordingBertTokenizer()
+        pair = PreparedPair(
+            PreparedCard(1, "left", "category", (("description", "x" * 500),)),
+            PreparedCard(2, "right", "category", ()),
+            1,
+            "category",
+        )
+
+        encode_prepared_pair(
+            tokenizer,
+            pair,
+            max_length=32,
+            use_field_tokens=False,
+            max_attribute_value_chars=256,
+            max_attribute_value_tokens=16,
+        )
+
+        self.assertIn(" " + "x" * 256, tokenizer.encoded_texts)
+        self.assertNotIn(" " + "x" * 500, tokenizer.encoded_texts)
 
     def test_infers_quantile_length_and_rounds_to_multiple_of_eight(self) -> None:
         pairs = [
@@ -320,12 +351,17 @@ class SequenceClassifierModelTests(unittest.TestCase):
                     max_epochs=1,
                     hpo_trials=1,
                     seed=7,
+                    max_attribute_value_chars=256,
                 ),
                 output_dir=output,
             )
 
             self.assertTrue((output / "config.json").is_file())
             self.assertTrue((output / "training_metadata.json").is_file())
+            saved_config = json.loads(
+                (output / "config.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(saved_config["match_max_attribute_value_chars"], 256)
             self.assertTrue(np.isfinite(result.validation_macro_pr_auc))
 
 

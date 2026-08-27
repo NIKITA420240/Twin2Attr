@@ -20,6 +20,7 @@
     "match": 1
   },
   "layer_norm_eps": 1e-12,
+  "match_max_attribute_value_chars": 256,
   "match_max_attribute_value_tokens": 32,
   "match_max_length": 472,
   "match_use_field_tokens": true,
