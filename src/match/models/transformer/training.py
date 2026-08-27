@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from functools import partial
 from pathlib import Path
@@ -15,6 +15,7 @@ import torch
 from loguru import logger
 from transformers import AutoTokenizer, EarlyStoppingCallback, TrainingArguments
 
+from ...augmentations import AttributeWordDropoutAugmenter
 from ...config import AppConfig
 from ...data import TrainingData
 from ...pair_encoding import (
@@ -119,6 +120,7 @@ def train_sequence_classifier(
     config: SequenceClassifierConfig,
     *,
     output_dir: str | Path,
+    train_pair_transform: Callable[[PreparedPair], PreparedPair] | None = None,
 ) -> TrainingResult:
     train_labels = _labels_from_pairs(train_pairs, split_name="train")
     validation_labels = _labels_from_pairs(
@@ -169,7 +171,10 @@ def train_sequence_classifier(
         )
     logger.info("Max input length: {}", max_length)
 
-    train_dataset = PreparedPairDataset(train_pairs)
+    train_dataset = PreparedPairDataset(
+        train_pairs,
+        transform=train_pair_transform,
+    )
     validation_dataset = PreparedPairDataset(validation_pairs)
     collator = PairEncodingCollator(
         tokenizer,
@@ -360,11 +365,26 @@ class TransformerTrainer:
     config: AppConfig
 
     def train(self, data: TrainingData) -> TrainingArtifacts:
+        train_pair_transform = None
+        if self.config.training.augmentation_model == "attribute_word_dropout":
+            settings = self.config.augmentation_models.attribute_word_dropout
+            train_pair_transform = AttributeWordDropoutAugmenter(settings)
+            logger.info(
+                "Dynamic training augmentation enabled: pair={}, "
+                "attribute_dropout={}, word_dropout={}, keyboard_typo={}, "
+                "word_shuffle={}",
+                settings.pair_probability,
+                settings.attribute_dropout_probability,
+                settings.word_dropout_probability,
+                settings.keyboard_typo_probability,
+                settings.word_shuffle_probability,
+            )
         result = train_sequence_classifier(
             data.train_pairs,
             data.validation_pairs,
             _sequence_config(self.config),
             output_dir=self.config.model_description.transformer.artifact_dir,
+            train_pair_transform=train_pair_transform,
         )
         return TrainingArtifacts(
             predictor="transformer",

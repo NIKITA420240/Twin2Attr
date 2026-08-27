@@ -152,12 +152,19 @@ analysis:
 
 augmentation_models:
   attribute_shuffle:
-    type: attribute_shuffle
     shuffled_copies: 1
     keep_original: false
     seed: ${runtime.seed}
     shuffle_cards_independently: true
     skip_oversized: true
+
+  attribute_word_dropout:
+    pair_probability: 0.5
+    attribute_dropout_probability: 0.15
+    word_dropout_probability: 0.03
+    keyboard_typo_probability: 0.01
+    word_shuffle_probability: 0.0
+    seed: ${runtime.seed}
 
 data_postprocessing_models:
   attribute_sort:
@@ -191,6 +198,14 @@ Transformer из-за ограничения длины; рядом сохран
 обычные пары при `augmentation_model: null` продолжают использовать прежнюю
 сортировку от коротких полей к длинным. `skip_oversized: true` позволяет после
 не поместившегося поля проверить следующие поля.
+
+Для обучения `training.augmentation_model: attribute_word_dropout` динамически
+создаёт новый вариант пары при каждом её чтении. С вероятностью
+`pair_probability` аугментация применяется к паре; ключи атрибутов и категория
+сохраняются, а названия товаров и значения получают word dropout, опечатки и
+опциональную перестановку слов. Атрибуты могут удаляться целиком. На каждом
+шаге Transformer получает только один вариант пары, поэтому второго forward
+pass и смешивания двух loss нет. Validation и inference не аугментируются.
 
 Анализ добавляет целочисленный `priority`, где `1` означает самый важный
 атрибут. Приоритет рассчитывается отдельно для глобальных строк и внутри каждой

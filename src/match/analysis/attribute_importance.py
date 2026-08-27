@@ -362,7 +362,6 @@ def analyze_transformer_attribute_importance(
     if config.analysis.augmentation_model == "attribute_shuffle":
         augmentation = config.augmentation_models.attribute_shuffle
         metadata["augmentation"] = {
-            "type": augmentation.type,
             "shuffled_copies": augmentation.shuffled_copies,
             "keep_original": augmentation.keep_original,
             "seed": augmentation.seed,

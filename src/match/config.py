@@ -153,9 +153,14 @@ class TrainingSettings:
     solution_path: Path
 
     def __post_init__(self) -> None:
-        if self.augmentation_model not in {None, "attribute_shuffle"}:
+        if self.augmentation_model not in {
+            None,
+            "attribute_shuffle",
+            "attribute_word_dropout",
+        }:
             raise ValueError(
-                "training.augmentation_model must be null or 'attribute_shuffle'"
+                "training.augmentation_model must be null, 'attribute_shuffle', "
+                "or 'attribute_word_dropout'"
             )
         if self.data_postprocessing_model not in {None, "attribute_sort"}:
             raise ValueError(
@@ -513,7 +518,6 @@ class AnalysisModelsSettings:
 
 @dataclass(frozen=True, slots=True)
 class AttributeShuffleSettings:
-    type: str
     shuffled_copies: int
     keep_original: bool
     seed: int
@@ -521,18 +525,37 @@ class AttributeShuffleSettings:
     skip_oversized: bool
 
     def __post_init__(self) -> None:
-        if self.type != "attribute_shuffle":
-            raise ValueError(
-                "augmentation_models.attribute_shuffle.type must be "
-                "'attribute_shuffle'"
-            )
         if self.shuffled_copies < 1:
             raise ValueError("attribute_shuffle.shuffled_copies must be positive")
 
 
 @dataclass(frozen=True, slots=True)
+class AttributeWordDropoutSettings:
+    pair_probability: float
+    attribute_dropout_probability: float
+    word_dropout_probability: float
+    keyboard_typo_probability: float
+    word_shuffle_probability: float
+    seed: int
+
+    def __post_init__(self) -> None:
+        for name, probability in (
+            ("pair_probability", self.pair_probability),
+            ("attribute_dropout_probability", self.attribute_dropout_probability),
+            ("word_dropout_probability", self.word_dropout_probability),
+            ("keyboard_typo_probability", self.keyboard_typo_probability),
+            ("word_shuffle_probability", self.word_shuffle_probability),
+        ):
+            if not 0.0 <= probability <= 1.0:
+                raise ValueError(
+                    f"attribute_word_dropout.{name} must be in [0, 1]"
+                )
+
+
+@dataclass(frozen=True, slots=True)
 class AugmentationModelsSettings:
     attribute_shuffle: AttributeShuffleSettings
+    attribute_word_dropout: AttributeWordDropoutSettings
 
 
 @dataclass(frozen=True, slots=True)
@@ -810,6 +833,10 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     )
     augmentation_models = _section(resolved, "augmentation_models")
     attribute_shuffle = _section(augmentation_models, "attribute_shuffle")
+    attribute_word_dropout = _section(
+        augmentation_models,
+        "attribute_word_dropout",
+    )
     data_postprocessing_models = _section(
         resolved,
         "data_postprocessing_models",
@@ -965,7 +992,6 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         ),
         augmentation_models=AugmentationModelsSettings(
             attribute_shuffle=AttributeShuffleSettings(
-                type=str(_required(attribute_shuffle, "type")),
                 shuffled_copies=int(
                     _required(attribute_shuffle, "shuffled_copies")
                 ),
@@ -983,6 +1009,27 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     _required(attribute_shuffle, "skip_oversized"),
                     "augmentation_models.attribute_shuffle.skip_oversized",
                 ),
+            ),
+            attribute_word_dropout=AttributeWordDropoutSettings(
+                pair_probability=float(
+                    _required(attribute_word_dropout, "pair_probability")
+                ),
+                attribute_dropout_probability=float(
+                    _required(
+                        attribute_word_dropout,
+                        "attribute_dropout_probability",
+                    )
+                ),
+                word_dropout_probability=float(
+                    _required(attribute_word_dropout, "word_dropout_probability")
+                ),
+                keyboard_typo_probability=float(
+                    _required(attribute_word_dropout, "keyboard_typo_probability")
+                ),
+                word_shuffle_probability=float(
+                    _required(attribute_word_dropout, "word_shuffle_probability")
+                ),
+                seed=int(_required(attribute_word_dropout, "seed")),
             ),
         ),
         data_postprocessing_models=DataPostprocessingModelsSettings(
@@ -1316,6 +1363,7 @@ __all__ = [
     "AttributeImportanceAnalysisSettings",
     "AttributeShuffleSettings",
     "AttributeSortSettings",
+    "AttributeWordDropoutSettings",
     "AugmentationModelsSettings",
     "BaseDatasetSettings",
     "BoostingParameters",

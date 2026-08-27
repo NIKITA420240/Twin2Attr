@@ -21,14 +21,14 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(base.seed, self.config.runtime.seed)
         self.assertEqual(self.config.training.model, "stacking")
         self.assertEqual(self.config.training.data_model, "base_dataset")
-        self.assertIsNone(self.config.training.augmentation_model)
+        self.assertEqual(
+            self.config.training.augmentation_model,
+            "attribute_word_dropout",
+        )
         self.assertIsNone(self.config.training.data_postprocessing_model)
         self.assertEqual(self.config.inference.model, "stacking")
         self.assertIsNone(self.config.inference.augmentation_model)
-        self.assertEqual(
-            self.config.inference.data_postprocessing_model,
-            "attribute_sort",
-        )
+        self.assertIsNone(self.config.inference.data_postprocessing_model)
         self.assertEqual(
             self.config.training.resolved_config_path,
             PROJECT_ROOT / "models" / "twin2attr" / "pipeline_config.yaml",
@@ -57,6 +57,17 @@ class AppConfigTests(unittest.TestCase):
         self.assertFalse(augmentation.keep_original)
         self.assertTrue(augmentation.shuffle_cards_independently)
         self.assertTrue(augmentation.skip_oversized)
+        text_augmentation = (
+            self.config.augmentation_models.attribute_word_dropout
+        )
+        self.assertEqual(text_augmentation.pair_probability, 0.5)
+        self.assertEqual(
+            text_augmentation.attribute_dropout_probability,
+            0.15,
+        )
+        self.assertEqual(text_augmentation.word_dropout_probability, 0.03)
+        self.assertEqual(text_augmentation.keyboard_typo_probability, 0.01)
+        self.assertEqual(text_augmentation.word_shuffle_probability, 0.0)
         self.assertEqual(
             self.config.data_postprocessing_models.attribute_sort.priorities_path,
             PROJECT_ROOT

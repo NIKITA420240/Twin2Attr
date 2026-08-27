@@ -24,6 +24,13 @@ def train(
 ) -> TrainingArtifacts:
     """Prepare data, train the selected model and persist its manifest."""
     with workflow_logging(config, workflow_name="train"):
+        if (
+            config.training.augmentation_model == "attribute_word_dropout"
+            and config.training.model not in {"transformer", "fusion", "stacking"}
+        ):
+            raise ValueError(
+                "attribute_word_dropout requires a Transformer training stage"
+            )
         splits = build_data_model(config).load_training_splits()
         items = splits.items
         prepared_items = prepare_configured_items(items, config)
@@ -37,7 +44,7 @@ def train(
             attributes_column=attributes_column,
             stacking_matches=getattr(splits, "stacking_matches", None),
         )
-        if config.training.augmentation_model is not None:
+        if config.training.augmentation_model == "attribute_shuffle":
             augmented = apply_pair_augmentation(
                 data.train_pairs,
                 config,
