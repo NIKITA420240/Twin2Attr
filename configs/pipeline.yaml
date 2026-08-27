@@ -57,6 +57,13 @@ inference:
   transformer:
     batch_size: 512
     dtype: bfloat16
+    # Prepare and prefetch batches in parallel while the GPU runs the model.
+    num_workers: 8
+    prefetch_factor: 2
+    pin_memory: true
+    non_blocking_transfer: true
+    # Group similarly sized pairs to reduce dynamic-padding overhead.
+    length_bucketing: true
 
 analysis:
   analysis_model: attribute_importance

@@ -40,6 +40,11 @@ class PredictorLoadingTests(unittest.TestCase):
             self.root / "models" / "transformer",
             batch_size=16,
             dtype="bfloat16",
+            num_workers=0,
+            prefetch_factor=2,
+            pin_memory=True,
+            non_blocking_transfer=True,
+            length_bucketing=False,
             device=None,
         )
         load_maxpooling.assert_not_called()
@@ -148,6 +153,11 @@ class PredictorLoadingTests(unittest.TestCase):
             self.root / "models" / "transformer",
             batch_size=64,
             dtype="float32",
+            num_workers=0,
+            prefetch_factor=2,
+            pin_memory=True,
+            non_blocking_transfer=True,
+            length_bucketing=False,
             device=None,
         )
         create_cascade.assert_called_once_with(
@@ -188,6 +198,11 @@ class PredictorLoadingTests(unittest.TestCase):
             self.root / "models" / "transformer",
             batch_size=32,
             dtype="float32",
+            num_workers=0,
+            prefetch_factor=2,
+            pin_memory=True,
+            non_blocking_transfer=True,
+            length_bucketing=False,
             device=None,
         )
         load_stacking.assert_called_once_with(

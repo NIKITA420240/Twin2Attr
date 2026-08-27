@@ -100,6 +100,17 @@ def build_solution_manifest(
         solution["model_directory"] = map_path(artifacts.transformer_dir)
         solution["batch_size"] = config.inference.transformer.batch_size
         solution["dtype"] = config.inference.transformer.dtype
+        solution["num_workers"] = config.inference.transformer.num_workers
+        solution["prefetch_factor"] = (
+            config.inference.transformer.prefetch_factor
+        )
+        solution["pin_memory"] = config.inference.transformer.pin_memory
+        solution["non_blocking_transfer"] = (
+            config.inference.transformer.non_blocking_transfer
+        )
+        solution["length_bucketing"] = (
+            config.inference.transformer.length_bucketing
+        )
     if artifacts.maxpooling_path is not None:
         solution["maxpooling_path"] = map_path(artifacts.maxpooling_path)
         solution["maxpooling_batch_size"] = (

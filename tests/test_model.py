@@ -19,7 +19,11 @@ from match.models.transformer import (
     compute_pr_auc,
     train_sequence_classifier,
 )
-from match.models.transformer.predictor import predict_logit_margins
+from match.models.transformer.predictor import (
+    _length_bucket_order,
+    _restore_original_order,
+    predict_logit_margins,
+)
 
 
 class FakeTokenizer:
@@ -98,6 +102,20 @@ class SequenceClassifierModelTests(unittest.TestCase):
 
         self.assertEqual(len(dataset), 1)
         self.assertIs(dataset[0], pair)
+
+    def test_length_bucketing_restores_original_pair_order(self) -> None:
+        pairs = [
+            _pair(1, "a much longer product name", 2, "another long name", 0),
+            _pair(3, "short", 4, "tiny", 1),
+            _pair(5, "medium product", 6, "medium", 0),
+        ]
+        original = np.asarray([[10.0], [20.0], [30.0]], dtype=np.float32)
+
+        order = _length_bucket_order(pairs, max_attribute_value_tokens=16)
+        restored = _restore_original_order(original[order], order)
+
+        self.assertEqual(order.tolist(), [1, 2, 0])
+        np.testing.assert_array_equal(restored, original)
 
     def test_infers_quantile_length_and_rounds_to_multiple_of_eight(self) -> None:
         pairs = [

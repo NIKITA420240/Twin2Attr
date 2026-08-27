@@ -3,6 +3,11 @@
   "model_directory": "models\\twin2attr\\transformer",
   "batch_size": 512,
   "dtype": "bfloat16",
+  "num_workers": 8,
+  "prefetch_factor": 2,
+  "pin_memory": true,
+  "non_blocking_transfer": true,
+  "length_bucketing": true,
   "normalization": {
     "enabled": true,
     "source_column": "attributes",
