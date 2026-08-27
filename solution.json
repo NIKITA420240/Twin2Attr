@@ -7,7 +7,10 @@
   "prefetch_factor": 2,
   "pin_memory": true,
   "non_blocking_transfer": true,
-  "length_bucketing": true,
+  "length_bucketing": {
+    "enabled": true,
+    "padding_length_buckets": [64, 96, 128, 160, 192, 224, 256]
+  },
   "torch_compile": {
     "enabled": true,
     "mode": "reduce-overhead",
@@ -19,7 +22,7 @@
     "output_column": "normalized_attributes",
     "synonyms_path": "data\\synonyms.parquet",
     "unique_attributes_path": "data\\unique_attributes.parquet",
-    "n_jobs": 4,
+    "n_jobs": 8,
     "chunk_size": 5000
   }
 }

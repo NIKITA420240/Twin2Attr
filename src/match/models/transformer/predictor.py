@@ -285,6 +285,7 @@ def predict_pair_logits(
     pin_memory: bool = True,
     non_blocking_transfer: bool = True,
     length_bucketing: bool = False,
+    padding_length_buckets: tuple[int, ...] | None = None,
     _forward_model: Any | None = None,
 ) -> np.ndarray:
     """Return the two classifier logits for every prepared pair."""
@@ -308,6 +309,7 @@ def predict_pair_logits(
         use_field_tokens=use_field_tokens,
         max_attribute_value_tokens=value_limit,
         include_labels=False,
+        padding_length_buckets=padding_length_buckets,
     )
     device = next(model.parameters()).device
     dataset, order = _inference_dataset(
@@ -372,6 +374,7 @@ def predict_match_probabilities(
     pin_memory: bool = True,
     non_blocking_transfer: bool = True,
     length_bucketing: bool = False,
+    padding_length_buckets: tuple[int, ...] | None = None,
     _forward_model: Any | None = None,
 ) -> np.ndarray:
     logits = predict_pair_logits(
@@ -386,6 +389,7 @@ def predict_match_probabilities(
         pin_memory=pin_memory,
         non_blocking_transfer=non_blocking_transfer,
         length_bucketing=length_bucketing,
+        padding_length_buckets=padding_length_buckets,
         _forward_model=_forward_model,
     )
     if not len(logits):
@@ -411,6 +415,7 @@ def predict_logit_margins(
     pin_memory: bool = True,
     non_blocking_transfer: bool = True,
     length_bucketing: bool = False,
+    padding_length_buckets: tuple[int, ...] | None = None,
     _forward_model: Any | None = None,
 ) -> np.ndarray:
     """Return ``match_logit - different_logit`` for stacking."""
@@ -426,6 +431,7 @@ def predict_logit_margins(
         pin_memory=pin_memory,
         non_blocking_transfer=non_blocking_transfer,
         length_bucketing=length_bucketing,
+        padding_length_buckets=padding_length_buckets,
         _forward_model=_forward_model,
     )
     if not len(logits):
@@ -446,6 +452,7 @@ def encode_pair_cls(
     pin_memory: bool = True,
     non_blocking_transfer: bool = True,
     length_bucketing: bool = False,
+    padding_length_buckets: tuple[int, ...] | None = None,
     _backbone_model: Any | None = None,
 ) -> np.ndarray:
     if batch_size < 1:
@@ -468,6 +475,7 @@ def encode_pair_cls(
         use_field_tokens=use_field_tokens,
         max_attribute_value_tokens=value_limit,
         include_labels=False,
+        padding_length_buckets=padding_length_buckets,
     )
     device = next(model.parameters()).device
     dataset, order = _inference_dataset(
@@ -531,6 +539,7 @@ class TransformerPredictor:
     pin_memory: bool = True
     non_blocking_transfer: bool = True
     length_bucketing: bool = False
+    padding_length_buckets: tuple[int, ...] | None = None
     compile_enabled: bool = False
     compile_mode: str = "reduce-overhead"
     compile_dynamic: bool = True
@@ -548,6 +557,10 @@ class TransformerPredictor:
             raise ValueError("num_workers must not be negative")
         if self.prefetch_factor < 1:
             raise ValueError("prefetch_factor must be positive")
+        if self.padding_length_buckets is not None and not self.length_bucketing:
+            raise ValueError(
+                "padding_length_buckets requires length_bucketing=True"
+            )
         self.dtype = _normalize_inference_dtype(self.dtype)
         if self.compile_mode not in {
             "default",
@@ -582,6 +595,7 @@ class TransformerPredictor:
         pin_memory: bool = True,
         non_blocking_transfer: bool = True,
         length_bucketing: bool = False,
+        padding_length_buckets: tuple[int, ...] | None = None,
         compile_enabled: bool = False,
         compile_mode: str = "reduce-overhead",
         compile_dynamic: bool = True,
@@ -602,6 +616,7 @@ class TransformerPredictor:
             pin_memory=pin_memory,
             non_blocking_transfer=non_blocking_transfer,
             length_bucketing=length_bucketing,
+            padding_length_buckets=padding_length_buckets,
             compile_enabled=compile_enabled,
             compile_mode=compile_mode,
             compile_dynamic=compile_dynamic,
@@ -623,6 +638,7 @@ class TransformerPredictor:
             pin_memory=self.pin_memory,
             non_blocking_transfer=self.non_blocking_transfer,
             length_bucketing=self.length_bucketing,
+            padding_length_buckets=self.padding_length_buckets,
             _backbone_model=self._compiled_backbone,
         )
 
@@ -638,6 +654,7 @@ class TransformerPredictor:
             pin_memory=self.pin_memory,
             non_blocking_transfer=self.non_blocking_transfer,
             length_bucketing=self.length_bucketing,
+            padding_length_buckets=self.padding_length_buckets,
             _forward_model=self._compiled_model,
         )
 
@@ -653,6 +670,7 @@ class TransformerPredictor:
             pin_memory=self.pin_memory,
             non_blocking_transfer=self.non_blocking_transfer,
             length_bucketing=self.length_bucketing,
+            padding_length_buckets=self.padding_length_buckets,
             _forward_model=self._compiled_model,
         )
 

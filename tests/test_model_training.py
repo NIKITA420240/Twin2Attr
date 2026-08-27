@@ -88,7 +88,13 @@ class ModelTrainingStrategyTests(unittest.TestCase):
         self.assertEqual(solution["prefetch_factor"], 2)
         self.assertTrue(solution["pin_memory"])
         self.assertTrue(solution["non_blocking_transfer"])
-        self.assertTrue(solution["length_bucketing"])
+        self.assertEqual(
+            solution["length_bucketing"],
+            {
+                "enabled": True,
+                "padding_length_buckets": [64, 96, 128, 160, 192, 224, 256],
+            },
+        )
         self.assertEqual(
             solution["torch_compile"],
             {

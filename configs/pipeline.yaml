@@ -62,8 +62,17 @@ inference:
     prefetch_factor: 2
     pin_memory: true
     non_blocking_transfer: true
-    # Group similarly sized pairs to reduce dynamic-padding overhead.
-    length_bucketing: true
+    # Group similarly sized pairs and limit the tensor shapes seen by the GPU.
+    length_bucketing:
+      enabled: false
+      padding_length_buckets:
+        - 64
+        - 96
+        - 128
+        - 160
+        - 192
+        - 224
+        - 256
     torch_compile:
       enabled: false
       mode: reduce-overhead
@@ -217,7 +226,7 @@ features:
     output_column: normalized_attributes
     synonyms_path: data/synonyms.parquet
     unique_attributes_path: data/unique_attributes.parquet
-    n_jobs: 4
+    n_jobs: 8
     chunk_size: 5000
   ner:
     enabled: false

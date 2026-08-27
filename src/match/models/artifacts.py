@@ -108,9 +108,15 @@ def build_solution_manifest(
         solution["non_blocking_transfer"] = (
             config.inference.transformer.non_blocking_transfer
         )
-        solution["length_bucketing"] = (
-            config.inference.transformer.length_bucketing
-        )
+        length_bucketing = config.inference.transformer.length_bucketing
+        solution["length_bucketing"] = {
+            "enabled": length_bucketing.enabled,
+            "padding_length_buckets": (
+                None
+                if length_bucketing.padding_length_buckets is None
+                else list(length_bucketing.padding_length_buckets)
+            ),
+        }
         solution["torch_compile"] = {
             "enabled": config.inference.transformer.torch_compile.enabled,
             "mode": config.inference.transformer.torch_compile.mode,
