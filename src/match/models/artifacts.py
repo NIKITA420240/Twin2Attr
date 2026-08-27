@@ -111,6 +111,11 @@ def build_solution_manifest(
         solution["length_bucketing"] = (
             config.inference.transformer.length_bucketing
         )
+        solution["torch_compile"] = {
+            "enabled": config.inference.transformer.torch_compile.enabled,
+            "mode": config.inference.transformer.torch_compile.mode,
+            "dynamic": config.inference.transformer.torch_compile.dynamic,
+        }
     if artifacts.maxpooling_path is not None:
         solution["maxpooling_path"] = map_path(artifacts.maxpooling_path)
         solution["maxpooling_batch_size"] = (

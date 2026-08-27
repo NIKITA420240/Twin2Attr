@@ -8,6 +8,11 @@
   "pin_memory": true,
   "non_blocking_transfer": true,
   "length_bucketing": true,
+  "torch_compile": {
+    "enabled": true,
+    "mode": "reduce-overhead",
+    "dynamic": true
+  },
   "normalization": {
     "enabled": true,
     "source_column": "attributes",

@@ -50,6 +50,16 @@ class AppConfigTests(unittest.TestCase):
             self.config.inference.transformer.non_blocking_transfer
         )
         self.assertTrue(self.config.inference.transformer.length_bucketing)
+        self.assertTrue(
+            self.config.inference.transformer.torch_compile.enabled
+        )
+        self.assertEqual(
+            self.config.inference.transformer.torch_compile.mode,
+            "reduce-overhead",
+        )
+        self.assertTrue(
+            self.config.inference.transformer.torch_compile.dynamic
+        )
         self.assertFalse(hasattr(self.config, "artifacts"))
         self.assertEqual(
             self.config.analysis.analysis_model,
@@ -254,6 +264,13 @@ class AppConfigTests(unittest.TestCase):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
                 ["inference.transformer.num_workers=-1"],
+            )
+
+    def test_rejects_unknown_torch_compile_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, "torch_compile.mode"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                ["inference.transformer.torch_compile.mode=fastest"],
             )
 
     def test_rejects_incomplete_feature_execution_order(self) -> None:

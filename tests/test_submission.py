@@ -31,6 +31,11 @@ class PredictorLoadingTests(unittest.TestCase):
                     "model_directory": "models/transformer",
                     "batch_size": 16,
                     "dtype": "bfloat16",
+                    "torch_compile": {
+                        "enabled": True,
+                        "mode": "reduce-overhead",
+                        "dynamic": True,
+                    },
                 },
                 self.root,
             )
@@ -45,6 +50,9 @@ class PredictorLoadingTests(unittest.TestCase):
             pin_memory=True,
             non_blocking_transfer=True,
             length_bucketing=False,
+            compile_enabled=True,
+            compile_mode="reduce-overhead",
+            compile_dynamic=True,
             device=None,
         )
         load_maxpooling.assert_not_called()
@@ -158,6 +166,9 @@ class PredictorLoadingTests(unittest.TestCase):
             pin_memory=True,
             non_blocking_transfer=True,
             length_bucketing=False,
+            compile_enabled=False,
+            compile_mode="reduce-overhead",
+            compile_dynamic=True,
             device=None,
         )
         create_cascade.assert_called_once_with(
@@ -203,6 +214,9 @@ class PredictorLoadingTests(unittest.TestCase):
             pin_memory=True,
             non_blocking_transfer=True,
             length_bucketing=False,
+            compile_enabled=False,
+            compile_mode="reduce-overhead",
+            compile_dynamic=True,
             device=None,
         )
         load_stacking.assert_called_once_with(

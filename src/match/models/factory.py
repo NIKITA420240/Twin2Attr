@@ -62,6 +62,9 @@ def build_predictor(
     """Create the predictor described by a packaged solution manifest."""
     predictor_name = str(solution.get("predictor", "transformer"))
     device = solution.get("device")
+    torch_compile = solution.get("torch_compile", {})
+    if not isinstance(torch_compile, Mapping):
+        raise ValueError("solution field 'torch_compile' must be an object")
     transformer: TransformerPredictor | None = None
     if predictor_name in {"transformer", "fusion"}:
         from .transformer.predictor import TransformerPredictor
@@ -81,6 +84,9 @@ def build_predictor(
                 solution.get("non_blocking_transfer", True)
             ),
             length_bucketing=bool(solution.get("length_bucketing", False)),
+            compile_enabled=bool(torch_compile.get("enabled", False)),
+            compile_mode=str(torch_compile.get("mode", "reduce-overhead")),
+            compile_dynamic=bool(torch_compile.get("dynamic", True)),
             device=device,
         )
         if predictor_name == "transformer":
@@ -164,6 +170,9 @@ def build_predictor(
                 solution.get("non_blocking_transfer", True)
             ),
             length_bucketing=bool(solution.get("length_bucketing", False)),
+            compile_enabled=bool(torch_compile.get("enabled", False)),
+            compile_mode=str(torch_compile.get("mode", "reduce-overhead")),
+            compile_dynamic=bool(torch_compile.get("dynamic", True)),
             device=device,
         )
         return CascadePredictor(
@@ -195,6 +204,9 @@ def build_predictor(
                 solution.get("non_blocking_transfer", True)
             ),
             length_bucketing=bool(solution.get("length_bucketing", False)),
+            compile_enabled=bool(torch_compile.get("enabled", False)),
+            compile_mode=str(torch_compile.get("mode", "reduce-overhead")),
+            compile_dynamic=bool(torch_compile.get("dynamic", True)),
             device=device,
         )
         return StackingPredictor.load(
