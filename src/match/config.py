@@ -54,6 +54,32 @@ class DatasetSplitterSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class SampleWeightModelSettings:
+    type: str = "constant"
+    enabled: bool = False
+    penalty_strength: float = 1.0
+    min_weight_multiplier: float = 0.25
+    min_comparable_neighbors: int = 2
+    confidence_weighted_violations: bool = True
+
+    def __post_init__(self) -> None:
+        if self.type not in {"constant", "transitivity"}:
+            raise ValueError(
+                "dataset source weight_model.type must be constant or transitivity"
+            )
+        if self.penalty_strength < 0.0:
+            raise ValueError("weight_model.penalty_strength must not be negative")
+        if not 0.0 < self.min_weight_multiplier <= 1.0:
+            raise ValueError(
+                "weight_model.min_weight_multiplier must be in (0, 1]"
+            )
+        if self.min_comparable_neighbors < 1:
+            raise ValueError(
+                "weight_model.min_comparable_neighbors must be positive"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class DatasetSourceSettings:
     name: str
     matches: Path
@@ -61,6 +87,7 @@ class DatasetSourceSettings:
     max_rows: int | None
     sampling_strategy: str
     splitter: DatasetSplitterSettings
+    weight_model: SampleWeightModelSettings = SampleWeightModelSettings()
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -1195,6 +1222,12 @@ def _dataset_source(
             f"data_model_description.mix_dataset.sources.{name}.splitter "
             "must be a mapping"
         )
+    weight_model = values.get("weight_model", {})
+    if not isinstance(weight_model, Mapping):
+        raise ValueError(
+            f"data_model_description.mix_dataset.sources.{name}.weight_model "
+            "must be a mapping"
+        )
     prefix = f"data_model_description.mix_dataset.sources.{name}"
     return DatasetSourceSettings(
         name=name,
@@ -1203,6 +1236,25 @@ def _dataset_source(
         max_rows=_optional_int(values.get("max_rows")),
         sampling_strategy=str(values.get("sampling_strategy", "random")),
         splitter=_dataset_splitter(splitter),
+        weight_model=SampleWeightModelSettings(
+            type=str(weight_model.get("type", "constant")),
+            enabled=_bool(
+                weight_model.get("enabled", False),
+                f"{prefix}.weight_model.enabled",
+            ),
+            penalty_strength=float(weight_model.get("penalty_strength", 1.0)),
+            min_weight_multiplier=float(
+                weight_model.get("min_weight_multiplier", 0.25)
+            ),
+            min_comparable_neighbors=_int(
+                weight_model.get("min_comparable_neighbors", 2),
+                f"{prefix}.weight_model.min_comparable_neighbors",
+            ),
+            confidence_weighted_violations=_bool(
+                weight_model.get("confidence_weighted_violations", True),
+                f"{prefix}.weight_model.confidence_weighted_violations",
+            ),
+        ),
     )
 
 
@@ -1984,6 +2036,7 @@ __all__ = [
     "PairEncodingSettings",
     "PhysicalFeatureSettings",
     "RuntimeSettings",
+    "SampleWeightModelSettings",
     "SubmissionSettings",
     "TensorRTEngineCacheSettings",
     "TensorRTProfileSettings",

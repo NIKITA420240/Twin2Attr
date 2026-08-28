@@ -19,6 +19,19 @@ class AppConfigTests(unittest.TestCase):
         self.assertIsInstance(base.items, Path)
         self.assertTrue(base.items.is_absolute())
         self.assertEqual(base.seed, self.config.runtime.seed)
+        sources = {
+            source.name: source
+            for source in self.config.data_model_description.mix_dataset.sources
+        }
+        self.assertEqual(sources["human"].weight_model.type, "constant")
+        self.assertFalse(sources["human"].weight_model.enabled)
+        llm_weight_model = sources["llm"].weight_model
+        self.assertEqual(llm_weight_model.type, "transitivity")
+        self.assertTrue(llm_weight_model.enabled)
+        self.assertEqual(llm_weight_model.penalty_strength, 1.0)
+        self.assertEqual(llm_weight_model.min_weight_multiplier, 0.25)
+        self.assertEqual(llm_weight_model.min_comparable_neighbors, 2)
+        self.assertTrue(llm_weight_model.confidence_weighted_violations)
         self.assertEqual(self.config.training.model, "stacking")
         self.assertEqual(self.config.training.data_model, "base_dataset")
         self.assertEqual(
@@ -346,6 +359,26 @@ class AppConfigTests(unittest.TestCase):
                 [
                     "inference.transformer.onnxruntime.tensorrt."
                     "profiles.min_batch_size=4096"
+                ],
+            )
+
+    def test_rejects_unknown_sample_weight_model(self) -> None:
+        with self.assertRaisesRegex(ValueError, "weight_model.type"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                [
+                    "data_model_description.mix_dataset.sources.llm."
+                    "weight_model.type=unknown"
+                ],
+            )
+
+    def test_rejects_invalid_sample_weight_floor(self) -> None:
+        with self.assertRaisesRegex(ValueError, "min_weight_multiplier"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                [
+                    "data_model_description.mix_dataset.sources.llm."
+                    "weight_model.min_weight_multiplier=0"
                 ],
             )
 

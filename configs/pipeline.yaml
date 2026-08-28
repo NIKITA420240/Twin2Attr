@@ -31,6 +31,9 @@ data_model_description:
         weight: 3.0
         max_rows: null
         sampling_strategy: random
+        weight_model:
+          type: constant
+          enabled: false
         splitter:
           splitter_type: binary
           score_type: label
@@ -40,6 +43,14 @@ data_model_description:
         weight: 1.0
         max_rows: 750000
         sampling_strategy: category_target_balanced
+        # Penalize graph-local contradictions such as A=B, B=C, A!=C.
+        weight_model:
+          type: transitivity
+          enabled: true
+          penalty_strength: 1.0
+          min_weight_multiplier: 0.25
+          min_comparable_neighbors: 2
+          confidence_weighted_violations: true
         splitter:
           splitter_type: binary
           score_type: votes
