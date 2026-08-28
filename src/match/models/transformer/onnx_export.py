@@ -86,12 +86,33 @@ def _convert_to_float16(source: Path, destination: Path) -> None:
         raise RuntimeError(
             "float16 ONNX export requires onnxconverter-common"
         ) from error
-    graph = onnx.load(str(source))
-    converted = float16.convert_float_to_float16(
-        graph,
-        keep_io_types=True,
-        disable_shape_infer=False,
+    # In-memory shape inference calls ModelProto.SerializeToString(), which
+    # fails for FP32 graphs above protobuf's 2 GiB limit. Do shape inference
+    # through paths, then disable the converter's second inference pass.
+    # onnxconverter-common's path helper keeps a NamedTemporaryFile open and
+    # fails on Windows, so explicitly close our adjacent temporary file first.
+    temporary = tempfile.NamedTemporaryFile(
+        dir=source.parent,
+        prefix=f".{source.stem}.shape-inferred-",
+        suffix=source.suffix,
+        delete=False,
     )
+    inferred_path = Path(temporary.name)
+    temporary.close()
+    inferred_path.unlink(missing_ok=True)
+    try:
+        onnx.shape_inference.infer_shapes_path(
+            str(source),
+            str(inferred_path),
+        )
+        graph = onnx.load(str(inferred_path))
+        converted = float16.convert_float_to_float16(
+            graph,
+            keep_io_types=True,
+            disable_shape_infer=True,
+        )
+    finally:
+        inferred_path.unlink(missing_ok=True)
     # onnxconverter-common does not currently update Cast(to=FLOAT) nodes
     # whose inferred output annotation it changed to FLOAT16. Such a graph
     # passes onnx.checker but ONNX Runtime rejects it as internally

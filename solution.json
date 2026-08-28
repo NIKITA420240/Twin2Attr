@@ -1,6 +1,8 @@
 {
   "predictor": "transformer",
-  "model_directory": "models\\twin2attr\\transformer",
+  "augmentation_model": null,
+  "data_postprocessing_model": null,
+  "model_directory": "models\\twin2attr\\bge-initialized",
   "backend": "pytorch",
   "batch_size": 512,
   "dtype": "bfloat16",
@@ -15,11 +17,19 @@
     }
   },
   "length_bucketing": {
-    "enabled": true,
-    "padding_length_buckets": [64, 96, 128, 160, 192, 224, 256]
+    "enabled": false,
+    "padding_length_buckets": [
+      64,
+      96,
+      128,
+      160,
+      192,
+      224,
+      256
+    ]
   },
   "torch_compile": {
-    "enabled": true,
+    "enabled": false,
     "mode": "reduce-overhead",
     "dynamic": true
   },
@@ -42,8 +52,36 @@
         "min_batch_size": 1,
         "opt_batch_size": 2048,
         "max_batch_size": 2048,
-        "sequence_lengths": [64, 96, 128]
+        "sequence_lengths": [
+          64,
+          96,
+          128
+        ]
       }
+    }
+  },
+  "tensorrt": {
+    "device_id": 0,
+    "workspace_size_gb": 8.0,
+    "builder_optimization_level": 3,
+    "fallback_to_onnxruntime": true,
+    "engine_cache": {
+      "enabled": true,
+      "path": "onnx/native_trt_cache"
+    },
+    "timing_cache": {
+      "enabled": true,
+      "path": "onnx/native_trt_cache/timing.cache"
+    },
+    "profiles": {
+      "min_batch_size": 1,
+      "opt_batch_size": 512,
+      "max_batch_size": 512,
+      "sequence_lengths": [
+        1,
+        256,
+        472
+      ]
     }
   },
   "onnx_artifacts": {
@@ -55,13 +93,19 @@
     "dynamic_batch": true,
     "dynamic_sequence_length": true
   },
-  "normalization": {
-    "enabled": true,
-    "source_column": "attributes",
-    "output_column": "normalized_attributes",
-    "synonyms_path": "data\\synonyms.parquet",
-    "unique_attributes_path": "data\\unique_attributes.parquet",
-    "n_jobs": 8,
-    "chunk_size": 5000
+  "features": {
+    "execution_order": [
+      "normalization",
+      "ner",
+      "physical"
+    ],
+    "normalization": {
+      "enabled": true,
+      "output_column": "normalized_attributes",
+      "synonyms_path": "data\\synonyms.parquet",
+      "unique_attributes_path": "data\\unique_attributes.parquet",
+      "n_jobs": 8,
+      "chunk_size": 5000
+    }
   }
 }
