@@ -236,7 +236,7 @@ class MixedDatasetModel:
             ),
         )
         train_parts = [split.train_matches, *prepared.values()]
-        train_matches = pl.concat(train_parts, how="vertical_relaxed")
+        train_matches = pl.concat(train_parts, how="diagonal_relaxed")
         validation_matches = split.validation_matches.with_columns(
             pl.lit(1.0).cast(pl.Float32).alias("sample_weight")
         )

@@ -62,17 +62,17 @@ def _binary_targets(
             f"1/{total_votes}"
         )
     with_votes = matches.with_columns(
-        pl.Series("_votes", rounded.astype(np.int16, copy=False)),
+        pl.Series("annotation_votes", rounded.astype(np.int16, copy=False)),
         pl.Series(
             "_annotation_confidence",
             np.abs(2.0 * values - 1.0).astype(np.float32, copy=False),
         ),
     )
     selected = with_votes.filter(
-        (pl.col("_votes") <= splitter.negative_threshold)
-        | (pl.col("_votes") >= splitter.positive_threshold)
+        (pl.col("annotation_votes") <= splitter.negative_threshold)
+        | (pl.col("annotation_votes") >= splitter.positive_threshold)
     ).with_columns(
-        (pl.col("_votes") >= splitter.positive_threshold)
+        (pl.col("annotation_votes") >= splitter.positive_threshold)
         .cast(pl.Int8)
         .alias("target")
     )
@@ -89,7 +89,7 @@ def _binary_targets(
         raise ValueError(
             f"dataset source {source_name!r} thresholds removed every row"
         )
-    return selected.drop("_votes")
+    return selected
 
 
 def _proportional_allocations(
@@ -117,6 +117,8 @@ def _category_target_sample(
     *,
     max_rows: int,
     seed: int,
+    strategy: str = "category_target_balanced",
+    confidence_power: float = 2.0,
 ) -> pl.DataFrame:
     lookup = items.select(
         pl.col("id").alias("id1"),
@@ -128,19 +130,44 @@ def _category_target_sample(
     groups = ["_sample_category", "target"]
     counts = enriched.group_by(groups).len(name="_group_count")
     allocations = _proportional_allocations(counts, max_rows)
-    ranked = (
-        enriched.with_columns(
-            pl.struct("id1", "id2", "target")
-            .hash(seed=seed)
-            .alias("_sample_hash")
+    ranked = enriched.with_columns(
+        pl.struct("id1", "id2", "target")
+        .hash(seed=seed)
+        .alias("_sample_hash")
+    )
+    if strategy == "category_target_confidence_weighted":
+        uniform = (
+            (pl.col("_sample_hash").cast(pl.Float64) + 1.0)
+            / 18_446_744_073_709_551_616.0
         )
-        .sort([*groups, "_sample_hash"])
+        weight = (
+            pl.col("_annotation_confidence")
+            .cast(pl.Float64)
+            .pow(confidence_power)
+        )
+        ranked = ranked.with_columns(
+            (-uniform.log() / weight).alias("_sample_score")
+        )
+    elif strategy == "category_target_confidence_priority":
+        ranked = ranked.with_columns(
+            (-pl.col("_annotation_confidence")).alias("_sample_score")
+        )
+    else:
+        ranked = ranked.with_columns(
+            pl.col("_sample_hash").alias("_sample_score")
+        )
+    return (
+        ranked.sort([*groups, "_sample_score", "_sample_hash"])
         .with_columns(pl.int_range(pl.len()).over(groups).alias("_sample_rank"))
         .join(allocations.select(*groups, "_allocation"), on=groups, how="left")
-    )
-    return (
-        ranked.filter(pl.col("_sample_rank") < pl.col("_allocation"))
-        .drop("_sample_category", "_sample_hash", "_sample_rank", "_allocation")
+        .filter(pl.col("_sample_rank") < pl.col("_allocation"))
+        .drop(
+            "_sample_category",
+            "_sample_hash",
+            "_sample_score",
+            "_sample_rank",
+            "_allocation",
+        )
     )
 
 
@@ -243,6 +270,8 @@ def finalize_source_matches(
                 prepared,
                 max_rows=source.max_rows,
                 seed=seed,
+                strategy=source.sampling_strategy,
+                confidence_power=source.confidence_power,
             )
         logger.info(
             "Sampled dataset source: source={}, strategy={}, rows={}",
@@ -253,7 +282,8 @@ def finalize_source_matches(
     diagnostics = [
         name
         for name in prepared.columns
-        if name == "weight_multiplier" or name.startswith("transitivity_")
+        if name in {"annotation_votes", "weight_multiplier"}
+        or name.startswith("transitivity_")
     ]
     return (
         prepared.select("id1", "id2", "target", *diagnostics)

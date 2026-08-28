@@ -88,6 +88,7 @@ class DatasetSourceSettings:
     sampling_strategy: str
     splitter: DatasetSplitterSettings
     weight_model: SampleWeightModelSettings = SampleWeightModelSettings()
+    confidence_power: float = 2.0
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -96,10 +97,19 @@ class DatasetSourceSettings:
             raise ValueError("dataset source weight must be positive")
         if self.max_rows is not None and self.max_rows < 1:
             raise ValueError("dataset source max_rows must be positive or null")
-        if self.sampling_strategy not in {"random", "category_target_balanced"}:
+        if self.sampling_strategy not in {
+            "random",
+            "category_target_balanced",
+            "category_target_confidence_weighted",
+            "category_target_confidence_priority",
+        }:
             raise ValueError(
-                "sampling_strategy must be random or category_target_balanced"
+                "sampling_strategy must be one of: random, "
+                "category_target_balanced, category_target_confidence_weighted, "
+                "category_target_confidence_priority"
             )
+        if self.confidence_power <= 0.0:
+            raise ValueError("confidence_power must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1392,6 +1402,7 @@ def _dataset_source(
                 f"{prefix}.weight_model.confidence_weighted_violations",
             ),
         ),
+        confidence_power=float(values.get("confidence_power", 2.0)),
     )
 
 

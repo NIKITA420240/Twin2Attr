@@ -188,6 +188,12 @@ benchmark:
       enabled: true
       tests_path: configs/benchmark_tests/codex_annotation_quality.yaml
       selected_tests: null
+
+    llm_vote_sampling_quality:
+      type: training_quality
+      enabled: true
+      tests_path: configs/benchmark_tests/llm_vote_sampling_quality.yaml
+      selected_tests: null
 ```
 
 Каждый запуск создаёт общий timestamp-каталог, сохраняет разрешённый конфиг,
@@ -204,6 +210,7 @@ configs/benchmark_tests/speed_optimizations.yaml   # технические ус
 configs/benchmark_tests/quality_optimizations.yaml # сокращение входа/precision
 configs/benchmark_tests/transitivity_quality.yaml  # влияние весов на обучение
 configs/benchmark_tests/codex_annotation_quality.yaml # ценность Codex-разметки
+configs/benchmark_tests/llm_vote_sampling_quality.yaml # выбор по уверенности LLM
 ```
 
 Inference benchmark использует один и тот же checkpoint
@@ -239,6 +246,16 @@ split, моделью и гиперпараметрами; затем сравн
 из human-разметки и проверяется по хэшу. `results.parquet` дополнительно содержит
 `total_train_rows`,
 `human_train_rows`, `llm_train_rows` и `codex_reviewed_train_rows`.
+
+`llm_vote_sampling_quality` при одинаковых порогах `2/7`, лимите `750000` и
+квотах `category × target` сравнивает три способа выбрать LLM-строки:
+пропорционально-случайный `category_target_balanced`, взвешенный по
+`confidence ** confidence_power` и жёсткий приоритет максимальной уверенности.
+Взвешенный вариант использует детерминированную weighted sampling without
+replacement, поэтому один seed воспроизводит те же пары. В `results.parquet`
+записываются `llm_negative_rows`, `llm_positive_rows` и колонки
+`llm_vote_0_rows` … `llm_vote_9_rows`; это позволяет проверить фактический
+состав каждого обучающего датасета.
 
 Inference-конфиг поддерживает безопасные ограничения `max_length`,
 `max_attribute_value_chars` и `max_attribute_value_tokens`. Они могут только

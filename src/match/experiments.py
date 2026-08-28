@@ -204,7 +204,24 @@ def _sample_weighting_summary(matches: pl.DataFrame) -> dict[str, Any]:
             "mean_sample_weight": float(
                 selected.get_column("sample_weight").mean()
             ),
+            "target_counts": {
+                str(row["target"]): int(row["len"])
+                for row in selected.group_by("target")
+                .len()
+                .sort("target")
+                .iter_rows(named=True)
+            },
         }
+        if "annotation_votes" in selected.columns:
+            vote_rows = selected.filter(pl.col("annotation_votes").is_not_null())
+            if vote_rows.height:
+                summary["vote_counts"] = {
+                    str(row["annotation_votes"]): int(row["len"])
+                    for row in vote_rows.group_by("annotation_votes")
+                    .len()
+                    .sort("annotation_votes")
+                    .iter_rows(named=True)
+                }
         if "weight_multiplier" in selected.columns:
             multipliers = selected.get_column("weight_multiplier").drop_nulls()
             if len(multipliers):

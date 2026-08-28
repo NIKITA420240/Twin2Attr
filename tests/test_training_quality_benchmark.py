@@ -27,6 +27,44 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
             / "benchmark_tests"
             / "codex_annotation_quality.yaml"
         )
+        self.vote_sampling_tests_path = (
+            PROJECT_ROOT
+            / "configs"
+            / "benchmark_tests"
+            / "llm_vote_sampling_quality.yaml"
+        )
+
+    def test_vote_sampling_suite_keeps_pool_and_budget_paired(self) -> None:
+        suite = load_benchmark_suite(
+            self.vote_sampling_tests_path,
+            allowed_test_types={"training_quality"},
+        )
+        strategies = {}
+        for key, test in suite.tests.items():
+            configured = apply_benchmark_test(self.config, test)
+            llm = next(
+                source
+                for source in configured.data_model_description.mix_dataset.sources
+                if source.name == "llm"
+            )
+            self.assertEqual(llm.max_rows, 750_000)
+            self.assertEqual(llm.splitter.negative_threshold, 2)
+            self.assertEqual(llm.splitter.positive_threshold, 7)
+            strategies[key] = llm.sampling_strategy
+
+        self.assertEqual(suite.reference_test, "random")
+        self.assertEqual(
+            strategies,
+            {
+                "random": "category_target_balanced",
+                "confidence_weighted": (
+                    "category_target_confidence_weighted"
+                ),
+                "confidence_priority": (
+                    "category_target_confidence_priority"
+                ),
+            },
+        )
 
     def test_codex_suite_compares_equal_size_training_sets(self) -> None:
         suite = load_benchmark_suite(

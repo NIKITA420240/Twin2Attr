@@ -39,3 +39,10 @@ benchmark:
       enabled: true
       tests_path: configs/benchmark_tests/codex_annotation_quality.yaml
       selected_tests: null
+
+    # Three paired fits over the same 2/7 LLM pool and 750,000-row budget.
+    llm_vote_sampling_quality:
+      type: training_quality
+      enabled: true
+      tests_path: configs/benchmark_tests/llm_vote_sampling_quality.yaml
+      selected_tests: null

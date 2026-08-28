@@ -9,6 +9,7 @@ import polars as pl
 
 from match.config import load_app_config_file
 from match.experiments import (
+    _sample_weighting_summary,
     configure_experiment,
     save_experiment_record,
     validate_experiment_name,
@@ -88,6 +89,22 @@ class ExperimentTrackingTests(unittest.TestCase):
             validation_pairs_hash(matches),
             validation_pairs_hash(reversed_pairs),
         )
+
+    def test_sample_weighting_summary_records_targets_and_votes(self) -> None:
+        matches = pl.DataFrame(
+            {
+                "target": [0, 0, 1],
+                "sample_weight": [1.0, 1.0, 1.0],
+                "weight_multiplier": [1.0, 1.0, 1.0],
+                "data_source": ["llm", "llm", "llm"],
+                "annotation_votes": [0, 2, 9],
+            }
+        )
+
+        summary = _sample_weighting_summary(matches)["llm"]
+
+        self.assertEqual(summary["target_counts"], {"0": 2, "1": 1})
+        self.assertEqual(summary["vote_counts"], {"0": 1, "2": 1, "9": 1})
 
     def test_saves_json_and_appends_csv(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

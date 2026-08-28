@@ -92,6 +92,9 @@ def _run_case(
         "human_train_rows": None,
         "llm_train_rows": None,
         "codex_reviewed_train_rows": None,
+        "llm_negative_rows": None,
+        "llm_positive_rows": None,
+        **{f"llm_vote_{vote}_rows": None for vote in range(10)},
         "llm_mean_weight_multiplier": None,
         "llm_downweighted_fraction": None,
         "llm_violating_fraction": None,
@@ -124,6 +127,8 @@ def _run_case(
         llm_weighting = weighting.get("llm", {})
         human_weighting = weighting.get("human", {})
         codex_weighting = weighting.get("codex_reviewed", {})
+        llm_targets = llm_weighting.get("target_counts", {})
+        llm_votes = llm_weighting.get("vote_counts", {})
         row.update(
             {
                 "status": "completed",
@@ -136,6 +141,12 @@ def _run_case(
                 "human_train_rows": human_weighting.get("rows"),
                 "llm_train_rows": llm_weighting.get("rows"),
                 "codex_reviewed_train_rows": codex_weighting.get("rows", 0),
+                "llm_negative_rows": llm_targets.get("0"),
+                "llm_positive_rows": llm_targets.get("1"),
+                **{
+                    f"llm_vote_{vote}_rows": llm_votes.get(str(vote), 0)
+                    for vote in range(10)
+                },
                 "llm_mean_weight_multiplier": llm_weighting.get(
                     "mean_weight_multiplier"
                 ),
@@ -225,6 +236,9 @@ def _aggregate(
                 "human_train_rows",
                 "llm_train_rows",
                 "codex_reviewed_train_rows",
+                "llm_negative_rows",
+                "llm_positive_rows",
+                *(f"llm_vote_{vote}_rows" for vote in range(10)),
             )
         }
         result.append(

@@ -232,6 +232,7 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(llm.splitter.total_votes, 9)
         self.assertEqual(llm.splitter.negative_threshold, 2)
         self.assertEqual(llm.splitter.positive_threshold, 7)
+        self.assertEqual(llm.confidence_power, 2.0)
 
     def test_loads_codex_mixed_dataset(self) -> None:
         mixed = self.config.data_model_description.mix_dataset_codex

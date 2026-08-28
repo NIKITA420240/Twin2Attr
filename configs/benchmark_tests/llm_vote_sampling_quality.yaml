@@ -1,0 +1,70 @@
+# Compare how rows are selected from the same 2/7-filtered LLM vote pool.
+# Category x target quotas, max_rows and every training setting stay paired.
+test_type: training_quality
+reference_test: random
+
+seeds:
+  - 42
+
+tests:
+  random:
+    name: random_vote_sampling
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.data_model
+        value: mix_dataset
+      - path: data_model_description.mix_dataset.sources.llm.max_rows
+        value: 750000
+      - path: data_model_description.mix_dataset.sources.llm.sampling_strategy
+        value: category_target_balanced
+      - path: data_model_description.mix_dataset.sources.llm.splitter.negative_threshold
+        value: 2
+      - path: data_model_description.mix_dataset.sources.llm.splitter.positive_threshold
+        value: 7
+      - path: model_description.transformer.hpo_trials
+        value: 1
+      - path: model_description.transformer.export.onnx.enabled
+        value: false
+
+  confidence_weighted:
+    name: confidence_weighted_sampling
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.data_model
+        value: mix_dataset
+      - path: data_model_description.mix_dataset.sources.llm.max_rows
+        value: 750000
+      - path: data_model_description.mix_dataset.sources.llm.sampling_strategy
+        value: category_target_confidence_weighted
+      - path: data_model_description.mix_dataset.sources.llm.confidence_power
+        value: 2.0
+      - path: data_model_description.mix_dataset.sources.llm.splitter.negative_threshold
+        value: 2
+      - path: data_model_description.mix_dataset.sources.llm.splitter.positive_threshold
+        value: 7
+      - path: model_description.transformer.hpo_trials
+        value: 1
+      - path: model_description.transformer.export.onnx.enabled
+        value: false
+
+  confidence_priority:
+    name: confidence_priority_sampling
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.data_model
+        value: mix_dataset
+      - path: data_model_description.mix_dataset.sources.llm.max_rows
+        value: 750000
+      - path: data_model_description.mix_dataset.sources.llm.sampling_strategy
+        value: category_target_confidence_priority
+      - path: data_model_description.mix_dataset.sources.llm.splitter.negative_threshold
+        value: 2
+      - path: data_model_description.mix_dataset.sources.llm.splitter.positive_threshold
+        value: 7
+      - path: model_description.transformer.hpo_trials
+        value: 1
+      - path: model_description.transformer.export.onnx.enabled
+        value: false
