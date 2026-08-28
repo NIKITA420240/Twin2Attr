@@ -38,7 +38,7 @@ onnx-cpu = [
 onnx-gpu = [
     "onnx>=1.16",
     "onnxconverter-common>=1.14",
-    "onnxruntime-gpu>=1.18",
+    "onnxruntime-gpu>=1.18,<1.24",
 ]
 notebooks = [
     "ipykernel>=6.29",

@@ -15,7 +15,7 @@ tests:
       - path: training.data_model
         value: mix_dataset
       - path: model_description.transformer.pretrained_model_path
-        value: weights/rubert-tiny2
+        value: models/rubert-tiny2
       - path: data_model_description.mix_dataset.sources.llm.max_rows
         value: 750000
       - path: data_model_description.mix_dataset.sources.llm.sampling_strategy
@@ -37,7 +37,7 @@ tests:
       - path: training.data_model
         value: mix_dataset
       - path: model_description.transformer.pretrained_model_path
-        value: weights/rubert-tiny2
+        value: models/rubert-tiny2
       - path: data_model_description.mix_dataset.sources.llm.max_rows
         value: 750000
       - path: data_model_description.mix_dataset.sources.llm.sampling_strategy
@@ -61,7 +61,7 @@ tests:
       - path: training.data_model
         value: mix_dataset
       - path: model_description.transformer.pretrained_model_path
-        value: weights/rubert-tiny2
+        value: models/rubert-tiny2
       - path: data_model_description.mix_dataset.sources.llm.max_rows
         value: 750000
       - path: data_model_description.mix_dataset.sources.llm.sampling_strategy

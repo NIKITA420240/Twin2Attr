@@ -1,7 +1,8 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import numpy as np
 import torch
@@ -87,6 +88,56 @@ class NativeTensorRTRuntimeTests(unittest.TestCase):
             self.assertRaisesRegex(TensorRTInitializationError, "builder failed"),
         ):
             builder.build(Path("model.onnx"))
+
+    def test_builder_accepts_none_returned_by_set_shape(self) -> None:
+        tensor = SimpleNamespace(name="input_ids", shape=(-1, -1))
+        network = SimpleNamespace(
+            num_inputs=1,
+            get_input=lambda _index: tensor,
+        )
+        parser = SimpleNamespace(parse=lambda _value: True, num_errors=0)
+        config = Mock()
+        optimization_profile = Mock()
+        optimization_profile.set_shape.return_value = None
+        native_builder = Mock()
+        native_builder.create_network.return_value = network
+        native_builder.create_builder_config.return_value = config
+        native_builder.create_optimization_profile.return_value = optimization_profile
+        native_builder.build_serialized_network.return_value = b"engine"
+        trt = SimpleNamespace(
+            Builder=Mock(return_value=native_builder),
+            OnnxParser=Mock(return_value=parser),
+            NetworkDefinitionCreationFlag=SimpleNamespace(EXPLICIT_BATCH=0),
+            MemoryPoolType=SimpleNamespace(WORKSPACE=object()),
+            BuilderFlag=SimpleNamespace(FP16=object()),
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            onnx_path = Path(directory) / "classifier.onnx"
+            onnx_path.write_bytes(b"onnx")
+            builder = TensorRTEngineBuilder(
+                trt=trt,
+                logger=object(),
+                profile=TensorRTProfile(),
+                cache=TensorRTEngineCache(
+                    Path(directory),
+                    enabled=False,
+                    timing_enabled=False,
+                ),
+                workspace_size_bytes=1,
+                optimization_level=0,
+                fp16_enabled=False,
+            )
+
+            result = builder.build(onnx_path)
+
+        self.assertEqual(result, b"engine")
+        optimization_profile.set_shape.assert_called_once_with(
+            "input_ids",
+            (1, 1),
+            (512, 256),
+            (512, 472),
+        )
 
 
 if __name__ == "__main__":

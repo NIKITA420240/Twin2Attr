@@ -1,6 +1,6 @@
 {
   "predictor": "transformer",
-  "model_directory": "../weights/cross-encoder-ms-marco-l12-v3",
+  "model_directory": "../models/rubert-tiny2",
   "backend": "pytorch",
   "batch_size": 512,
   "dtype": "float16",

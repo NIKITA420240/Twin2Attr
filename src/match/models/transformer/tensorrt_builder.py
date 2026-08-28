@@ -67,15 +67,12 @@ class TensorRTEngineBuilder:
             if -1 not in shape:
                 continue
             has_dynamic_inputs = True
-            if not optimization_profile.set_shape(
+            optimization_profile.set_shape(
                 tensor.name,
                 self.profile.resolve_shape(shape, "min"),
                 self.profile.resolve_shape(shape, "opt"),
                 self.profile.resolve_shape(shape, "max"),
-            ):
-                raise TensorRTInitializationError(
-                    f"invalid optimization profile for input {tensor.name!r}"
-                )
+            )
         if has_dynamic_inputs:
             config.add_optimization_profile(optimization_profile)
 
