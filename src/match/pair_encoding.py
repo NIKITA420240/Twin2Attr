@@ -103,7 +103,7 @@ def serialize_card(
     *,
     use_field_tokens: bool = True,
 ) -> str:
-    """Serialize fields in source order without truncation for inspection."""
+    """Serialize fields in source order without truncation."""
     fields = (("name", card.name), ("category", card.category), *card.attributes)
     if use_field_tokens:
         return " ".join(f"{KEY_TOKEN} {key} {VAL_TOKEN} {value}" for key, value in fields)

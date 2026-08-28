@@ -150,9 +150,6 @@ export EXPERIMENT_NAME=mmarco-l12-human-last3-special-tokens
 # Обучение
 uv run python run.py train
 
-# Только безопасно оценить max_length, ничего не обучая и не сохраняя
-uv run python run.py inspect
-
 # Посчитать важность атрибутов по attention pooling обученного Transformer
 uv run python run.py analyze
 
@@ -590,7 +587,7 @@ features:
 Директория модели должна содержать `word_ner_config.json`, `model.pt`,
 локальный Hugging Face `config.json` и tokenizer-файлы. Если включён
 `semantic_cleanup`, также необходим `cluster_centers.pt`. Один и тот же
-preprocessing применяется в `train`, `inspect` и финальном `predict`, а его
+preprocessing применяется в `train`, benchmark и финальном `predict`, а его
 настройки автоматически записываются в `solution.json`.
 
 Feature-провайдеры создаются через `ItemEnricherFactory` и последовательно

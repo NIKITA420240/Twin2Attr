@@ -20,7 +20,7 @@ class LoadedTrainingSplits:
 
 @dataclass(frozen=True, slots=True)
 class InspectionFrames:
-    """Items and representative matches used by the inspect command."""
+    """Items and representative matches used by analysis workflows."""
 
     items: pl.DataFrame
     matches: pl.DataFrame

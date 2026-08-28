@@ -1,4 +1,4 @@
-"""Unified entry point for training, inspection and competition inference."""
+"""Unified entry point for training, analysis and competition inference."""
 
 import argparse
 import importlib
@@ -32,7 +32,7 @@ SOURCE_ROOT = Path(__file__).resolve().parent / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-COMMANDS = {"train", "predict", "inspect", "initialize", "analyze", "benchmark"}
+COMMANDS = {"train", "predict", "initialize", "analyze", "benchmark"}
 DEFAULT_CONFIG = "configs/pipeline.yaml"
 DEFAULT_BENCHMARK_CONFIG = "configs/benchmark.yaml"
 POLARS_VERSION = "1.43.2"
@@ -427,12 +427,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_config_arguments(initialize)
 
-    inspect = commands.add_parser(
-        "inspect",
-        help="Inspect pair lengths without training or prediction",
-    )
-    _add_config_arguments(inspect)
-
     analyze = commands.add_parser(
         "analyze",
         help="Calculate configured offline model statistics",
@@ -570,18 +564,6 @@ def run_initialize(args: argparse.Namespace) -> None:
     )
 
 
-def run_inspect(args: argparse.Namespace) -> None:
-    """Inspect the configured data and print the recommended pair length."""
-    from match.workflows.inspect import inspect_max_length
-
-    config = _load_workflow_config(
-        args.config,
-        args.overrides,
-    )
-    result = inspect_max_length(config)
-    print(f"Recommended max_length: {result}")
-
-
 def run_analyze(args: argparse.Namespace) -> None:
     """Calculate and persist configured offline model statistics."""
     from match.workflows.analyze import analyze
@@ -622,10 +604,6 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if args.command == "initialize":
         run_initialize(args)
-        return
-
-    if args.command == "inspect":
-        run_inspect(args)
         return
 
     if args.command == "analyze":
