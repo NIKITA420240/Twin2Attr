@@ -7,3 +7,4 @@ weights/cross-encoder-ms-marco-MiniLM-L12-v2/model.safetensors filter=lfs diff=l
 weights/cross-encoder-ms-marco-l12-v3/model.safetensors filter=lfs diff=lfs merge=lfs -text
 weights/rubert-base-cased/onnx/classifier.onnx filter=lfs diff=lfs merge=lfs -text
 build_submission/vendor_wheels/onnxruntime_gpu-1.23.2-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl filter=lfs diff=lfs merge=lfs -text
+analysis/attribute_importance/*.parquet filter=lfs diff=lfs merge=lfs -text

@@ -1,0 +1,25 @@
+{
+  "analysis_model": "attribute_importance",
+  "data_model": "base_dataset",
+  "augmentation_model": "attribute_shuffle",
+  "data_postprocessing_model": null,
+  "model": "transformer",
+  "model_path": "/work/Twin2Attr/weights/cross-encoder-ms-marco-l12-v3",
+  "sample_size": 365654,
+  "score_type": "normalized_mean_attention",
+  "group_by_category": true,
+  "min_occurrences": 30,
+  "seed": 42,
+  "max_length": 256,
+  "use_field_tokens": true,
+  "max_attribute_value_chars": 256,
+  "max_attribute_value_tokens": 16,
+  "attention_num_heads": 1,
+  "augmentation": {
+    "shuffled_copies": 1,
+    "keep_original": false,
+    "seed": 42,
+    "shuffle_cards_independently": true,
+    "skip_oversized": true
+  }
+}

@@ -21,6 +21,10 @@ llm_evaluation:
   seed: 42
   request_batch_size: 64
   max_concurrency: 64
+  max_attempts: 1
+  retry_base_seconds: 2.0
+  min_retry_concurrency: 8
+  max_stalled_rounds: 3
   # Меняйте версию при изменении prompt, чтобы не переиспользовать старые ответы.
-  prompt_version: v1
+  prompt_version: v3
   output_parts_dir: data/human_llm_evaluation_parts
