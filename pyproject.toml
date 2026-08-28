@@ -28,7 +28,7 @@ dependencies = [
     "orjson>=3.11.0,<3.12",
     "gensim>=4.4.0",
     "onnx>=1.22.0",
-    "langchain-openai==1.5.1",
+    "langchain-openai>=1.6.0",
 ]
 
 [project.optional-dependencies]
