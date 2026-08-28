@@ -1,0 +1,16 @@
+{
+  "predictor": "transformer",
+  "model_directory": "../models/rubert-tiny2",
+  "backend": "pytorch",
+  "batch_size": 512,
+  "dtype": "float16",
+  "onnx_artifacts": {
+    "enabled": true,
+    "precision": "float16",
+    "opset": 18,
+    "classifier_path": "onnx/classifier.onnx",
+    "encoder_path": null,
+    "dynamic_batch": true,
+    "dynamic_sequence_length": true
+  }
+}

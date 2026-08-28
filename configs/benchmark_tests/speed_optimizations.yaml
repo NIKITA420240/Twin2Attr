@@ -1,0 +1,127 @@
+test_type: speed
+reference_test: speed_baseline
+
+tests:
+  speed_baseline:
+    name: pytorch_minimal_runtime
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.dtype
+        value: float16
+      - path: inference.transformer.num_workers
+        value: 0
+      - path: inference.transformer.pin_memory
+        value: false
+      - path: inference.transformer.non_blocking_transfer
+        value: false
+      - path: inference.transformer.length_bucketing.enabled
+        value: false
+      - path: inference.transformer.torch_compile.enabled
+        value: false
+      - path: model_description.transformer.tokenizer.batch_fields.enabled
+        value: false
+
+  cpu_gpu_pipeline:
+    name: workers_prefetch_pinned_memory
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.dtype
+        value: float16
+      - path: inference.transformer.num_workers
+        value: 8
+      - path: inference.transformer.prefetch_factor
+        value: 2
+      - path: inference.transformer.pin_memory
+        value: true
+      - path: inference.transformer.non_blocking_transfer
+        value: true
+      - path: inference.transformer.length_bucketing.enabled
+        value: false
+      - path: inference.transformer.torch_compile.enabled
+        value: false
+      - path: model_description.transformer.tokenizer.batch_fields.enabled
+        value: false
+
+  batch_field_tokenization:
+    name: batch_field_tokenization
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.dtype
+        value: float16
+      - path: inference.transformer.num_workers
+        value: 0
+      - path: inference.transformer.pin_memory
+        value: false
+      - path: inference.transformer.non_blocking_transfer
+        value: false
+      - path: inference.transformer.length_bucketing.enabled
+        value: false
+      - path: inference.transformer.torch_compile.enabled
+        value: false
+      - path: model_description.transformer.tokenizer.batch_fields.enabled
+        value: true
+
+  length_bucketing:
+    name: length_bucketing
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.dtype
+        value: float16
+      - path: inference.transformer.num_workers
+        value: 0
+      - path: inference.transformer.pin_memory
+        value: false
+      - path: inference.transformer.non_blocking_transfer
+        value: false
+      - path: inference.transformer.length_bucketing.enabled
+        value: true
+      - path: inference.transformer.torch_compile.enabled
+        value: false
+      - path: model_description.transformer.tokenizer.batch_fields.enabled
+        value: false
+
+  torch_compile:
+    name: torch_compile
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.dtype
+        value: float16
+      - path: inference.transformer.num_workers
+        value: 0
+      - path: inference.transformer.pin_memory
+        value: false
+      - path: inference.transformer.non_blocking_transfer
+        value: false
+      - path: inference.transformer.length_bucketing.enabled
+        value: false
+      - path: inference.transformer.torch_compile.enabled
+        value: true
+      - path: model_description.transformer.tokenizer.batch_fields.enabled
+        value: false
+
+  all_pytorch_optimizations:
+    name: all_pytorch_optimizations
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.dtype
+        value: float16
+      - path: inference.transformer.num_workers
+        value: 8
+      - path: inference.transformer.prefetch_factor
+        value: 2
+      - path: inference.transformer.pin_memory
+        value: true
+      - path: inference.transformer.non_blocking_transfer
+        value: true
+      - path: inference.transformer.length_bucketing.enabled
+        value: true
+      - path: inference.transformer.torch_compile.enabled
+        value: true
+      - path: model_description.transformer.tokenizer.batch_fields.enabled
+        value: true

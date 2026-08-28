@@ -1,0 +1,111 @@
+test_type: quality
+reference_test: quality_baseline
+
+tests:
+  quality_baseline:
+    name: fp32_full_input
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.dtype
+        value: float32
+      - path: inference.transformer.max_length
+        value: 256
+      - path: inference.transformer.max_attribute_value_chars
+        value: 256
+      - path: inference.transformer.max_attribute_value_tokens
+        value: 16
+      - path: inference.transformer.length_bucketing.enabled
+        value: false
+      - path: inference.transformer.torch_compile.enabled
+        value: false
+
+  fp16:
+    name: fp16
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.dtype
+        value: float16
+      - path: inference.transformer.max_length
+        value: 256
+
+  bf16:
+    name: bf16
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.dtype
+        value: bfloat16
+      - path: inference.transformer.max_length
+        value: 256
+
+  max_length_192:
+    name: max_length_192
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.dtype
+        value: float32
+      - path: inference.transformer.max_length
+        value: 192
+      - path: inference.transformer.length_bucketing.enabled
+        value: false
+
+  max_length_128:
+    name: max_length_128
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.dtype
+        value: float32
+      - path: inference.transformer.max_length
+        value: 128
+      - path: inference.transformer.length_bucketing.enabled
+        value: false
+
+  attribute_chars_128:
+    name: attribute_chars_128
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.dtype
+        value: float32
+      - path: inference.transformer.max_attribute_value_chars
+        value: 128
+
+  attribute_chars_64:
+    name: attribute_chars_64
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.dtype
+        value: float32
+      - path: inference.transformer.max_attribute_value_chars
+        value: 64
+
+  attribute_tokens_8:
+    name: attribute_tokens_8
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.dtype
+        value: float32
+      - path: inference.transformer.max_attribute_value_tokens
+        value: 8
+
+  compact_input:
+    name: maxlen128_chars128_tokens8
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.dtype
+        value: float32
+      - path: inference.transformer.max_length
+        value: 128
+      - path: inference.transformer.max_attribute_value_chars
+        value: 128
+      - path: inference.transformer.max_attribute_value_tokens
+        value: 8
+      - path: inference.transformer.length_bucketing.enabled
+        value: false

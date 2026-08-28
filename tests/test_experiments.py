@@ -9,6 +9,7 @@ import polars as pl
 
 from match.config import load_app_config_file
 from match.experiments import (
+    _sample_weighting_summary,
     configure_experiment,
     save_experiment_record,
     validate_experiment_name,
@@ -89,6 +90,22 @@ class ExperimentTrackingTests(unittest.TestCase):
             validation_pairs_hash(reversed_pairs),
         )
 
+    def test_sample_weighting_summary_records_targets_and_votes(self) -> None:
+        matches = pl.DataFrame(
+            {
+                "target": [0, 0, 1],
+                "sample_weight": [1.0, 1.0, 1.0],
+                "weight_multiplier": [1.0, 1.0, 1.0],
+                "data_source": ["llm", "llm", "llm"],
+                "annotation_votes": [0, 2, 9],
+            }
+        )
+
+        summary = _sample_weighting_summary(matches)["llm"]
+
+        self.assertEqual(summary["target_counts"], {"0": 2, "1": 1})
+        self.assertEqual(summary["vote_counts"], {"0": 1, "2": 1, "9": 1})
+
     def test_saves_json_and_appends_csv(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -100,7 +117,12 @@ class ExperimentTrackingTests(unittest.TestCase):
             splits = SimpleNamespace(
                 items=pl.DataFrame({"id": [1, 2, 3, 4]}),
                 train_matches=pl.DataFrame(
-                    {"id1": [1], "id2": [2], "target": [1]}
+                    {
+                        "id1": [1],
+                        "id2": [2],
+                        "target": [1],
+                        "sample_weight": [1.0],
+                    }
                 ),
                 validation_matches=pl.DataFrame(
                     {"id1": [3], "id2": [4], "target": [0]}
@@ -128,6 +150,7 @@ class ExperimentTrackingTests(unittest.TestCase):
             self.assertEqual(record["train_data"], "Human")
             self.assertEqual(record["split"]["train_rows"], 1)
             self.assertTrue(record["split"]["validation_pairs_hash"])
+            self.assertEqual(record["sample_weighting"]["all"]["rows"], 1)
             with saved_registry.open(encoding="utf-8", newline="") as source:
                 rows = list(csv.DictReader(source))
             self.assertEqual(len(rows), 1)

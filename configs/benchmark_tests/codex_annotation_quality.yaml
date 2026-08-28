@@ -1,0 +1,37 @@
+# Paired training ablation for the 25,228 Codex-reviewed ambiguous LLM pairs.
+# All cases use the same human validation split and Transformer settings.
+test_type: training_quality
+reference_test: human_llm
+
+# Use one seed for the initial signal. Change to [42, 43, 44] before making
+# a final decision if the observed gain is small.
+seeds:
+  - 42
+
+tests:
+  human_llm:
+    name: human_plus_llm
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.data_model
+        value: mix_dataset
+      - path: model_description.transformer.hpo_trials
+        value: 1
+      - path: model_description.transformer.export.onnx.enabled
+        value: false
+
+  human_llm_codex_fixed_budget:
+    name: human_plus_llm_plus_codex_fixed_budget
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.data_model
+        value: mix_dataset_codex
+      # Replace 25,228 of the 750,000 LLM rows with the Codex-reviewed rows.
+      - path: data_model_description.mix_dataset_codex.sources.llm.max_rows
+        value: 724772
+      - path: model_description.transformer.hpo_trials
+        value: 1
+      - path: model_description.transformer.export.onnx.enabled
+        value: false

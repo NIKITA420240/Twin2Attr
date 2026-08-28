@@ -1,0 +1,31 @@
+test_type: speed
+reference_test: test_1
+
+tests:
+  test_1:
+    name: pytorch
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+
+  test_2:
+    name: onnx_cuda
+    overrides:
+      - path: inference.transformer.backend
+        value: onnxruntime
+      - path: inference.transformer.onnxruntime.provider
+        value: cuda
+
+  test_3:
+    name: onnx_tensorrt
+    overrides:
+      - path: inference.transformer.backend
+        value: onnxruntime
+      - path: inference.transformer.onnxruntime.provider
+        value: tensorrt
+
+  test_4:
+    name: native_tensorrt
+    overrides:
+      - path: inference.transformer.backend
+        value: tensorrt

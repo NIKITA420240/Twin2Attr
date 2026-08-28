@@ -95,6 +95,7 @@ class DatasetSourceSettings:
     sampling_strategy: str
     splitter: DatasetSplitterSettings
     weight_model: SampleWeightModelSettings = SampleWeightModelSettings()
+    confidence_power: float = 2.0
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -103,9 +104,35 @@ class DatasetSourceSettings:
             raise ValueError("dataset source weight must be positive")
         if self.max_rows is not None and self.max_rows < 1:
             raise ValueError("dataset source max_rows must be positive or null")
-        if self.sampling_strategy not in {"random", "category_target_balanced"}:
+        if self.sampling_strategy not in {
+            "random",
+            "category_target_balanced",
+            "category_target_confidence_weighted",
+            "category_target_confidence_priority",
+        }:
             raise ValueError(
-                "sampling_strategy must be random or category_target_balanced"
+                "sampling_strategy must be one of: random, "
+                "category_target_balanced, category_target_confidence_weighted, "
+                "category_target_confidence_priority"
+            )
+        if self.confidence_power <= 0.0:
+            raise ValueError("confidence_power must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetOverlapResolutionSettings:
+    enabled: bool = False
+    source_priority: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if len(set(self.source_priority)) != len(self.source_priority):
+            raise ValueError(
+                "mix_dataset.overlap_resolution.source_priority must be unique"
+            )
+        if any(not name.strip() for name in self.source_priority):
+            raise ValueError(
+                "mix_dataset.overlap_resolution.source_priority names "
+                "must not be empty"
             )
 
 
@@ -142,6 +169,9 @@ class MixedDatasetSettings:
     leakage_scope: str
     candidate_splits: int
     seed: int
+    overlap_resolution: DatasetOverlapResolutionSettings = (
+        DatasetOverlapResolutionSettings()
+    )
 
     def __post_init__(self) -> None:
         _validate_data_split_settings(
@@ -156,12 +186,20 @@ class MixedDatasetSettings:
             raise ValueError("mix_dataset source names must be unique")
         if self.validation_source not in names:
             raise ValueError("validation_source must name a configured source")
+        if self.overlap_resolution.enabled:
+            priority = self.overlap_resolution.source_priority
+            if set(priority) != set(names) or len(priority) != len(names):
+                raise ValueError(
+                    "enabled mix_dataset.overlap_resolution.source_priority "
+                    "must contain every configured source exactly once"
+                )
 
 
 @dataclass(frozen=True, slots=True)
 class DataModelDescriptionSettings:
     base_dataset: BaseDatasetSettings
     mix_dataset: MixedDatasetSettings
+    mix_dataset_codex: MixedDatasetSettings
 
 
 def _validate_data_split_settings(
@@ -212,9 +250,14 @@ class TrainingSettings:
                 "training.model must be one of: transformer, maxpooling, fusion, "
                 "boosting, stacking"
             )
-        if self.data_model not in {"base_dataset", "mix_dataset"}:
+        if self.data_model not in {
+            "base_dataset",
+            "mix_dataset",
+            "mix_dataset_codex",
+        }:
             raise ValueError(
-                "training.data_model must be one of: base_dataset, mix_dataset"
+                "training.data_model must be one of: base_dataset, mix_dataset, "
+                "mix_dataset_codex"
             )
         if self.model == "stacking" and self.data_model != "base_dataset":
             raise ValueError("stacking training currently requires base_dataset")
@@ -411,6 +454,9 @@ class LengthBucketingSettings:
 class TransformerInferenceSettings:
     batch_size: int
     dtype: str
+    max_length: int | None = None
+    max_attribute_value_chars: int | None = None
+    max_attribute_value_tokens: int | None = None
     backend: str = "pytorch"
     num_workers: int = 0
     prefetch_factor: int = 2
@@ -424,6 +470,15 @@ class TransformerInferenceSettings:
     def __post_init__(self) -> None:
         if self.batch_size < 1:
             raise ValueError("inference.transformer.batch_size must be positive")
+        for name, value in (
+            ("max_length", self.max_length),
+            ("max_attribute_value_chars", self.max_attribute_value_chars),
+            ("max_attribute_value_tokens", self.max_attribute_value_tokens),
+        ):
+            if value is not None and value < 1:
+                raise ValueError(
+                    f"inference.transformer.{name} must be positive or null"
+                )
         if self.num_workers < 0:
             raise ValueError(
                 "inference.transformer.num_workers must not be negative"
@@ -493,13 +548,22 @@ class AnalysisSettings:
                 "analysis.data_postprocessing_model must be null or "
                 "'attribute_sort'"
             )
-        if self.analysis_model != "attribute_importance":
+        if self.analysis_model not in {
+            "attribute_importance",
+            "backend_benchmark",
+        }:
             raise ValueError(
-                "analysis.analysis_model currently must be 'attribute_importance'"
+                "analysis.analysis_model must be one of: attribute_importance, "
+                "backend_benchmark"
             )
-        if self.data_model not in {"base_dataset", "mix_dataset"}:
+        if self.data_model not in {
+            "base_dataset",
+            "mix_dataset",
+            "mix_dataset_codex",
+        }:
             raise ValueError(
-                "analysis.data_model must be one of: base_dataset, mix_dataset"
+                "analysis.data_model must be one of: base_dataset, mix_dataset, "
+                "mix_dataset_codex"
             )
 
 
@@ -850,8 +914,88 @@ class AttributeImportanceAnalysisSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class BackendBenchmarkSettings:
+    tests_path: Path
+    selected_tests: tuple[str, ...] | None
+    sample_size: int | None
+    warmup_batches: int
+    measured_runs: int
+    reference_test: str
+    compare_predictions: bool
+    output_dir: Path
+
+    def __post_init__(self) -> None:
+        if self.sample_size is not None and self.sample_size < 1:
+            raise ValueError(
+                "backend_benchmark.sample_size must be positive or null"
+            )
+        if self.warmup_batches < 0:
+            raise ValueError(
+                "backend_benchmark.warmup_batches must not be negative"
+            )
+        if self.measured_runs < 1:
+            raise ValueError(
+                "backend_benchmark.measured_runs must be positive"
+            )
+        if not self.reference_test.strip():
+            raise ValueError(
+                "backend_benchmark.reference_test must not be empty"
+            )
+        if self.selected_tests is not None:
+            if not self.selected_tests:
+                raise ValueError(
+                    "backend_benchmark.selected_tests must not be empty; "
+                    "use null to select every test"
+                )
+            if len(set(self.selected_tests)) != len(self.selected_tests):
+                raise ValueError(
+                    "backend_benchmark.selected_tests must be unique"
+                )
+
+
+@dataclass(frozen=True, slots=True)
+class BenchmarkJobSettings:
+    name: str
+    type: str
+    enabled: bool
+    tests_path: Path
+    selected_tests: tuple[str, ...] | None
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("benchmark job name must not be empty")
+        if self.type not in {"inference", "training_quality"}:
+            raise ValueError(
+                "benchmark job type must be inference or training_quality"
+            )
+        if self.selected_tests is not None:
+            if not self.selected_tests:
+                raise ValueError(
+                    "benchmark job selected_tests must not be empty; use null"
+                )
+            if len(set(self.selected_tests)) != len(self.selected_tests):
+                raise ValueError("benchmark job selected_tests must be unique")
+
+
+@dataclass(frozen=True, slots=True)
+class BenchmarkSettings:
+    base_config_path: Path
+    output_dir: Path
+    fail_fast: bool
+    jobs: tuple[BenchmarkJobSettings, ...]
+
+    def __post_init__(self) -> None:
+        if not self.jobs:
+            raise ValueError("benchmark.jobs must not be empty")
+        names = [job.name for job in self.jobs]
+        if len(names) != len(set(names)):
+            raise ValueError("benchmark job names must be unique")
+
+
+@dataclass(frozen=True, slots=True)
 class AnalysisModelsSettings:
     attribute_importance: AttributeImportanceAnalysisSettings
+    backend_benchmark: BackendBenchmarkSettings | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1033,6 +1177,7 @@ class AppConfig:
     runtime: RuntimeSettings
     logging: LoggingSettings
     submission: SubmissionSettings
+    benchmark: BenchmarkSettings | None
 
 
 if TYPE_CHECKING:
@@ -1071,6 +1216,12 @@ def _optional_int(value: Any) -> int | None:
     if value is None:
         return None
     return int(value)
+
+
+def _sequence(value: Any, name: str) -> Sequence[Any]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(f"config field {name!r} must be a sequence")
+    return value
 
 
 def _int(value: Any, name: str) -> int:
@@ -1240,20 +1391,16 @@ def _dataset_splitter(
 def _dataset_source(
     name: str,
     values: Mapping[str, Any],
+    *,
+    dataset_name: str,
 ) -> DatasetSourceSettings:
+    prefix = f"data_model_description.{dataset_name}.sources.{name}"
     splitter = values.get("splitter", {})
     if not isinstance(splitter, Mapping):
-        raise ValueError(
-            f"data_model_description.mix_dataset.sources.{name}.splitter "
-            "must be a mapping"
-        )
+        raise ValueError(f"{prefix}.splitter must be a mapping")
     weight_model = values.get("weight_model", {})
     if not isinstance(weight_model, Mapping):
-        raise ValueError(
-            f"data_model_description.mix_dataset.sources.{name}.weight_model "
-            "must be a mapping"
-        )
-    prefix = f"data_model_description.mix_dataset.sources.{name}"
+        raise ValueError(f"{prefix}.weight_model must be a mapping")
     return DatasetSourceSettings(
         name=name,
         matches=_path(_required(values, "matches"), f"{prefix}.matches"),
@@ -1280,27 +1427,126 @@ def _dataset_source(
                 f"{prefix}.weight_model.confidence_weighted_violations",
             ),
         ),
+        confidence_power=float(values.get("confidence_power", 2.0)),
     )
 
 
-def _dataset_sources(values: Any) -> tuple[DatasetSourceSettings, ...]:
+def _dataset_sources(
+    values: Any,
+    *,
+    dataset_name: str,
+) -> tuple[DatasetSourceSettings, ...]:
     if isinstance(values, Mapping):
         entries = values.items()
     elif isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
         normalized: list[tuple[str, Mapping[str, Any]]] = []
         for value in values:
             if not isinstance(value, Mapping):
-                raise ValueError("mix_dataset sources must contain mappings")
+                raise ValueError(f"{dataset_name} sources must contain mappings")
             normalized.append((str(_required(value, "name")), value))
         entries = normalized
     else:
-        raise ValueError("mix_dataset sources must be a mapping or sequence")
+        raise ValueError(f"{dataset_name} sources must be a mapping or sequence")
     sources: list[DatasetSourceSettings] = []
     for name, source in entries:
         if not isinstance(source, Mapping):
-            raise ValueError(f"mix_dataset source {name!r} must be a mapping")
-        sources.append(_dataset_source(str(name), source))
+            raise ValueError(f"{dataset_name} source {name!r} must be a mapping")
+        sources.append(
+            _dataset_source(
+                str(name),
+                source,
+                dataset_name=dataset_name,
+            )
+        )
     return tuple(sources)
+
+
+def _mixed_dataset_settings(
+    values: Mapping[str, Any],
+    *,
+    dataset_name: str,
+    runtime_seed: int,
+) -> MixedDatasetSettings:
+    prefix = f"data_model_description.{dataset_name}"
+    overlap = values.get("overlap_resolution", {})
+    if not isinstance(overlap, Mapping):
+        raise ValueError(
+            f"config section '{prefix}.overlap_resolution' must be a mapping"
+        )
+    return MixedDatasetSettings(
+        items=_path(_required(values, "items"), f"{prefix}.items"),
+        sources=_dataset_sources(
+            _required(values, "sources"),
+            dataset_name=dataset_name,
+        ),
+        validation_source=str(_required(values, "validation_source")),
+        validation_fraction=float(_required(values, "validation_fraction")),
+        leakage_scope=str(_required(values, "leakage_scope")),
+        candidate_splits=int(values.get("candidate_splits", 128)),
+        seed=int(values.get("seed", runtime_seed)),
+        overlap_resolution=DatasetOverlapResolutionSettings(
+            enabled=_bool(
+                overlap.get("enabled", False),
+                f"{prefix}.overlap_resolution.enabled",
+            ),
+            source_priority=tuple(
+                str(name)
+                for name in _sequence(
+                    overlap.get("source_priority", []),
+                    f"{prefix}.overlap_resolution.source_priority",
+                )
+            ),
+        ),
+    )
+
+
+def _benchmark_jobs(values: Any) -> tuple[BenchmarkJobSettings, ...]:
+    if isinstance(values, Mapping):
+        entries = values.items()
+    elif isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
+        normalized: list[tuple[str, Mapping[str, Any]]] = []
+        for value in values:
+            if not isinstance(value, Mapping):
+                raise ValueError("benchmark jobs must contain mappings")
+            normalized.append((str(_required(value, "name")), value))
+        entries = normalized
+    else:
+        raise ValueError(
+            "config section 'benchmark.jobs' must be a mapping or sequence"
+        )
+    jobs: list[BenchmarkJobSettings] = []
+    for raw_name, raw_job in entries:
+        name = str(raw_name)
+        if not isinstance(raw_job, Mapping):
+            raise ValueError(f"benchmark job {name!r} must be a mapping")
+        selected_value = raw_job.get("selected_tests")
+        selected = (
+            None
+            if selected_value is None
+            else tuple(
+                str(test_name)
+                for test_name in _sequence(
+                    selected_value,
+                    f"benchmark.jobs.{name}.selected_tests",
+                )
+            )
+        )
+        jobs.append(
+            BenchmarkJobSettings(
+                name=name,
+                type=str(_required(raw_job, "type")).lower(),
+                enabled=_bool(
+                    raw_job.get("enabled", True),
+                    f"benchmark.jobs.{name}.enabled",
+                ),
+                tests_path=_path(
+                    _required(raw_job, "tests_path"),
+                    f"benchmark.jobs.{name}.tests_path",
+                ),
+                selected_tests=selected,
+            )
+        )
+    return tuple(jobs)
 
 
 def load_app_config(config: ConfigSource) -> AppConfig:
@@ -1318,7 +1564,7 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     data_model_description = _section(resolved, "data_model_description")
     base_dataset = _section(data_model_description, "base_dataset")
     mix_dataset = _section(data_model_description, "mix_dataset")
-    mix_sources = _required(mix_dataset, "sources")
+    mix_dataset_codex = _section(data_model_description, "mix_dataset_codex")
     inference_value = resolved.get("inference", training)
     if not isinstance(inference_value, Mapping):
         raise ValueError("config section 'inference' must be a mapping")
@@ -1376,6 +1622,14 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         analysis_models,
         "attribute_importance",
     )
+    backend_benchmark_value = analysis_models.get("backend_benchmark")
+    if backend_benchmark_value is not None and not isinstance(
+        backend_benchmark_value,
+        Mapping,
+    ):
+        raise ValueError(
+            "config section 'analysis_models.backend_benchmark' must be a mapping"
+        )
     augmentation_models = _section(resolved, "augmentation_models")
     attribute_shuffle = _section(augmentation_models, "attribute_shuffle")
     attribute_word_dropout = _section(
@@ -1438,6 +1692,9 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     if not isinstance(submission_value, Mapping):
         raise ValueError("config section 'submission' must be a mapping")
     submission = submission_value
+    benchmark_value = resolved.get("benchmark")
+    if benchmark_value is not None and not isinstance(benchmark_value, Mapping):
+        raise ValueError("config section 'benchmark' must be a mapping")
 
     return AppConfig(
         training=TrainingSettings(
@@ -1484,21 +1741,15 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 ),
                 seed=int(base_dataset.get("seed", _required(runtime, "seed"))),
             ),
-            mix_dataset=MixedDatasetSettings(
-                items=_path(
-                    _required(mix_dataset, "items"),
-                    "data_model_description.mix_dataset.items",
-                ),
-                sources=_dataset_sources(mix_sources),
-                validation_source=str(
-                    _required(mix_dataset, "validation_source")
-                ),
-                validation_fraction=float(
-                    _required(mix_dataset, "validation_fraction")
-                ),
-                leakage_scope=str(_required(mix_dataset, "leakage_scope")),
-                candidate_splits=int(mix_dataset.get("candidate_splits", 128)),
-                seed=int(mix_dataset.get("seed", _required(runtime, "seed"))),
+            mix_dataset=_mixed_dataset_settings(
+                mix_dataset,
+                dataset_name="mix_dataset",
+                runtime_seed=int(_required(runtime, "seed")),
+            ),
+            mix_dataset_codex=_mixed_dataset_settings(
+                mix_dataset_codex,
+                dataset_name="mix_dataset_codex",
+                runtime_seed=int(_required(runtime, "seed")),
             ),
         ),
         inference=InferenceSettings(
@@ -1520,6 +1771,15 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             transformer=TransformerInferenceSettings(
                 batch_size=int(_required(inference_transformer, "batch_size")),
                 dtype=str(_required(inference_transformer, "dtype")).lower(),
+                max_length=_optional_int(
+                    inference_transformer.get("max_length")
+                ),
+                max_attribute_value_chars=_optional_int(
+                    inference_transformer.get("max_attribute_value_chars")
+                ),
+                max_attribute_value_tokens=_optional_int(
+                    inference_transformer.get("max_attribute_value_tokens")
+                ),
                 backend=str(
                     inference_transformer.get("backend", "pytorch")
                 ).lower(),
@@ -1607,6 +1867,50 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 metadata_file=str(
                     _required(attribute_importance, "metadata_file")
                 ),
+            ),
+            backend_benchmark=(
+                None
+                if backend_benchmark_value is None
+                else BackendBenchmarkSettings(
+                    tests_path=_path(
+                        _required(backend_benchmark_value, "tests_path"),
+                        "analysis_models.backend_benchmark.tests_path",
+                    ),
+                    selected_tests=(
+                        None
+                        if backend_benchmark_value.get("selected_tests") is None
+                        else tuple(
+                            str(name)
+                            for name in _sequence(
+                                backend_benchmark_value.get("selected_tests"),
+                                "analysis_models.backend_benchmark.selected_tests",
+                            )
+                        )
+                    ),
+                    sample_size=_optional_int(
+                        backend_benchmark_value.get("sample_size")
+                    ),
+                    warmup_batches=int(
+                        _required(backend_benchmark_value, "warmup_batches")
+                    ),
+                    measured_runs=int(
+                        _required(backend_benchmark_value, "measured_runs")
+                    ),
+                    reference_test=str(
+                        _required(backend_benchmark_value, "reference_test")
+                    ),
+                    compare_predictions=_bool(
+                        _required(
+                            backend_benchmark_value,
+                            "compare_predictions",
+                        ),
+                        "analysis_models.backend_benchmark.compare_predictions",
+                    ),
+                    output_dir=_path(
+                        _required(backend_benchmark_value, "output_dir"),
+                        "analysis_models.backend_benchmark.output_dir",
+                    ),
+                )
             ),
         ),
         augmentation_models=AugmentationModelsSettings(
@@ -1971,6 +2275,25 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 "submission.output_path",
             ),
         ),
+        benchmark=(
+            None
+            if benchmark_value is None
+            else BenchmarkSettings(
+                base_config_path=_path(
+                    _required(benchmark_value, "base_config_path"),
+                    "benchmark.base_config_path",
+                ),
+                output_dir=_path(
+                    _required(benchmark_value, "output_dir"),
+                    "benchmark.output_dir",
+                ),
+                fail_fast=_bool(
+                    benchmark_value.get("fail_fast", False),
+                    "benchmark.fail_fast",
+                ),
+                jobs=_benchmark_jobs(_required(benchmark_value, "jobs")),
+            )
+        ),
     )
 
 
@@ -1992,6 +2315,41 @@ def load_app_config_file(
             OmegaConf.from_dotlist(clean_overrides),
         )
     return load_app_config(config)
+
+
+def load_benchmark_config_file(
+    path: str | Path,
+    overrides: Sequence[str] = (),
+) -> AppConfig:
+    """Load lightweight benchmark orchestration plus its full base config."""
+    from omegaconf import OmegaConf
+
+    orchestration_path = resolve_project_path(path)
+    if not orchestration_path.is_file():
+        raise FileNotFoundError(
+            f"Benchmark config does not exist: {orchestration_path}"
+        )
+    orchestration = OmegaConf.load(orchestration_path)
+    benchmark = orchestration.get("benchmark")
+    if benchmark is None or not hasattr(benchmark, "get"):
+        raise ValueError("benchmark config must contain a 'benchmark' mapping")
+    raw_base_path = benchmark.get("base_config_path")
+    if raw_base_path is None or not str(raw_base_path).strip():
+        raise ValueError("benchmark.base_config_path is required")
+    base_path = resolve_project_path(str(raw_base_path))
+    if not base_path.is_file():
+        raise FileNotFoundError(
+            f"Benchmark base config does not exist: {base_path}"
+        )
+    base = OmegaConf.load(base_path)
+    combined = OmegaConf.merge(base, orchestration)
+    clean_overrides = [value for value in overrides if value != "--"]
+    if clean_overrides:
+        combined = OmegaConf.merge(
+            combined,
+            OmegaConf.from_dotlist(clean_overrides),
+        )
+    return load_app_config(combined)
 
 
 def _serializable(value: Any) -> Any:
@@ -2019,6 +2377,20 @@ def _serializable(value: Any) -> Any:
             for source in value.sources
         }
         return serialized
+    if isinstance(value, BenchmarkSettings):
+        return {
+            "base_config_path": _serializable(value.base_config_path),
+            "output_dir": _serializable(value.output_dir),
+            "fail_fast": value.fail_fast,
+            "jobs": {
+                job.name: {
+                    field.name: _serializable(getattr(job, field.name))
+                    for field in fields(job)
+                    if field.name != "name"
+                }
+                for job in value.jobs
+            },
+        }
     if is_dataclass(value):
         return {
             field.name: _serializable(getattr(value, field.name))
@@ -2039,12 +2411,23 @@ def save_app_config(config: AppConfig, path: Path) -> None:
     OmegaConf.save(OmegaConf.create(_serializable(config)), path)
 
 
+def app_config_to_mapping(config: AppConfig) -> dict[str, Any]:
+    """Return a mutable, YAML-compatible representation of a typed config."""
+    serialized = _serializable(config)
+    if not isinstance(serialized, dict):
+        raise TypeError("serialized application config must be a mapping")
+    return serialized
+
+
 __all__ = [
     "FEATURE_PROVIDER_NAMES",
     "AnalysisModelsSettings",
     "AnalysisSettings",
     "AppConfig",
     "AttributeImportanceAnalysisSettings",
+    "BackendBenchmarkSettings",
+    "BenchmarkJobSettings",
+    "BenchmarkSettings",
     "AttributeShuffleSettings",
     "AttributeSortSettings",
     "AttributeWordDropoutSettings",
@@ -2056,6 +2439,7 @@ __all__ = [
     "ConfigSource",
     "DataModelDescriptionSettings",
     "DatasetSourceSettings",
+    "DatasetOverlapResolutionSettings",
     "DatasetSplitterSettings",
     "DataPostprocessingModelsSettings",
     "FeatureSettings",
@@ -2088,6 +2472,8 @@ __all__ = [
     "TransformerParameters",
     "TransformerTokenizerSettings",
     "load_app_config",
+    "load_benchmark_config_file",
     "load_app_config_file",
+    "app_config_to_mapping",
     "save_app_config",
 ]

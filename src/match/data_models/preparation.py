@@ -6,7 +6,11 @@ import numpy as np
 import polars as pl
 from loguru import logger
 
-from ..config import DatasetSourceSettings, DatasetSplitterSettings
+from ..config import (
+    DatasetOverlapResolutionSettings,
+    DatasetSourceSettings,
+    DatasetSplitterSettings,
+)
 from ..sample_weight_models import build_sample_weight_model
 
 _REQUIRED_MATCH_COLUMNS = {"id1", "id2", "target"}
@@ -58,17 +62,17 @@ def _binary_targets(
             f"1/{total_votes}"
         )
     with_votes = matches.with_columns(
-        pl.Series("_votes", rounded.astype(np.int16, copy=False)),
+        pl.Series("annotation_votes", rounded.astype(np.int16, copy=False)),
         pl.Series(
             "_annotation_confidence",
             np.abs(2.0 * values - 1.0).astype(np.float32, copy=False),
         ),
     )
     selected = with_votes.filter(
-        (pl.col("_votes") <= splitter.negative_threshold)
-        | (pl.col("_votes") >= splitter.positive_threshold)
+        (pl.col("annotation_votes") <= splitter.negative_threshold)
+        | (pl.col("annotation_votes") >= splitter.positive_threshold)
     ).with_columns(
-        (pl.col("_votes") >= splitter.positive_threshold)
+        (pl.col("annotation_votes") >= splitter.positive_threshold)
         .cast(pl.Int8)
         .alias("target")
     )
@@ -85,7 +89,7 @@ def _binary_targets(
         raise ValueError(
             f"dataset source {source_name!r} thresholds removed every row"
         )
-    return selected.drop("_votes")
+    return selected
 
 
 def _proportional_allocations(
@@ -113,6 +117,8 @@ def _category_target_sample(
     *,
     max_rows: int,
     seed: int,
+    strategy: str = "category_target_balanced",
+    confidence_power: float = 2.0,
 ) -> pl.DataFrame:
     lookup = items.select(
         pl.col("id").alias("id1"),
@@ -124,36 +130,131 @@ def _category_target_sample(
     groups = ["_sample_category", "target"]
     counts = enriched.group_by(groups).len(name="_group_count")
     allocations = _proportional_allocations(counts, max_rows)
-    ranked = (
-        enriched.with_columns(
-            pl.struct("id1", "id2", "target")
-            .hash(seed=seed)
-            .alias("_sample_hash")
+    ranked = enriched.with_columns(
+        pl.struct("id1", "id2", "target")
+        .hash(seed=seed)
+        .alias("_sample_hash")
+    )
+    if strategy == "category_target_confidence_weighted":
+        uniform = (
+            (pl.col("_sample_hash").cast(pl.Float64) + 1.0)
+            / 18_446_744_073_709_551_616.0
         )
-        .sort([*groups, "_sample_hash"])
+        weight = (
+            pl.col("_annotation_confidence")
+            .cast(pl.Float64)
+            .pow(confidence_power)
+        )
+        ranked = ranked.with_columns(
+            (-uniform.log() / weight).alias("_sample_score")
+        )
+    elif strategy == "category_target_confidence_priority":
+        ranked = ranked.with_columns(
+            (-pl.col("_annotation_confidence")).alias("_sample_score")
+        )
+    else:
+        ranked = ranked.with_columns(
+            pl.col("_sample_hash").alias("_sample_score")
+        )
+    return (
+        ranked.sort([*groups, "_sample_score", "_sample_hash"])
         .with_columns(pl.int_range(pl.len()).over(groups).alias("_sample_rank"))
         .join(allocations.select(*groups, "_allocation"), on=groups, how="left")
-    )
-    return (
-        ranked.filter(pl.col("_sample_rank") < pl.col("_allocation"))
-        .drop("_sample_category", "_sample_hash", "_sample_rank", "_allocation")
+        .filter(pl.col("_sample_rank") < pl.col("_allocation"))
+        .drop(
+            "_sample_category",
+            "_sample_hash",
+            "_sample_score",
+            "_sample_rank",
+            "_allocation",
+        )
     )
 
 
-def prepare_source_matches(
-    items: pl.DataFrame,
+def prepare_source_labels(
     matches: pl.DataFrame,
     source: DatasetSourceSettings,
-    *,
-    seed: int,
 ) -> pl.DataFrame:
-    """Normalize one source to binary labels and attach its loss weight."""
+    """Validate one source and normalize its selected rows to binary labels."""
     _validate_match_columns(matches, source_name=source.name)
-    prepared = _binary_targets(
+    return _binary_targets(
         matches,
         source.splitter,
         source_name=source.name,
     )
+
+
+def _with_pair_key(matches: pl.DataFrame) -> pl.DataFrame:
+    return matches.with_columns(
+        pl.min_horizontal("id1", "id2").alias("_overlap_id1"),
+        pl.max_horizontal("id1", "id2").alias("_overlap_id2"),
+    )
+
+
+def resolve_source_overlaps(
+    sources: dict[str, pl.DataFrame],
+    settings: DatasetOverlapResolutionSettings,
+) -> dict[str, pl.DataFrame]:
+    """Remove lower-priority cross-source copies of symmetric match pairs."""
+    if not settings.enabled:
+        return sources
+    ranks = {name: rank for rank, name in enumerate(settings.source_priority)}
+    keyed = {
+        name: _with_pair_key(frame)
+        for name, frame in sources.items()
+    }
+    keys = pl.concat(
+        [
+            frame.select(
+                "_overlap_id1",
+                "_overlap_id2",
+                "target",
+            ).with_columns(
+                pl.lit(ranks[name]).cast(pl.UInt32).alias("_overlap_rank"),
+            )
+            for name, frame in keyed.items()
+        ],
+        how="vertical_relaxed",
+    )
+    summary = keys.group_by("_overlap_id1", "_overlap_id2").agg(
+        pl.col("_overlap_rank").n_unique().alias("_source_count"),
+        pl.col("target").n_unique().alias("_target_count"),
+        pl.col("_overlap_rank").min().alias("_winning_rank"),
+    )
+    overlaps = summary.filter(pl.col("_source_count") > 1)
+    conflicts = overlaps.filter(pl.col("_target_count") > 1).height
+    result: dict[str, pl.DataFrame] = {}
+    removed_by_source: dict[str, int] = {}
+    for name, frame in keyed.items():
+        losing_keys = overlaps.filter(
+            pl.col("_winning_rank") < ranks[name]
+        ).select("_overlap_id1", "_overlap_id2")
+        selected = frame.join(
+            losing_keys,
+            on=["_overlap_id1", "_overlap_id2"],
+            how="anti",
+        )
+        removed_by_source[name] = frame.height - selected.height
+        result[name] = selected.drop("_overlap_id1", "_overlap_id2")
+    logger.info(
+        "Resolved cross-source overlaps: overlapping_pairs={}, "
+        "conflicting_target_pairs={}, removed_rows={}, priority={}",
+        overlaps.height,
+        conflicts,
+        removed_by_source,
+        list(settings.source_priority),
+    )
+    return result
+
+
+def finalize_source_matches(
+    items: pl.DataFrame,
+    prepared: pl.DataFrame,
+    source: DatasetSourceSettings,
+    *,
+    seed: int,
+) -> pl.DataFrame:
+    """Apply source weighting and sampling after overlap resolution."""
     weight_model = build_sample_weight_model(source.weight_model)
     prepared = weight_model.apply(prepared, source_name=source.name)
     if source.max_rows is not None and prepared.height > source.max_rows:
@@ -169,6 +270,8 @@ def prepare_source_matches(
                 prepared,
                 max_rows=source.max_rows,
                 seed=seed,
+                strategy=source.sampling_strategy,
+                confidence_power=source.confidence_power,
             )
         logger.info(
             "Sampled dataset source: source={}, strategy={}, rows={}",
@@ -179,7 +282,8 @@ def prepare_source_matches(
     diagnostics = [
         name
         for name in prepared.columns
-        if name == "weight_multiplier" or name.startswith("transitivity_")
+        if name in {"annotation_votes", "weight_multiplier"}
+        or name.startswith("transitivity_")
     ]
     return (
         prepared.select("id1", "id2", "target", *diagnostics)
@@ -195,4 +299,26 @@ def prepare_source_matches(
     )
 
 
-__all__ = ["prepare_source_matches"]
+def prepare_source_matches(
+    items: pl.DataFrame,
+    matches: pl.DataFrame,
+    source: DatasetSourceSettings,
+    *,
+    seed: int,
+) -> pl.DataFrame:
+    """Normalize, weight and sample one standalone dataset source."""
+    prepared = prepare_source_labels(matches, source)
+    return finalize_source_matches(
+        items,
+        prepared,
+        source,
+        seed=seed,
+    )
+
+
+__all__ = [
+    "finalize_source_matches",
+    "prepare_source_labels",
+    "prepare_source_matches",
+    "resolve_source_overlaps",
+]

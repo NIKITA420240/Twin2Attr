@@ -166,20 +166,84 @@ def _head_description(config: AppConfig) -> str:
 def _selected_split_settings(config: AppConfig) -> Any:
     if config.training.data_model == "base_dataset":
         return config.data_model_description.base_dataset
-    return config.data_model_description.mix_dataset
+    return getattr(config.data_model_description, config.training.data_model)
 
 
 def _training_data_label(config: AppConfig) -> str:
     if config.training.data_model == "base_dataset":
         return "Human"
+    settings = _selected_split_settings(config)
     source_names = (
         source.name
-        for source in config.data_model_description.mix_dataset.sources
+        for source in settings.sources
     )
     return " + ".join(
-        name.upper() if name.lower() == "llm" else name.title()
+        name.upper() if name.lower() == "llm" else name.replace("_", " ").title()
         for name in source_names
     )
+
+
+def _sample_weighting_summary(matches: pl.DataFrame) -> dict[str, Any]:
+    """Summarize how source and graph weights changed the training loss."""
+    if "sample_weight" not in matches.columns:
+        return {}
+    sources = (
+        matches.get_column("data_source").unique().sort().to_list()
+        if "data_source" in matches.columns
+        else ["all"]
+    )
+    result: dict[str, Any] = {}
+    for source in sources:
+        selected = (
+            matches
+            if source == "all"
+            else matches.filter(pl.col("data_source") == source)
+        )
+        summary: dict[str, Any] = {
+            "rows": selected.height,
+            "mean_sample_weight": float(
+                selected.get_column("sample_weight").mean()
+            ),
+            "target_counts": {
+                str(row["target"]): int(row["len"])
+                for row in selected.group_by("target")
+                .len()
+                .sort("target")
+                .iter_rows(named=True)
+            },
+        }
+        if "annotation_votes" in selected.columns:
+            vote_rows = selected.filter(pl.col("annotation_votes").is_not_null())
+            if vote_rows.height:
+                summary["vote_counts"] = {
+                    str(row["annotation_votes"]): int(row["len"])
+                    for row in vote_rows.group_by("annotation_votes")
+                    .len()
+                    .sort("annotation_votes")
+                    .iter_rows(named=True)
+                }
+        if "weight_multiplier" in selected.columns:
+            multipliers = selected.get_column("weight_multiplier").drop_nulls()
+            if len(multipliers):
+                summary.update(
+                    {
+                        "mean_weight_multiplier": float(multipliers.mean()),
+                        "min_weight_multiplier": float(multipliers.min()),
+                        "downweighted_fraction": float(
+                            (multipliers < 1.0).mean()
+                        ),
+                    }
+                )
+        if "transitivity_violations" in selected.columns:
+            violations = selected.get_column(
+                "transitivity_violations"
+            ).drop_nulls()
+            if len(violations):
+                summary["violating_fraction"] = float(
+                    (violations > 0).mean()
+                )
+        result[str(source)] = summary
+    return result
 
 
 def save_experiment_record(
@@ -266,6 +330,7 @@ def save_experiment_record(
             "validation_rows": splits.validation_matches.height,
             "validation_pairs_hash": split_hash,
         },
+        "sample_weighting": _sample_weighting_summary(splits.train_matches),
     }
     record_path = experiment_dir / "experiment.json"
     record_path.write_text(

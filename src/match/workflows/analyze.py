@@ -7,7 +7,9 @@ from loguru import logger
 
 from ..analysis import (
     AttributeImportanceResult,
+    BackendBenchmarkResult,
     analyze_transformer_attribute_importance,
+    run_backend_benchmark,
 )
 from ..augmentations import apply_pair_augmentation
 from ..config import AppConfig
@@ -41,8 +43,11 @@ def _selected_items(
     return items.join(ids, on="id", how="semi")
 
 
-def analyze(config: AppConfig) -> AttributeImportanceResult:
+def analyze(config: AppConfig) -> AttributeImportanceResult | BackendBenchmarkResult:
     """Run the configured analysis model without changing model weights."""
+    if config.analysis.analysis_model == "backend_benchmark":
+        with workflow_logging(config, workflow_name="backend_benchmark"):
+            return run_backend_benchmark(config)
     if config.analysis.analysis_model != "attribute_importance":
         raise ValueError(
             f"Unsupported analysis model: {config.analysis.analysis_model!r}"

@@ -150,12 +150,120 @@ export EXPERIMENT_NAME=mmarco-l12-human-last3-special-tokens
 # Обучение
 uv run python run.py train
 
-# Только безопасно оценить max_length, ничего не обучая и не сохраняя
-uv run python run.py inspect
-
 # Посчитать важность атрибутов по attention pooling обученного Transformer
 uv run python run.py analyze
+
+# Запустить все benchmark-задачи, включённые в configs/benchmark.yaml
+uv run python run.py benchmark
 ```
+
+`configs/benchmark.yaml` — небольшая управляющая конфигурация benchmark-запуска.
+Все параметры данных, модели, обучения, preprocessing и inference вынесены в
+`configs/benchmark_pipeline.yaml`; поле `base_config_path` указывает, откуда их
+загрузить. Блок `benchmark.jobs` определяет, какие наборы запускать. У каждой задачи есть
+`enabled`, `type`, `tests_path` и необязательный `selected_tests`. Поэтому для
+обычного запуска не нужно передавать пути в CLI: достаточно изменить YAML и
+выполнить `uv run python run.py benchmark`.
+
+```yaml
+benchmark:
+  base_config_path: configs/benchmark_pipeline.yaml
+  output_dir: analysis/benchmark
+  fail_fast: false
+  jobs:
+    backends:
+      type: inference
+      enabled: true
+      tests_path: configs/benchmark_tests/backends.yaml
+      selected_tests: null
+
+    transitivity_quality:
+      type: training_quality
+      enabled: false
+      tests_path: configs/benchmark_tests/transitivity_quality.yaml
+      selected_tests: null
+
+    codex_annotation_quality:
+      type: training_quality
+      enabled: true
+      tests_path: configs/benchmark_tests/codex_annotation_quality.yaml
+      selected_tests: null
+
+    llm_vote_sampling_quality:
+      type: training_quality
+      enabled: true
+      tests_path: configs/benchmark_tests/llm_vote_sampling_quality.yaml
+      selected_tests: null
+```
+
+Каждый запуск создаёт общий timestamp-каталог, сохраняет разрешённый конфиг,
+отдельный каталог каждой задачи и сводный `report.json`. При `fail_fast: false`
+ошибка одного backend-а не мешает выполнить остальные независимые задачи.
+Тяжёлый `transitivity_quality` по умолчанию выключен, поскольку он заново
+обучает две модели даже для одного seed.
+
+Наборы benchmark-тестов разделены по назначению:
+
+```text
+configs/benchmark_tests/backends.yaml              # четыре backend-а
+configs/benchmark_tests/speed_optimizations.yaml   # технические ускорения
+configs/benchmark_tests/quality_optimizations.yaml # сокращение входа/precision
+configs/benchmark_tests/transitivity_quality.yaml  # влияние весов на обучение
+configs/benchmark_tests/codex_annotation_quality.yaml # ценность Codex-разметки
+configs/benchmark_tests/llm_vote_sampling_quality.yaml # выбор по уверенности LLM
+```
+
+Inference benchmark использует один и тот же checkpoint
+`weights/cross-encoder-ms-marco-l12-v3`. Fallback между backend-ами отключается,
+чтобы тест ONNX или TensorRT не измерил PyTorch незаметно. Speed-suite требует
+эквивалентности reference-предсказаниям: максимальная
+разница вероятностей не больше `1e-3` и ни один класс при пороге `0.5` не должен
+измениться. Quality-suite считает `PR-AUC`, `ROC-AUC`, accuracy, precision,
+recall и F1 вместе с дельтами относительно своего reference-теста.
+
+Влияние транзитивности проверяется отдельным training-quality benchmark. Он
+заново обучает `transitivity_off` и `transitivity_on` с одинаковыми seed,
+split, моделью и гиперпараметрами; затем сравнивает
+`validation_macro_pr_auc`. Хэш validation-пар проверяется автоматически, а
+результаты, агрегаты и обе версии модели сохраняются в timestamp-каталоге:
+
+Для его запуска достаточно установить
+`benchmark.jobs.transitivity_quality.enabled: true` в `benchmark.yaml` и снова
+выполнить общую команду benchmark.
+
+Первый smoke-test настроен на seed `42`. Для окончательного решения следует
+указать в YAML как минимум три seed, например `[42, 43, 44]`, и смотреть на
+среднюю парную дельту, а не только на один удачный запуск. В отчёт также входят
+доля LLM-пар с уменьшенным весом и средний множитель веса — это показывает,
+насколько активно транзитивность действительно воздействовала на обучение.
+`results.parquet` содержит `training_seconds` каждого запуска,
+`aggregates.parquet` — `total_training_seconds` по каждому варианту, а
+`report.json` — `total_elapsed_seconds` всего теста транзитивности.
+
+Полезность Codex-разметки проверяет `codex_annotation_quality`. Он сравнивает
+`human + 750000 LLM` с таким же бюджетом псевдоразметки:
+`human + 724772 LLM + 25228 Codex`. В обоих случаях validation строится только
+из human-разметки и проверяется по хэшу. `results.parquet` дополнительно содержит
+`total_train_rows`,
+`human_train_rows`, `llm_train_rows` и `codex_reviewed_train_rows`.
+
+`llm_vote_sampling_quality` при одинаковых порогах `2/7`, лимите `750000` и
+квотах `category × target` сравнивает три способа выбрать LLM-строки:
+пропорционально-случайный `category_target_balanced`, взвешенный по
+`confidence ** confidence_power` и жёсткий приоритет максимальной уверенности.
+Взвешенный вариант использует детерминированную weighted sampling without
+replacement, поэтому один seed воспроизводит те же пары. В `results.parquet`
+записываются `llm_negative_rows`, `llm_positive_rows` и колонки
+`llm_vote_0_rows` … `llm_vote_9_rows`; это позволяет проверить фактический
+состав каждого обучающего датасета.
+Для быстрого первичного отбора все три варианта обучают локальный
+`weights/rubert-tiny2`. Выбранную стратегию следует затем подтвердить на целевом
+Transformer; inference backend-бенчмарки продолжают использовать L12 checkpoint.
+
+Inference-конфиг поддерживает безопасные ограничения `max_length`,
+`max_attribute_value_chars` и `max_attribute_value_tokens`. Они могут только
+сократить вход относительно лимитов обученного checkpoint; попытка увеличить
+`max_length` выше лимита модели завершается ошибкой.
 
 Режим `analyze` не обучает и не изменяет модель. Он загружает Transformer из
 `model_description.transformer.artifact_dir`, один раз инференсит выборку и
@@ -315,8 +423,33 @@ uv run python run.py train \
 uv run python run.py train training.data_model=mix_dataset
 ```
 
+`mix_dataset_codex` дополнительно добавляет все 25 228 бинарно переразмеченных
+пар из `data/matches_llm_ambiguous_reviewed.parquet`. Для них используется новая
+колонка `target`; `original_target`, `confidence` и `reason` остаются
+диагностическими и не подаются модели:
+
+```bash
+uv run python run.py train \
+  training.model=transformer \
+  training.data_model=mix_dataset_codex
+```
+
+Обе смешанные модели строят validation из human-источника с тем же seed, поэтому
+их можно использовать для парного сравнения полезности Codex-разметки.
+
 Настройки источников, пороги голосов и ограничение размера LLM-выборки находятся
 в `data_model_description.mix_dataset.sources`.
+
+Пересечения источников разрешаются блоком
+`data_model_description.mix_dataset.overlap_resolution`. Пара `(id1, id2)`
+считается неупорядоченной, поэтому `(A, B)` и `(B, A)` — одно пересечение.
+Если пара присутствует в нескольких источниках, остаются все её строки только
+из первого источника в `source_priority`; это правило действует и при
+совпадающих, и при конфликтующих метках. Список приоритетов при включённой
+настройке должен содержать каждый настроенный источник ровно один раз. Например,
+после добавления проверенной Codex-разметки порядок можно задать как
+`[human, codex_reviewed, llm]`. Разрешение пересечений выполняется после перевода
+голосов в бинарные метки, но до вычисления весов транзитивности и семплирования.
 
 Итоговая модель выбирается одним параметром `training.model`. Значения
 `transformer`, `maxpooling` и `boosting` обучают соответствующую модель, `fusion`
@@ -513,7 +646,7 @@ features:
 Директория модели должна содержать `word_ner_config.json`, `model.pt`,
 локальный Hugging Face `config.json` и tokenizer-файлы. Если включён
 `semantic_cleanup`, также необходим `cluster_centers.pt`. Один и тот же
-preprocessing применяется в `train`, `inspect` и финальном `predict`, а его
+preprocessing применяется в `train`, benchmark и финальном `predict`, а его
 настройки автоматически записываются в `solution.json`.
 
 Feature-провайдеры создаются через `ItemEnricherFactory` и последовательно

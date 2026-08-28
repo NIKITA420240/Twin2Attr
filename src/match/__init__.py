@@ -48,7 +48,6 @@ _EXPORTS = {
     "encode_pair_cls": (".models.transformer.predictor", "encode_pair_cls"),
     "encode_prepared_pair": (".pair_encoding", "encode_prepared_pair"),
     "infer_pair_max_length": (".pair_encoding", "infer_pair_max_length"),
-    "inspect_max_length": (".workflows.inspect", "inspect_max_length"),
     "load_fusion_classifier": (
         ".models.fusion.serialization",
         "load_fusion_classifier",

@@ -74,11 +74,42 @@ class TransformerPredictor:
     padding_length_buckets: tuple[int, ...] | None = None
     batch_fields: bool = False
     field_chunk_size: int = 16_384
+    max_length: int | None = None
+    max_attribute_value_chars: int | None = None
+    max_attribute_value_tokens: int | None = None
     _batching: TransformerBatchingSettings = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.executor, TransformerExecutor):
             raise TypeError("executor must implement TransformerExecutor")
+        for name, value in (
+            ("max_length", self.max_length),
+            ("max_attribute_value_chars", self.max_attribute_value_chars),
+            ("max_attribute_value_tokens", self.max_attribute_value_tokens),
+        ):
+            if value is not None and int(value) < 1:
+                raise ValueError(f"{name} must be positive or None")
+        for name, value, trained_value in (
+            (
+                "max_attribute_value_chars",
+                self.max_attribute_value_chars,
+                self.executor.max_attribute_value_chars,
+            ),
+            (
+                "max_attribute_value_tokens",
+                self.max_attribute_value_tokens,
+                self.executor.max_attribute_value_tokens,
+            ),
+        ):
+            if (
+                value is not None
+                and trained_value is not None
+                and int(value) > int(trained_value)
+            ):
+                raise ValueError(
+                    f"runtime {name}={value} exceeds trained model "
+                    f"{name}={trained_value}"
+                )
         self._batching = TransformerBatchingSettings(
             batch_size=self.batch_size,
             num_workers=self.num_workers,
@@ -106,6 +137,9 @@ class TransformerPredictor:
         padding_length_buckets: tuple[int, ...] | None = None,
         batch_fields: bool = False,
         field_chunk_size: int = 16_384,
+        max_length: int | None = None,
+        max_attribute_value_chars: int | None = None,
+        max_attribute_value_tokens: int | None = None,
         compile_enabled: bool = False,
         compile_mode: str = "reduce-overhead",
         compile_dynamic: bool = True,
@@ -135,6 +169,9 @@ class TransformerPredictor:
             padding_length_buckets=padding_length_buckets,
             batch_fields=batch_fields,
             field_chunk_size=field_chunk_size,
+            max_length=max_length,
+            max_attribute_value_chars=max_attribute_value_chars,
+            max_attribute_value_tokens=max_attribute_value_tokens,
         )
 
     @property
@@ -161,7 +198,17 @@ class TransformerPredictor:
         pairs: Sequence[PreparedPair],
         max_length: int | None,
     ) -> int:
-        resolved = max_length if max_length is not None else self.executor.max_length
+        requested = max_length if max_length is not None else self.max_length
+        if (
+            requested is not None
+            and self.executor.max_length is not None
+            and int(requested) > int(self.executor.max_length)
+        ):
+            raise ValueError(
+                f"runtime max_length={requested} exceeds trained model "
+                f"max_length={self.executor.max_length}"
+            )
+        resolved = requested if requested is not None else self.executor.max_length
         if resolved is not None:
             return int(resolved)
         return infer_pair_max_length(
@@ -183,19 +230,29 @@ class TransformerPredictor:
     ) -> np.ndarray:
         if not pairs:
             return np.empty((0, output_width), dtype=np.float32)
+        value_chars = (
+            self.max_attribute_value_chars
+            if self.max_attribute_value_chars is not None
+            else self.executor.max_attribute_value_chars
+        )
+        value_tokens = (
+            self.max_attribute_value_tokens
+            if self.max_attribute_value_tokens is not None
+            else self.executor.max_attribute_value_tokens
+        )
         collator = self._batching.collator(
             self.tokenizer,
             max_length=self._resolved_max_length(pairs, max_length),
             use_field_tokens=self.executor.use_field_tokens,
-            max_attribute_value_chars=self.executor.max_attribute_value_chars,
-            max_attribute_value_tokens=self.executor.max_attribute_value_tokens,
+            max_attribute_value_chars=value_chars,
+            max_attribute_value_tokens=value_tokens,
             profile=self._output_contract.profile,
         )
         dataset, order = inference_dataset(
             pairs,
             length_bucketing=self._batching.length_bucketing,
-            max_attribute_value_chars=self.executor.max_attribute_value_chars,
-            max_attribute_value_tokens=self.executor.max_attribute_value_tokens,
+            max_attribute_value_chars=value_chars,
+            max_attribute_value_tokens=value_tokens,
         )
         current_batch_size = self._batching.batch_size
         while True:
