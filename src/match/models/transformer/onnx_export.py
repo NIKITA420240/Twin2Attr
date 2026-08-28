@@ -15,7 +15,8 @@ import torch
 from loguru import logger
 from torch import nn
 
-from .predictor import load_trained_classifier
+from .loading import load_trained_classifier
+from .profile import TransformerRuntimeContract
 
 ONNX_DIRECTORY_NAME = "onnx"
 CLASSIFIER_ONNX_NAME = "classifier.onnx"
@@ -50,10 +51,17 @@ class _ClassifierGraph(nn.Module):
 
 
 class _EncoderGraph(nn.Module):
-    def __init__(self, model: nn.Module, *, token_type_ids: bool) -> None:
+    def __init__(
+        self,
+        model: nn.Module,
+        *,
+        token_type_ids: bool,
+        mean_pooling: bool = False,
+    ) -> None:
         super().__init__()
         self.backbone = model.base_model
         self.token_type_ids = token_type_ids
+        self.mean_pooling = mean_pooling
 
     def forward(self, input_ids, attention_mask, token_type_ids=None):
         inputs = {
@@ -64,6 +72,9 @@ class _EncoderGraph(nn.Module):
         if self.token_type_ids:
             inputs["token_type_ids"] = token_type_ids
         hidden_state = self.backbone(**inputs).last_hidden_state
+        if self.mean_pooling:
+            mask = attention_mask.unsqueeze(-1).to(dtype=hidden_state.dtype)
+            return (hidden_state * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1.0)
         return hidden_state[:, 0, :]
 
 
@@ -205,7 +216,7 @@ def export_transformer_to_onnx(
     export_classifier: bool = True,
     export_encoder: bool = True,
 ) -> OnnxExportResult:
-    """Export classifier logits and/or CLS embeddings next to a trained model."""
+    """Export classifier logits and/or pooled embeddings next to a trained model."""
     if precision not in {"float32", "float16"}:
         raise ValueError("ONNX precision must be float32 or float16")
     if opset < 14:
@@ -223,10 +234,15 @@ def export_transformer_to_onnx(
     model.eval()
     output_dir = model_dir / ONNX_DIRECTORY_NAME
     output_dir.mkdir(parents=True, exist_ok=True)
-    max_length = int(getattr(model.config, "match_max_length", 256))
-    # PairEncodingCollator follows tokenizer.model_input_names as well, so the
-    # exported graph and runtime batch expose the same optional segment input.
-    use_token_type_ids = "token_type_ids" in tokenizer.model_input_names
+    runtime_contract = TransformerRuntimeContract.from_config(model.config)
+    max_length = runtime_contract.max_length or 256
+    contract = runtime_contract.output
+    prompted = contract.uses_prompted_pairs
+    # Prompted rerankers always receive one sequence and do not expose BERT
+    # segment ids even when a test/surrogate tokenizer happens to advertise them.
+    use_token_type_ids = (
+        not prompted and "token_type_ids" in tokenizer.model_input_names
+    )
 
     common = {
         "max_length": max_length,
@@ -247,7 +263,11 @@ def export_transformer_to_onnx(
         )
     if encoder_path is not None:
         _export_graph(
-            _EncoderGraph(model, token_type_ids=use_token_type_ids),
+            _EncoderGraph(
+                model,
+                token_type_ids=use_token_type_ids,
+                mean_pooling=prompted,
+            ),
             encoder_path,
             output_name="cls_embedding",
             **common,
@@ -273,6 +293,11 @@ def export_transformer_to_onnx(
             "attention_mask",
             *(["token_type_ids"] if use_token_type_ids else []),
         ],
+        "profile": contract.profile,
+        "head_type": contract.head_type,
+        "num_logits": contract.num_logits,
+        "probability_transform": contract.probability_transform,
+        "encoder_pooling": contract.encoder_pooling,
     }
     (output_dir / ONNX_METADATA_NAME).write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",

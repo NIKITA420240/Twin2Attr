@@ -98,6 +98,12 @@ def build_solution_manifest(
 
     if artifacts.transformer_dir is not None:
         solution["model_directory"] = map_path(artifacts.transformer_dir)
+        solution["transformer_profile"] = (
+            config.model_description.transformer.profile
+        )
+        solution["transformer_head"] = {
+            "type": config.model_description.transformer.head.type,
+        }
         solution["backend"] = config.inference.transformer.backend
         solution["batch_size"] = config.inference.transformer.batch_size
         solution["dtype"] = config.inference.transformer.dtype

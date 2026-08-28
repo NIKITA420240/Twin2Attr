@@ -9,9 +9,9 @@ from typing import Any
 import numpy as np
 import torch
 
-from ...pair_encoding import DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS
 from .executor import TransformerExecutorOutOfMemoryError
 from .onnx_export import CLASSIFIER_ONNX_NAME, ENCODER_ONNX_NAME, ONNX_DIRECTORY_NAME
+from .profile import TransformerArtifactContract, TransformerRuntimeContract
 from .tensorrt_builder import TensorRTEngineBuilder
 from .tensorrt_cache import TensorRTEngineCache
 from .tensorrt_common import (
@@ -91,8 +91,12 @@ class TensorRTTransformerExecutor:
     _cache: TensorRTEngineCache = field(init=False, repr=False)
     _builder: TensorRTEngineBuilder = field(init=False, repr=False)
     _states: dict[str, _EngineState] = field(init=False, default_factory=dict)
+    _runtime_contract: TransformerRuntimeContract = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        self._runtime_contract = TransformerRuntimeContract.from_config(
+            self.model_config
+        )
         self._trt = _require_tensorrt()
         self._logger = self._trt.Logger(self._trt.Logger.WARNING)
         self._device = torch.device("cuda", self.options.device_id)
@@ -131,32 +135,39 @@ class TensorRTTransformerExecutor:
 
     @property
     def output_dim(self) -> int:
-        value = self.model_config.get("hidden_size") or self.model_config.get(
-            "backbone_config", {}
-        ).get("hidden_size")
-        if not value:
-            raise ValueError("Transformer config does not expose hidden_size")
-        return int(value)
+        return self.runtime_contract.hidden_size
+
+    @property
+    def num_logits(self) -> int:
+        return self.output_contract.num_logits
+
+    @property
+    def profile(self) -> str:
+        return self.output_contract.profile
+
+    @property
+    def output_contract(self) -> TransformerArtifactContract:
+        return self.runtime_contract.output
+
+    @property
+    def runtime_contract(self) -> TransformerRuntimeContract:
+        return self._runtime_contract
 
     @property
     def max_length(self) -> int | None:
-        value = self.model_config.get("match_max_length")
-        return None if value is None else int(value)
+        return self.runtime_contract.max_length
 
     @property
     def use_field_tokens(self) -> bool:
-        return bool(self.model_config.get("match_use_field_tokens", True))
+        return self.runtime_contract.use_field_tokens
 
     @property
     def max_attribute_value_chars(self) -> int | None:
-        return self.model_config.get("match_max_attribute_value_chars")
+        return self.runtime_contract.max_attribute_value_chars
 
     @property
     def max_attribute_value_tokens(self) -> int | None:
-        return self.model_config.get(
-            "match_max_attribute_value_tokens",
-            DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
-        )
+        return self.runtime_contract.max_attribute_value_tokens
 
     def _cache_identity(self, kind: str) -> dict[str, Any]:
         properties = torch.cuda.get_device_properties(self.options.device_id)
@@ -303,14 +314,14 @@ class TensorRTTransformerExecutor:
         non_blocking: bool,
     ) -> np.ndarray:
         values = self._execute("classifier", batch, non_blocking=non_blocking)
-        if values.ndim != 2 or values.shape[1] != 2:
+        if values.ndim != 2 or values.shape[1] != self.num_logits:
             raise RuntimeError(
                 f"TensorRT classifier returned shape {values.shape}, "
-                "expected [batch, 2]"
+                f"expected [batch, {self.num_logits}]"
             )
         return values.astype(np.float32, copy=False)
 
-    def encode_cls(
+    def encode_pooled(
         self,
         batch: dict[str, torch.Tensor],
         *,
@@ -323,6 +334,15 @@ class TensorRTTransformerExecutor:
                 f"[batch, {self.output_dim}]"
             )
         return values.astype(np.float32, copy=False)
+
+    def encode_cls(
+        self,
+        batch: dict[str, torch.Tensor],
+        *,
+        non_blocking: bool,
+    ) -> np.ndarray:
+        """Compatibility alias for the profile-specific pooled encoder."""
+        return self.encode_pooled(batch, non_blocking=non_blocking)
 
     def prepare(self, *, classifier: bool, encoder: bool) -> None:
         if classifier and "classifier" not in self._states:

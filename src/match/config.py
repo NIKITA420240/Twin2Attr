@@ -7,6 +7,13 @@ from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .models.transformer.profile import (
+    PROMPTED_BINARY_RERANKER_PROFILE,
+    SEQUENCE_CLASSIFIER_PROFILE,
+    is_prompted_profile,
+    normalize_profile,
+    validate_profile_head,
+)
 from .paths import resolve_project_path
 
 FEATURE_PROVIDER_NAMES = ("normalization", "ner", "physical")
@@ -588,8 +595,11 @@ class TransformerHeadParameters:
 
     def __post_init__(self) -> None:
         normalized_type = self.type.strip().lower()
-        if normalized_type not in {"default", "pooling"}:
-            raise ValueError("transformer.head.type must be 'default' or 'pooling'")
+        if normalized_type not in {"default", "pooling", "native", "attention_pooling"}:
+            raise ValueError(
+                "transformer.head.type must be one of: default, pooling, native, "
+                "attention_pooling"
+            )
         normalized_poolings = tuple(
             pooling.strip().lower() for pooling in self.poolings
         )
@@ -625,6 +635,7 @@ class TransformerHeadParameters:
 
 @dataclass(frozen=True, slots=True)
 class TransformerParameters:
+    profile: str
     pretrained_model_path: str
     artifact_dir: Path
     tokenizer: TransformerTokenizerSettings
@@ -654,6 +665,20 @@ class TransformerParameters:
     head: TransformerHeadParameters = TransformerHeadParameters()
 
     def __post_init__(self) -> None:
+        normalized_profile = normalize_profile(self.profile)
+        validate_profile_head(normalized_profile, self.head.type)
+        if is_prompted_profile(normalized_profile):
+            if self.head.type == "attention_pooling" and "cls" in self.head.poolings:
+                raise ValueError(
+                    f"{PROMPTED_BINARY_RERANKER_PROFILE} attention_pooling cannot "
+                    "use cls pooling"
+                )
+            if self.pair_encoding.use_field_tokens:
+                raise ValueError(
+                    f"{PROMPTED_BINARY_RERANKER_PROFILE} requires pair_encoding."
+                    "use_field_tokens=false to preserve pretrained token semantics"
+                )
+        object.__setattr__(self, "profile", normalized_profile)
         if not self.pretrained_model_path.strip():
             raise ValueError("transformer.pretrained_model_path must not be empty")
         if self.max_epochs < 1 or self.hpo_trials < 1:
@@ -1364,6 +1389,9 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     attribute_sort = _section(data_postprocessing_models, "attribute_sort")
     model_description = _section(resolved, "model_description")
     transformer = _section(model_description, "transformer")
+    transformer_profile = str(
+        transformer.get("profile", SEQUENCE_CLASSIFIER_PROFILE)
+    ).strip().lower()
     tokenizer_value = transformer.get("tokenizer", {})
     if not isinstance(tokenizer_value, Mapping):
         raise ValueError("config section 'transformer.tokenizer' must be a mapping")
@@ -1633,6 +1661,7 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         ),
         model_description=ModelDescriptionSettings(
             transformer=TransformerParameters(
+                profile=transformer_profile,
                 pretrained_model_path=str(
                     _required(transformer, "pretrained_model_path")
                 ),
@@ -1760,7 +1789,16 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     "model_description.transformer.auto_find_batch_size",
                 ),
                 head=TransformerHeadParameters(
-                    type=str(transformer_head.get("type", "default")),
+                    type=str(
+                        transformer_head.get(
+                            "type",
+                            (
+                                "native"
+                                if is_prompted_profile(transformer_profile)
+                                else "default"
+                            ),
+                        )
+                    ),
                     poolings=tuple(
                         str(value)
                         for value in transformer_head.get("poolings", ("cls",))

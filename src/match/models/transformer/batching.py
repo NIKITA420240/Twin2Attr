@@ -12,6 +12,7 @@ from transformers import PreTrainedTokenizerBase
 
 from ...pair_encoding import PairEncodingCollator, PreparedPairDataset
 from ...prepare_data import PreparedCard, PreparedPair
+from .profile import SEQUENCE_CLASSIFIER_PROFILE
 
 
 def _estimated_card_length(
@@ -161,6 +162,7 @@ class TransformerBatchingSettings:
         use_field_tokens: bool,
         max_attribute_value_chars: int | None,
         max_attribute_value_tokens: int | None,
+        profile: str = SEQUENCE_CLASSIFIER_PROFILE,
     ) -> PairEncodingCollator:
         return PairEncodingCollator(
             tokenizer,
@@ -174,6 +176,7 @@ class TransformerBatchingSettings:
             ),
             batch_fields=self.batch_fields,
             field_chunk_size=self.field_chunk_size,
+            profile=profile,
         )
 
 

@@ -10,8 +10,12 @@ from transformers import AutoTokenizer
 
 from ..config import AppConfig, save_app_config
 from ..models.artifacts import TrainingArtifacts, save_solution_manifest
+from ..models.transformer.construction import model_factory
 from ..models.transformer.head import PoolingHeadConfig
-from ..models.transformer.model import model_factory
+from ..models.transformer.profile import (
+    TransformerRuntimeContract,
+    is_prompted_profile,
+)
 from ._common import workflow_logging
 
 
@@ -54,26 +58,42 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
     )
 
     with workflow_logging(config, workflow_name="initialize"):
-        logger.warning(
-            "Initializing Transformer artifact without training; classifier "
-            "predictions will be random"
+        if (
+            is_prompted_profile(parameters.profile)
+            and parameters.head.type == "attention_pooling"
+        ):
+            raise ValueError(
+                "attention_pooling is randomly initialized and requires train; "
+                "initialize supports only the native Nemotron head"
+            )
+        if is_prompted_profile(parameters.profile):
+            logger.info("Preserving the pretrained native Nemotron score head")
+        else:
+            logger.warning(
+                "Initializing Transformer artifact without training; classifier "
+                "predictions will be random"
+            )
+        tokenizer = AutoTokenizer.from_pretrained(
+            parameters.pretrained_model_path,
+            trust_remote_code=is_prompted_profile(parameters.profile),
         )
-        tokenizer = AutoTokenizer.from_pretrained(parameters.pretrained_model_path)
         model = model_factory(
             parameters.pretrained_model_path,
             tokenizer,
             use_field_tokens=encoding.use_field_tokens,
             head_type=parameters.head.type,
             head_config=head_config,
+            profile=parameters.profile,
         )()
-        model.config.match_max_length = max_length
-        model.config.match_use_field_tokens = encoding.use_field_tokens
-        model.config.match_max_attribute_value_chars = (
-            encoding.max_attribute_value_chars
-        )
-        model.config.match_max_attribute_value_tokens = (
-            encoding.max_attribute_value_tokens
-        )
+        runtime_contract = TransformerRuntimeContract.from_config(model.config)
+        TransformerRuntimeContract(
+            output=runtime_contract.output,
+            hidden_size=runtime_contract.hidden_size,
+            max_length=max_length,
+            use_field_tokens=encoding.use_field_tokens,
+            max_attribute_value_chars=encoding.max_attribute_value_chars,
+            max_attribute_value_tokens=encoding.max_attribute_value_tokens,
+        ).apply_encoding_to(model.config)
         model.config.match_initialized_only = True
 
         output_path.mkdir(parents=True, exist_ok=True)
@@ -81,8 +101,13 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
         tokenizer.save_pretrained(output_path)
         metadata = {
             "trained": False,
-            "warning": "Classifier head is initialized but has not been trained.",
+            "warning": (
+                "Pretrained native Nemotron head preserved for zero-shot inference."
+                if is_prompted_profile(parameters.profile)
+                else "Classifier head is initialized but has not been trained."
+            ),
             "source_model": parameters.pretrained_model_path,
+            "profile": parameters.profile,
             "head_type": parameters.head.type,
             "head_config": head_config.to_dict(),
             "max_length": max_length,

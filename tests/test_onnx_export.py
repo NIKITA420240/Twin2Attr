@@ -2,6 +2,7 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import ANY, patch
 
 import numpy as np
@@ -135,6 +136,77 @@ class OnnxExportIntegrationTests(unittest.TestCase):
             torch_embeddings,
             atol=5e-3,
             rtol=5e-3,
+        )
+
+    def test_one_logit_prompted_graph_matches_pytorch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            vocabulary = [
+                "[PAD]",
+                "[UNK]",
+                "[CLS]",
+                "[SEP]",
+                "[MASK]",
+                "question",
+                "passage",
+                "name",
+                "left",
+                "right",
+                "category",
+            ]
+            (root / "vocab.txt").write_text(
+                "\n".join(vocabulary), encoding="utf-8"
+            )
+            tokenizer = BertTokenizerFast(vocab_file=str(root / "vocab.txt"))
+            tokenizer.save_pretrained(root)
+            config = BertConfig(
+                vocab_size=len(vocabulary),
+                hidden_size=16,
+                num_hidden_layers=1,
+                num_attention_heads=2,
+                intermediate_size=32,
+                num_labels=1,
+            )
+            config.match_profile = "prompted_binary_reranker"
+            config.match_head_type = "native"
+            config.match_num_logits = 1
+            config.match_probability_transform = "sigmoid"
+            config.match_max_length = 24
+            config.match_use_field_tokens = False
+            config.match_max_attribute_value_chars = 256
+            config.match_max_attribute_value_tokens = 16
+            BertForSequenceClassification(config).save_pretrained(root)
+            export_transformer_to_onnx(root, precision="float32")
+
+            tokenizer, model = load_trained_classifier(root, device="cpu")
+            pair = PreparedPair(
+                PreparedCard(1, "left", "category", ()),
+                PreparedCard(2, "right", "category", ()),
+                None,
+                "category",
+            )
+            pairs = [pair, pair, pair]
+            executor = OnnxRuntimeTransformerExecutor(
+                model_directory=root,
+                model_config=config.to_dict(),
+                provider="cpu",
+                io_binding=False,
+            )
+            runtime = TransformerPredictor(tokenizer, executor, batch_size=2)
+
+            onnx_logits = runtime.predict_pair_logits(pairs)
+            onnx_probabilities = runtime.predict_proba(
+                SimpleNamespace(prepared_pairs=lambda: pairs)
+            )
+            torch_logits = predict_pair_logits(model, tokenizer, pairs, batch_size=2)
+
+        self.assertEqual(onnx_logits.shape, (3, 1))
+        np.testing.assert_allclose(onnx_logits, torch_logits, atol=1e-5, rtol=1e-5)
+        np.testing.assert_allclose(
+            onnx_probabilities,
+            1.0 / (1.0 + np.exp(-torch_logits[:, 0])),
+            atol=1e-5,
+            rtol=1e-5,
         )
 
 

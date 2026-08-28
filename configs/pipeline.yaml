@@ -173,6 +173,9 @@ analysis_models:
 
 model_description:
   transformer:
+    # sequence_classifier keeps the existing BGE/RuBERT two-logit behavior.
+    # prompted_binary_reranker enables Nemotron prompting and one-logit scoring.
+    profile: sequence_classifier
     pretrained_model_path: models/rubert-base-cased
     artifact_dir: models/twin2attr/stacking/transformer
     tokenizer:

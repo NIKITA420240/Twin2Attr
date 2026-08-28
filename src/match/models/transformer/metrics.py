@@ -10,6 +10,8 @@ import torch
 from sklearn.metrics import average_precision_score
 from transformers import EvalPrediction
 
+from .profile import positive_probabilities
+
 
 def compute_class_weights(
     labels: Sequence[int],
@@ -46,22 +48,16 @@ def _prediction_values(
         logits = logits[0]
     logits = np.asarray(logits, dtype=np.float64)
     labels = np.asarray(labels, dtype=np.int64)
-    if logits.ndim != 2 or logits.shape[1] != 2:
-        raise ValueError("expected logits with shape (n_samples, 2)")
+    if logits.ndim != 2 or logits.shape[1] not in {1, 2}:
+        raise ValueError("expected logits with shape (n_samples, 1 or 2)")
     return logits, labels
-
-
-def _positive_probabilities(logits: np.ndarray) -> np.ndarray:
-    shifted = logits - logits.max(axis=1, keepdims=True)
-    exponentiated = np.exp(shifted)
-    return exponentiated[:, 1] / exponentiated.sum(axis=1)
 
 
 def compute_pr_auc(
     prediction: EvalPrediction | tuple[Any, Any],
 ) -> dict[str, float]:
     logits, labels = _prediction_values(prediction)
-    probabilities = _positive_probabilities(logits)
+    probabilities = positive_probabilities(logits)
     return {"pr_auc": float(average_precision_score(labels, probabilities))}
 
 
@@ -70,7 +66,7 @@ def compute_macro_pr_auc(
     categories: Sequence[str],
 ) -> dict[str, float]:
     logits, labels = _prediction_values(prediction)
-    probabilities = _positive_probabilities(logits)
+    probabilities = positive_probabilities(logits)
     category_values = np.asarray(categories)
     category_scores = [
         average_precision_score(
@@ -82,4 +78,9 @@ def compute_macro_pr_auc(
     return {"macro_pr_auc": float(np.mean(category_scores))}
 
 
-__all__ = ["compute_class_weights", "compute_macro_pr_auc", "compute_pr_auc"]
+__all__ = [
+    "compute_class_weights",
+    "compute_macro_pr_auc",
+    "compute_pr_auc",
+    "positive_probabilities",
+]
