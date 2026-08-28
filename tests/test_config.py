@@ -81,6 +81,12 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(tensorrt.profiles.opt_batch_size, 2048)
         self.assertEqual(tensorrt.profiles.max_batch_size, 2048)
         self.assertEqual(tensorrt.profiles.sequence_lengths, (64, 96, 128))
+        native = self.config.inference.transformer.tensorrt
+        self.assertEqual(native.device_id, 0)
+        self.assertEqual(native.workspace_size_gb, 8.0)
+        self.assertEqual(native.builder_optimization_level, 3)
+        self.assertTrue(native.fallback_to_onnxruntime)
+        self.assertEqual(native.profiles.sequence_lengths, (1, 256, 472))
         self.assertFalse(hasattr(self.config, "artifacts"))
         self.assertEqual(
             self.config.analysis.analysis_model,
@@ -443,9 +449,12 @@ class AppConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output_path = Path(directory) / "pipeline_config.yaml"
             save_app_config(self.config, output_path)
+            serialized = output_path.read_text(encoding="utf-8")
             restored = load_app_config_file(output_path)
 
         self.assertEqual(restored, self.config)
+        self.assertIn("sequence_lengths:", serialized)
+        self.assertNotIn("min_sequence_length:", serialized)
 
 
 if __name__ == "__main__":

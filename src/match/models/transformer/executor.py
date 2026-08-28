@@ -56,7 +56,12 @@ class TransformerExecutor(Protocol):
     ) -> np.ndarray:
         ...
 
-    def validate(self, *, classifier: bool, encoder: bool) -> None:
+    def prepare(self, *, classifier: bool, encoder: bool) -> None:
+        """Load or build the resources needed by the requested operations."""
+        ...
+
+    def warmup(self, *, classifier: bool, encoder: bool) -> None:
+        """Run backend-specific initialization that requires execution."""
         ...
 
     def clear_cache(self) -> None:

@@ -12,6 +12,7 @@ import torch
 from ...pair_encoding import DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS
 from .executor import TransformerExecutorOutOfMemoryError
 from .onnx_export import CLASSIFIER_ONNX_NAME, ENCODER_ONNX_NAME, ONNX_DIRECTORY_NAME
+from .tensorrt_common import TensorRTProfile
 
 
 class OnnxRuntimeUnavailableError(RuntimeError):
@@ -23,48 +24,13 @@ class OnnxRuntimeInitializationError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
-class TensorRTExecutionOptions:
+class OrtTensorRTProviderOptions:
     engine_cache_enabled: bool = True
     engine_cache_path: Path | None = None
     timing_cache_enabled: bool = True
     timing_cache_path: Path | None = None
-    min_batch_size: int = 1
-    opt_batch_size: int = 2048
-    max_batch_size: int = 2048
-    sequence_lengths: tuple[int, ...] | None = None
-    input_names: tuple[str, ...] = ("input_ids", "attention_mask")
+    profile: TensorRTProfile | None = None
     fp16_enabled: bool = False
-
-    def __post_init__(self) -> None:
-        batches = (
-            self.min_batch_size,
-            self.opt_batch_size,
-            self.max_batch_size,
-        )
-        if any(isinstance(value, bool) or value < 1 for value in batches):
-            raise ValueError("TensorRT profile batch sizes must be positive")
-        if not (
-            self.min_batch_size
-            <= self.opt_batch_size
-            <= self.max_batch_size
-        ):
-            raise ValueError("TensorRT batch profile must satisfy min <= opt <= max")
-        if self.sequence_lengths is not None:
-            if not self.sequence_lengths or any(
-                isinstance(value, bool)
-                or not isinstance(value, int)
-                or value < 1
-                for value in self.sequence_lengths
-            ):
-                raise ValueError(
-                    "TensorRT sequence lengths must be positive integers"
-                )
-            if tuple(sorted(set(self.sequence_lengths))) != self.sequence_lengths:
-                raise ValueError(
-                    "TensorRT sequence lengths must be non-empty and increasing"
-                )
-        if not self.input_names or any(not name.strip() for name in self.input_names):
-            raise ValueError("TensorRT profile input names must not be empty")
 
 
 def _require_onnxruntime() -> Any:
@@ -115,7 +81,7 @@ class OnnxRuntimeTransformerExecutor:
     graph_optimization: str = "all"
     classifier_path: Path | None = None
     encoder_path: Path | None = None
-    tensorrt: TensorRTExecutionOptions = TensorRTExecutionOptions()
+    tensorrt: OrtTensorRTProviderOptions = OrtTensorRTProviderOptions()
     _ort: Any = field(init=False, repr=False)
     _providers: list[Any] = field(init=False, repr=False)
     _device: torch.device = field(init=False, repr=False)
@@ -211,31 +177,28 @@ class OnnxRuntimeTransformerExecutor:
         ], device
 
     def _profile_options(self) -> dict[str, str]:
-        lengths = self.tensorrt.sequence_lengths
-        if lengths is None:
+        profile = self.tensorrt.profile
+        if profile is None:
             return {}
-        min_length = lengths[0]
-        opt_length = lengths[len(lengths) // 2]
-        max_length = lengths[-1]
 
         def shapes(batch_size: int, sequence_length: int) -> str:
             return ",".join(
                 f"{name}:{batch_size}x{sequence_length}"
-                for name in self.tensorrt.input_names
+                for name in profile.input_names
             )
 
         return {
             "trt_profile_min_shapes": shapes(
-                self.tensorrt.min_batch_size,
-                min_length,
+                profile.min_batch_size,
+                profile.min_sequence_length,
             ),
             "trt_profile_opt_shapes": shapes(
-                self.tensorrt.opt_batch_size,
-                opt_length,
+                profile.opt_batch_size,
+                profile.opt_sequence_length,
             ),
             "trt_profile_max_shapes": shapes(
-                self.tensorrt.max_batch_size,
-                max_length,
+                profile.max_batch_size,
+                profile.max_sequence_length,
             ),
         }
 
@@ -397,11 +360,53 @@ class OnnxRuntimeTransformerExecutor:
             )
         return values.astype(np.float32, copy=False)
 
-    def validate(self, *, classifier: bool, encoder: bool) -> None:
+    def prepare(self, *, classifier: bool, encoder: bool) -> None:
         if classifier:
             self._session("classifier")
         if encoder:
             self._session("encoder")
+
+    def _warmup_session(self, kind: str) -> None:
+        session = self._session(kind)
+        profile = self.tensorrt.profile if self.provider == "tensorrt" else None
+        sequence_length = profile.opt_sequence_length if profile is not None else 8
+        batch: dict[str, torch.Tensor] = {}
+        dtypes = {
+            "tensor(int64)": torch.int64,
+            "tensor(int32)": torch.int32,
+            "tensor(float)": torch.float32,
+            "tensor(float16)": torch.float16,
+            "tensor(bool)": torch.bool,
+        }
+        for value in session.get_inputs():
+            try:
+                dtype = dtypes[value.type]
+            except KeyError as error:
+                raise OnnxRuntimeInitializationError(
+                    f"unsupported ONNX warmup input type {value.type!r}"
+                ) from error
+            declared_shape = getattr(value, "shape", (None, None))
+            shape = tuple(
+                dimension
+                if isinstance(dimension, int) and dimension > 0
+                else (1 if index == 0 else sequence_length)
+                for index, dimension in enumerate(declared_shape)
+            )
+            batch[value.name] = torch.zeros(shape, dtype=dtype)
+        self._run_session(session, batch, non_blocking=False)
+
+    def warmup(self, *, classifier: bool, encoder: bool) -> None:
+        try:
+            if classifier:
+                self._warmup_session("classifier")
+            if encoder:
+                self._warmup_session("encoder")
+        except OnnxRuntimeInitializationError:
+            raise
+        except Exception as error:
+            raise OnnxRuntimeInitializationError(
+                f"ONNX Runtime warmup failed: {error}"
+            ) from error
 
     def clear_cache(self) -> None:
         if self.device.type == "cuda":
@@ -412,5 +417,5 @@ __all__ = [
     "OnnxRuntimeInitializationError",
     "OnnxRuntimeTransformerExecutor",
     "OnnxRuntimeUnavailableError",
-    "TensorRTExecutionOptions",
+    "OrtTensorRTProviderOptions",
 ]

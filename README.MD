@@ -414,6 +414,47 @@ backend можно выбрать `provider: tensorrt`; TensorRT engine и timin
 добавляются автоматически. Значения профиля должны покрывать все формы,
 которые реально создаёт length bucketing.
 
+Чистый TensorRT выбирается отдельным backend и не создаёт сессию ONNX
+Runtime:
+
+```yaml
+inference:
+  transformer:
+    backend: tensorrt
+    batch_size: 512
+    dtype: float16
+    tensorrt:
+      device_id: 0
+      workspace_size_gb: 8
+      builder_optimization_level: 3
+      fallback_to_onnxruntime: true
+      engine_cache:
+        enabled: true
+        path: onnx/native_trt_cache
+      timing_cache:
+        enabled: true
+        path: onnx/native_trt_cache/timing.cache
+      profiles:
+        min_batch_size: 1
+        opt_batch_size: 512
+        max_batch_size: 512
+        sequence_lengths: [1, 256, 472]
+```
+
+Нативный backend строит engine из ONNX на целевом GPU и затем исполняет его
+через TensorRT Python API, используя CUDA-адреса PyTorch-тензоров. Имя файла
+engine содержит fingerprint ONNX-графа, профиля, версии TensorRT и GPU.
+Инициализация имеет две явные стадии: `prepare()` загружает либо строит engine,
+а `warmup()` выполняет короткий пробный проход до начала обработки датасета.
+Построение engine, его постоянный кеш и исполнение разделены на независимые
+компоненты; при ошибке native TensorRT ONNX Runtime создаётся напрямую без
+повторного разбора и изменения solution manifest.
+TensorRT engine аппаратно-зависим, поэтому собранный на другой видеокарте
+файл не переносится; первая сборка может быть заметно дольше последующих
+запусков. `builder_optimization_level` принимает значения `0..5`: меньшие
+значения уменьшают время первой сборки, большие дают builder больше времени
+на поиск быстрых kernels.
+
 Пути моделей задаются рядом с их параметрами через `artifact_dir` или
 `artifact_path`. `training.resolved_config_path` задаёт место для полного
 resolved-конфига, а `training.solution_path` — место записи inference manifest.
