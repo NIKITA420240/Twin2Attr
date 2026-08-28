@@ -1,6 +1,6 @@
 # transformer | maxpooling | fusion | boosting | stacking
 training:
-  model: stacking
+  model: transformer
   data_model: base_dataset
   augmentation_model: attribute_word_dropout
   data_postprocessing_model: null
@@ -68,8 +68,8 @@ inference:
   transformer:
     # Keep PyTorch as the default until the exported ONNX graphs pass the
     # accuracy and end-to-end H100 benchmark gates.
-    backend: pytorch
-    batch_size: 512
+    backend: onnxruntime
+    batch_size: 64
     dtype: bfloat16
     # Prepare and prefetch batches in parallel while the GPU runs the model.
     num_workers: 8
@@ -96,7 +96,7 @@ inference:
       device_id: 0
       io_binding: true
       graph_optimization: all
-      fallback_to_pytorch: true
+      fallback_to_pytorch: false
       tensorrt:
         engine_cache:
           enabled: true
@@ -175,30 +175,30 @@ model_description:
   transformer:
     # sequence_classifier keeps the existing BGE/RuBERT two-logit behavior.
     # prompted_binary_reranker enables Nemotron prompting and one-logit scoring.
-    profile: sequence_classifier
-    pretrained_model_path: models/rubert-base-cased
-    artifact_dir: models/twin2attr/stacking/transformer
+    profile: prompted_binary_reranker
+    pretrained_model_path: models/llama-nemotron-rerank-1b-v2
+    artifact_dir: models/twin2attr/nemotron-native
     tokenizer:
       batch_fields:
         enabled: true
         chunk_size: 16384
     export:
       onnx:
-        enabled: false
+        enabled: true
         opset: 18
         precision: float16
         dynamic_batch: true
         dynamic_sequence_length: true
         export_classifier: true
-        export_encoder: true
+        export_encoder: false
     pair_encoding:
-      use_field_tokens: true
+      use_field_tokens: false
       # null disables the pre-tokenization character hard cap.
       max_attribute_value_chars: 256
       # null disables per-attribute value truncation.
       max_attribute_value_tokens: 16
       # null lets the training data determine the limit.
-      max_length: 256
+      max_length: 128
       quantile: 0.95
       sample_size: 10000
       hard_cap: 512
@@ -230,7 +230,7 @@ model_description:
     auto_find_batch_size: true
     head:
       # default keeps the Hugging Face CLS head; pooling builds the branches below.
-      type: pooling
+      type: native
       # Supported values: cls, mean, max, attention. Their outputs are concatenated.
       poolings: [cls, attention]
       # Empty list gives a single linear classifier after pooling.

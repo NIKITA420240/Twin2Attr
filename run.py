@@ -10,6 +10,19 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+
+def _configure_huggingface_cache() -> None:
+    """Keep Transformers dynamic modules off a potentially read-only home."""
+    cache_root = Path(tempfile.gettempdir()) / "twin2attr_huggingface"
+    os.environ.setdefault("HF_HOME", str(cache_root))
+    os.environ.setdefault("HF_MODULES_CACHE", str(cache_root / "modules"))
+
+
+# Nemotron ships custom ``trust_remote_code`` modules.  Transformers resolves
+# its module-cache location during import, so configure a writable default
+# before any command imports the model stack.
+_configure_huggingface_cache()
+
 # The evaluator limits the total number of processes/threads. Normalization
 # already uses multiple worker processes, so allowing NumPy/OpenBLAS to create
 # another full thread pool in every process can exhaust that limit before the

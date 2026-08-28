@@ -2,9 +2,13 @@
   "predictor": "transformer",
   "augmentation_model": null,
   "data_postprocessing_model": null,
-  "model_directory": "models\\twin2attr\\bge-initialized",
+  "model_directory": "models\\twin2attr\\nemotron-native",
+  "transformer_profile": "prompted_binary_reranker",
+  "transformer_head": {
+    "type": "native"
+  },
   "backend": "pytorch",
-  "batch_size": 512,
+  "batch_size": 1,
   "dtype": "bfloat16",
   "num_workers": 8,
   "prefetch_factor": 2,
