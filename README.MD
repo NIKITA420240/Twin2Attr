@@ -107,6 +107,29 @@ uv run python run.py initialize
 Основной конфиг находится в `configs/pipeline.yaml`. В нём задаются пути,
 нормализация, токены полей, ограничения длины и параметры обучения.
 
+Каждый источник mixed dataset может независимо выбирать модель веса примеров.
+`constant` сохраняет базовый `source.weight`, а `transitivity` ищет полностью
+наблюдаемые противоречивые треугольники (`A=B`, `B=C`, `A!=C`) до sampling и
+уменьшает вес затронутых пар. Итоговый вес равен
+`source.weight * weight_multiplier`. Учитываются только наблюдаемые связи:
+отсутствующая пара не считается отрицательной.
+
+```yaml
+weight_model:
+  type: transitivity
+  enabled: true
+  penalty_strength: 1.0
+  min_weight_multiplier: 0.25
+  min_comparable_neighbors: 2
+  confidence_weighted_violations: true
+```
+
+При `confidence_weighted_violations=true` менее уверенное ребро получает более
+сильный штраф относительно уверенных противоречащих ему LLM-рёбер. Модель
+сохраняет диагностические колонки `transitivity_comparable_neighbors`,
+`transitivity_violations`, `transitivity_violation_rate` и
+`weight_multiplier`; при отключении используется множитель `1.0`.
+
 Каждый train-запуск обязан получить имя эксперимента от пользователя. Имя не
 версионируется автоматически: перед новым экспериментом его нужно поменять.
 

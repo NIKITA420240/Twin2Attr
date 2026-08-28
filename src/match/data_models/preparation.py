@@ -7,6 +7,7 @@ import polars as pl
 from loguru import logger
 
 from ..config import DatasetSourceSettings, DatasetSplitterSettings
+from ..sample_weight_models import build_sample_weight_model
 
 _REQUIRED_MATCH_COLUMNS = {"id1", "id2", "target"}
 
@@ -35,7 +36,10 @@ def _binary_targets(
             raise ValueError(
                 f"dataset source {source_name!r} target must contain only 0 and 1"
             )
-        return matches.with_columns(pl.col("target").cast(pl.Int8))
+        return matches.with_columns(
+            pl.col("target").cast(pl.Int8),
+            pl.lit(1.0).cast(pl.Float32).alias("_annotation_confidence"),
+        )
 
     total_votes = splitter.total_votes
     if total_votes is None:
@@ -54,7 +58,11 @@ def _binary_targets(
             f"1/{total_votes}"
         )
     with_votes = matches.with_columns(
-        pl.Series("_votes", rounded.astype(np.int16, copy=False))
+        pl.Series("_votes", rounded.astype(np.int16, copy=False)),
+        pl.Series(
+            "_annotation_confidence",
+            np.abs(2.0 * values - 1.0).astype(np.float32, copy=False),
+        ),
     )
     selected = with_votes.filter(
         (pl.col("_votes") <= splitter.negative_threshold)
@@ -146,6 +154,8 @@ def prepare_source_matches(
         source.splitter,
         source_name=source.name,
     )
+    weight_model = build_sample_weight_model(source.weight_model)
+    prepared = weight_model.apply(prepared, source_name=source.name)
     if source.max_rows is not None and prepared.height > source.max_rows:
         if source.sampling_strategy == "random":
             prepared = prepared.sample(
@@ -166,9 +176,22 @@ def prepare_source_matches(
             source.sampling_strategy,
             prepared.height,
         )
-    return prepared.select("id1", "id2", "target").with_columns(
-        pl.lit(source.weight).cast(pl.Float32).alias("sample_weight"),
-        pl.lit(source.name).alias("data_source"),
+    diagnostics = [
+        name
+        for name in prepared.columns
+        if name == "weight_multiplier" or name.startswith("transitivity_")
+    ]
+    return (
+        prepared.select("id1", "id2", "target", *diagnostics)
+        .with_columns(
+            (
+                pl.lit(source.weight).cast(pl.Float32)
+                * pl.col("weight_multiplier")
+            )
+            .cast(pl.Float32)
+            .alias("sample_weight"),
+            pl.lit(source.name).alias("data_source"),
+        )
     )
 
 
