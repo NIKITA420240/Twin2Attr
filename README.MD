@@ -657,3 +657,60 @@ multiprocessing; если оперативной памяти мало, испо
 ```bash
 uv build
 ```
+
+
+
+## TO DO
+
+Хотим добавить модель `llama-nemotron-rerank-1b-v2` как отдельный профиль
+внутри существующей модели `transformer`.
+
+Для этого нужно:
+
+- добавить профиль `prompted_binary_reranker` в конфигурацию Transformer;
+- собирать вход в формате `question:<карточка A>\n\npassage:<карточка B>`;
+- загружать Nemotron с `trust_remote_code=True` и сохранять исходную one-logit
+  голову;
+- поддержать one-logit loss, метрики и inference через `sigmoid`;
+- адаптировать `initialize`, PyTorch, ONNX Runtime и сборку submission;
+- добавить тесты и сохранить обратную совместимость BGE и RuBERT.
+
+Готовое решение должно проходить полный путь:
+`initialize/train -> predict -> ONNX export -> build_submission`.
+
+### Эксперимент: attention pooling для Nemotron
+
+После добавления базовой совместимости сравнить две сменные головы на одном
+validation split:
+
+- `native` — штатные average pooling и one-logit `score` из Nemotron;
+- `attention_pooling` — объединение `mean` и обучаемого attention pooling с
+  MLP и одним выходным logit.
+
+Пример экспериментальной конфигурации:
+
+```yaml
+model_description:
+  transformer:
+    profile: prompted_binary_reranker
+    head:
+      type: attention_pooling
+      poolings: [mean, attention]
+      attention_hidden_dim: 192
+      attention_num_heads: 1
+      mlp_hidden_dims: [384]
+      dropout: 0.15
+```
+
+Для Llama не использовать `cls` как основной pooling: у модели нет отдельного
+CLS-токена. Обе головы должны возвращать один logit; обучение выполняется через
+`BCEWithLogitsLoss`, а inference — через `sigmoid`.
+
+Параметры attention pooling и MLP инициализируются случайно, поэтому такой
+артефакт нельзя использовать как готовый zero-shot reranker после
+`initialize`: новую голову необходимо дообучить на парах карточек. Штатную
+голову `native` оставить вариантом по умолчанию и baseline для сравнения.
+
+Для эксперимента потребуется Nemotron-совместимая обёртка над bidirectional
+backbone, сохранение типа головы в метаданных артефакта и проверка полного пути
+`train -> predict -> ONNX export -> build_submission` для обоих вариантов.
