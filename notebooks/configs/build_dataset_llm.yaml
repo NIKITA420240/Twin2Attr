@@ -1,0 +1,26 @@
+path:
+  # Общий датафрейм карточек, к id которого привязаны обе разметки.
+  items: data/items.parquet
+
+  # Датафрейм человека
+  items_human: data/items_human.parquet
+
+  # Небольшая локальная разметка человека для проверки качества LLM-разметки.
+  matches_human: data/matches.parquet
+
+  # Большой датасет, переразмеченный LLM.
+  matches_llm: data/matches_llm.parquet
+
+  # Результат подготовки итогового обучающего датасета.
+  train_matches_output: data/train_matches.parquet
+
+llm_evaluation:
+  # Случайный лимит внутри каждой категории. Так крупные категории не вытесняют
+  # маленькие из macro PR-AUC. null использует всю human-разметку.
+  sample_size_per_category: 500
+  seed: 42
+  request_batch_size: 64
+  max_concurrency: 64
+  # Меняйте версию при изменении prompt, чтобы не переиспользовать старые ответы.
+  prompt_version: v1
+  output_parts_dir: data/human_llm_evaluation_parts
