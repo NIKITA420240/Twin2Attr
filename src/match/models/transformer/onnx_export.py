@@ -22,6 +22,7 @@ ONNX_DIRECTORY_NAME = "onnx"
 CLASSIFIER_ONNX_NAME = "classifier.onnx"
 ENCODER_ONNX_NAME = "encoder.onnx"
 ONNX_METADATA_NAME = "metadata.json"
+ONNX_EXTERNAL_DATA_SUFFIX = ".data"
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,7 +145,28 @@ def _convert_to_float16(source: Path, destination: Path) -> None:
         for attribute in node.attribute:
             if attribute.name == "to" and attribute.i == onnx.TensorProto.FLOAT:
                 attribute.i = onnx.TensorProto.FLOAT16
-    onnx.save(converted, str(destination))
+    # A 1B-parameter FP16 model is still larger than protobuf's 2 GiB message
+    # limit. Keep the graph in ``destination`` and write tensor payloads to one
+    # adjacent file, which ONNX Runtime resolves automatically. Remove a stale
+    # payload first because ONNX appends when the target file already exists.
+    external_data_path = destination.with_name(
+        f"{destination.name}{ONNX_EXTERNAL_DATA_SUFFIX}"
+    )
+    destination.unlink(missing_ok=True)
+    external_data_path.unlink(missing_ok=True)
+    try:
+        onnx.save_model(
+            converted,
+            str(destination),
+            save_as_external_data=True,
+            all_tensors_to_one_file=True,
+            location=external_data_path.name,
+            size_threshold=1024,
+        )
+    except Exception:
+        destination.unlink(missing_ok=True)
+        external_data_path.unlink(missing_ok=True)
+        raise
 
 
 def _export_graph(
@@ -328,4 +350,8 @@ if __name__ == "__main__":
     main()
 
 
-__all__ = ["OnnxExportResult", "export_transformer_to_onnx"]
+__all__ = [
+    "ONNX_EXTERNAL_DATA_SUFFIX",
+    "OnnxExportResult",
+    "export_transformer_to_onnx",
+]

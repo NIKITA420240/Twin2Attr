@@ -1,3 +1,4 @@
+import gc
 import importlib.util
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ from transformers import (
 )
 
 from match.models.transformer.onnx_export import (
+    ONNX_EXTERNAL_DATA_SUFFIX,
     _convert_to_float16,
     export_transformer_to_onnx,
 )
@@ -37,14 +39,31 @@ _ONNX_AVAILABLE = all(
 class OnnxExportIntegrationTests(unittest.TestCase):
     def test_float16_conversion_uses_path_shape_inference(self) -> None:
         import onnx
-        from onnx import helper
+        from onnx import TensorProto, external_data_helper, helper, numpy_helper
         from onnxconverter_common import float16
 
-        source_model = helper.make_model(helper.make_graph([], "empty", [], []))
+        shape = [1, 1024]
+        source_model = helper.make_model(
+            helper.make_graph(
+                [helper.make_node("Add", ["input", "weights"], ["output"])],
+                "external-data",
+                [helper.make_tensor_value_info("input", TensorProto.FLOAT, shape)],
+                [helper.make_tensor_value_info("output", TensorProto.FLOAT, shape)],
+                [
+                    numpy_helper.from_array(
+                        np.ones(shape, dtype=np.float32),
+                        name="weights",
+                    )
+                ],
+            )
+        )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "source.onnx"
             destination = root / "destination.onnx"
+            external_data = destination.with_name(
+                f"{destination.name}{ONNX_EXTERNAL_DATA_SUFFIX}"
+            )
             onnx.save(source_model, str(source))
             with (
                 patch.object(
@@ -66,6 +85,19 @@ class OnnxExportIntegrationTests(unittest.TestCase):
                 _convert_to_float16(source, destination)
 
             onnx.checker.check_model(onnx.load(str(destination)))
+            unloaded = onnx.load(str(destination), load_external_data=False)
+            self.assertTrue(external_data.is_file())
+            self.assertTrue(
+                any(
+                    external_data_helper.uses_external_data(initializer)
+                    for initializer in unloaded.graph.initializer
+                )
+            )
+            original_size = external_data.stat().st_size
+            with external_data.open("ab") as file:
+                file.write(b"stale")
+            _convert_to_float16(source, destination)
+            self.assertEqual(external_data.stat().st_size, original_size)
 
         infer_path.assert_called_once()
         convert.assert_called_once_with(
@@ -129,6 +161,8 @@ class OnnxExportIntegrationTests(unittest.TestCase):
             onnx_embeddings = runtime.encode_pairs(pairs)
             torch_logits = predict_pair_logits(model, tokenizer, pairs, batch_size=2)
             torch_embeddings = encode_pair_cls(model, tokenizer, pairs, batch_size=2)
+            del runtime, executor, model, tokenizer
+            gc.collect()
 
         np.testing.assert_allclose(onnx_logits, torch_logits, atol=5e-3, rtol=5e-3)
         np.testing.assert_allclose(
@@ -199,6 +233,8 @@ class OnnxExportIntegrationTests(unittest.TestCase):
                 SimpleNamespace(prepared_pairs=lambda: pairs)
             )
             torch_logits = predict_pair_logits(model, tokenizer, pairs, batch_size=2)
+            del runtime, executor, model, tokenizer
+            gc.collect()
 
         self.assertEqual(onnx_logits.shape, (3, 1))
         np.testing.assert_allclose(onnx_logits, torch_logits, atol=1e-5, rtol=1e-5)

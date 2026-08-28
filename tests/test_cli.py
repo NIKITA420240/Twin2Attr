@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,6 +7,7 @@ from unittest.mock import patch
 
 import run as run_module
 from run import (
+    _configure_huggingface_cache,
     _predict_solution_path,
     _with_default_command,
     ensure_polars_available,
@@ -15,6 +17,21 @@ from run import (
 
 
 class UnifiedCliTests(unittest.TestCase):
+    def test_huggingface_dynamic_modules_use_temporary_cache(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(run_module.tempfile, "gettempdir", return_value=directory),
+        ):
+            _configure_huggingface_cache()
+
+            expected = Path(directory) / "twin2attr_huggingface"
+            self.assertEqual(os.environ["HF_HOME"], str(expected))
+            self.assertEqual(
+                os.environ["HF_MODULES_CACHE"],
+                str(expected / "modules"),
+            )
+
     def test_evaluator_arguments_default_to_predict(self) -> None:
         arguments = ["--items_path", "items.parquet"]
 
