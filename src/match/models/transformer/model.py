@@ -5,22 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-import torch.nn.functional as F
-from transformers import (
-    AutoModelForSequenceClassification,
-    PreTrainedModel,
-    PreTrainedTokenizerBase,
-    Trainer,
-)
+from transformers import PreTrainedModel, Trainer
 
-from ...pair_encoding import add_pair_special_tokens, pair_special_token_ids
-from .head import PoolingHeadConfig, PoolingSequenceClassifier
+from .construction import model_factory
 from .optimizer import (
     LearningRateMultipliers,
     build_transformer_optimizer,
-    freeze_backbone_except_last_layers,
-    restrict_word_embedding_updates,
 )
+from .objective import weighted_classification_loss
 
 
 class WeightedSequenceTrainer(Trainer):
@@ -55,66 +47,17 @@ class WeightedSequenceTrainer(Trainer):
         num_items_in_batch: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, Any]:
         del num_items_in_batch
-        labels = inputs.pop("labels")
-        sample_weights = inputs.pop("sample_weights")
-        outputs = model(**inputs)
-        losses = F.cross_entropy(
+        model_inputs = dict(inputs)
+        labels = model_inputs.pop("labels")
+        sample_weights = model_inputs.pop("sample_weights")
+        outputs = model(**model_inputs)
+        loss = weighted_classification_loss(
             outputs.logits,
             labels,
-            weight=self.class_weights.to(outputs.logits.device),
-            reduction="none",
+            sample_weights,
+            self.class_weights,
         )
-        weights = sample_weights.to(outputs.logits.device)
-        loss = torch.sum(losses * weights) / torch.sum(weights)
         return (loss, outputs) if return_outputs else loss
-
-
-def model_factory(
-    model_path: str,
-    tokenizer: PreTrainedTokenizerBase,
-    *,
-    use_field_tokens: bool,
-    train_new_token_embeddings_only: bool = False,
-    train_last_n_layers: int | None = None,
-    head_type: str = "default",
-    head_config: PoolingHeadConfig | None = None,
-):
-    def initialize_model(trial: Any | None = None) -> PreTrainedModel:
-        del trial
-        if head_type == "pooling":
-            model = PoolingSequenceClassifier.from_backbone_pretrained(
-                model_path,
-                head_config=head_config or PoolingHeadConfig(),
-                num_labels=2,
-                id2label={0: "different", 1: "match"},
-                label2id={"different": 0, "match": 1},
-            )
-        elif head_type == "default":
-            model = AutoModelForSequenceClassification.from_pretrained(
-                model_path,
-                num_labels=2,
-                id2label={0: "different", 1: "match"},
-                label2id={"different": 0, "match": 1},
-                ignore_mismatched_sizes=True,
-            )
-        else:
-            raise ValueError("head_type must be 'default' or 'pooling'")
-        if use_field_tokens:
-            add_pair_special_tokens(tokenizer, model)
-            if train_new_token_embeddings_only:
-                restrict_word_embedding_updates(
-                    model,
-                    pair_special_token_ids(tokenizer),
-                )
-        if train_last_n_layers is not None:
-            freeze_backbone_except_last_layers(
-                model,
-                train_last_n_layers,
-                train_input_word_embeddings=train_new_token_embeddings_only,
-            )
-        return model
-
-    return initialize_model
 
 
 __all__ = ["WeightedSequenceTrainer", "model_factory"]

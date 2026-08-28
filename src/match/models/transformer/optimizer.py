@@ -56,8 +56,12 @@ def _encoder_layers(backbone: nn.Module) -> Sequence[nn.Module]:
     transformer = getattr(backbone, "transformer", None)
     if transformer is not None and hasattr(transformer, "layer"):
         return transformer.layer
+    layers = getattr(backbone, "layers", None)
+    if layers is not None:
+        return layers
     raise AttributeError(
-        "unsupported Transformer backbone: expected encoder.layer or transformer.layer"
+        "unsupported Transformer backbone: expected encoder.layer, "
+        "transformer.layer or layers"
     )
 
 
@@ -230,6 +234,8 @@ def build_transformer_optimizer(
 
     backbone = model.base_model
     embeddings = getattr(backbone, "embeddings", None)
+    if embeddings is None:
+        embeddings = model.get_input_embeddings()
     if embeddings is None:
         raise AttributeError("Transformer backbone has no embeddings module")
     encoder_layers = _encoder_layers(backbone)

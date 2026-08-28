@@ -124,7 +124,10 @@ class PredictorLoadingTests(unittest.TestCase):
                 "match.models.transformer.factory.AutoTokenizer.from_pretrained",
                 return_value=object(),
             ),
-            patch("pathlib.Path.read_text", return_value="{}"),
+            patch(
+                "pathlib.Path.read_text",
+                return_value='{"hidden_size": 16}',
+            ),
             patch(
                 "match.models.transformer.factory.OnnxRuntimeTransformerExecutor",
                 return_value=executor,
@@ -150,6 +153,10 @@ class PredictorLoadingTests(unittest.TestCase):
             patch(
                 "match.models.transformer.factory.AutoTokenizer.from_pretrained",
                 side_effect=ValueError("invalid tokenizer configuration"),
+            ),
+            patch(
+                "pathlib.Path.read_text",
+                return_value='{"hidden_size": 16}',
             ),
             patch(
                 "match.models.transformer.predictor.TransformerPredictor.load"
@@ -201,7 +208,10 @@ class PredictorLoadingTests(unittest.TestCase):
                     ]
                 ),
             ),
-            patch("pathlib.Path.read_text", return_value="{}"),
+            patch(
+                "pathlib.Path.read_text",
+                return_value='{"hidden_size": 16}',
+            ),
             patch(
                 "match.models.transformer.factory.OnnxRuntimeTransformerExecutor",
                 return_value=executor,

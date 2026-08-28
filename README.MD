@@ -660,39 +660,42 @@ uv build
 
 
 
-## TO DO
+## Nemotron reranker
 
-Хотим добавить модель `llama-nemotron-rerank-1b-v2` как отдельный профиль
-внутри существующей модели `transformer`.
+`llama-nemotron-rerank-1b-v2` подключается как профиль существующей модели
+`transformer`. Профиль формирует одну последовательность
+`question:<карточка A>\n\npassage:<карточка B>`, обучается с
+`BCEWithLogitsLoss` и преобразует единственный logit в вероятность через
+`sigmoid`.
 
-Для этого нужно:
-
-- добавить профиль `prompted_binary_reranker` в конфигурацию Transformer;
-- собирать вход в формате `question:<карточка A>\n\npassage:<карточка B>`;
-- загружать Nemotron с `trust_remote_code=True` и сохранять исходную one-logit
-  голову;
-- поддержать one-logit loss, метрики и inference через `sigmoid`;
-- адаптировать `initialize`, PyTorch, ONNX Runtime и сборку submission;
-- добавить тесты и сохранить обратную совместимость BGE и RuBERT.
-
-Готовое решение должно проходить полный путь:
-`initialize/train -> predict -> ONNX export -> build_submission`.
-
-### Эксперимент: attention pooling для Nemotron
-
-После добавления базовой совместимости сравнить две сменные головы на одном
-validation split:
-
-- `native` — штатные average pooling и one-logit `score` из Nemotron;
-- `attention_pooling` — объединение `mean` и обучаемого attention pooling с
-  MLP и одним выходным logit.
-
-Пример экспериментальной конфигурации:
+Для native zero-shot и fine-tuning:
 
 ```yaml
 model_description:
   transformer:
     profile: prompted_binary_reranker
+    pretrained_model_path: nvidia/llama-nemotron-rerank-1b-v2
+    pair_encoding:
+      use_field_tokens: false
+    head:
+      type: native
+```
+
+Доступны две сменные головы для эксперимента на одном validation split:
+
+- `native` — штатные average pooling и one-logit `score` из Nemotron;
+- `attention_pooling` — объединение `mean` и обучаемого attention pooling с
+  MLP и одним выходным logit.
+
+Конфигурация attention pooling:
+
+```yaml
+model_description:
+  transformer:
+    profile: prompted_binary_reranker
+    pretrained_model_path: nvidia/llama-nemotron-rerank-1b-v2
+    pair_encoding:
+      use_field_tokens: false
     head:
       type: attention_pooling
       poolings: [mean, attention]
@@ -706,11 +709,8 @@ model_description:
 CLS-токена. Обе головы должны возвращать один logit; обучение выполняется через
 `BCEWithLogitsLoss`, а inference — через `sigmoid`.
 
-Параметры attention pooling и MLP инициализируются случайно, поэтому такой
-артефакт нельзя использовать как готовый zero-shot reranker после
-`initialize`: новую голову необходимо дообучить на парах карточек. Штатную
-голову `native` оставить вариантом по умолчанию и baseline для сравнения.
-
-Для эксперимента потребуется Nemotron-совместимая обёртка над bidirectional
-backbone, сохранение типа головы в метаданных артефакта и проверка полного пути
-`train -> predict -> ONNX export -> build_submission` для обоих вариантов.
+Параметры attention pooling и MLP инициализируются случайно, поэтому workflow
+`initialize` для этой головы запрещён: сначала выполните `train`. Штатная
+`native`-голова сохраняется без переинициализации и подходит как zero-shot
+baseline. Для профиля обязательно `use_field_tokens: false`, чтобы не добавлять
+случайно инициализированные `[KEY]`/`[VAL]` embeddings в pretrained Nemotron.

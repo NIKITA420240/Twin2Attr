@@ -44,7 +44,7 @@ _EXPORTS = {
         ".onnx_export",
         "export_transformer_to_onnx",
     ),
-    "load_trained_classifier": (".predictor", "load_trained_classifier"),
+    "load_trained_classifier": (".loading", "load_trained_classifier"),
     "predict_match_probabilities": (".predictor", "predict_match_probabilities"),
     "predict_logit_margins": (".predictor", "predict_logit_margins"),
     "predict_pair_logits": (".predictor", "predict_pair_logits"),

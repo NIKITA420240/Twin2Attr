@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,12 +10,7 @@ from typing import Any
 import numpy as np
 import torch
 from loguru import logger
-from transformers import (
-    AutoModelForSequenceClassification,
-    AutoTokenizer,
-    PreTrainedModel,
-    PreTrainedTokenizerBase,
-)
+from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from ...pair_encoding import infer_pair_max_length
 from ...prepare_data import PreparedPair
@@ -29,13 +23,17 @@ from .batching import (
     restore_original_order,
 )
 from .executor import TransformerExecutor, TransformerExecutorOutOfMemoryError
-from .head import PoolingSequenceClassifier, PoolingSequenceClassifierConfig
+from .loading import load_trained_classifier
+from .profile import (
+    PROMPTED_BINARY_RERANKER_PROFILE,
+    SEQUENCE_CLASSIFIER_PROFILE,
+    TransformerArtifactContract,
+)
 from .pytorch_executor import (
     CompiledForward,
     PyTorchTransformerExecutor,
-    normalize_inference_dtype,
-    torch_inference_dtype,
 )
+from .precision import normalize_inference_dtype
 
 # Backward-compatible private aliases used by older internal callers/tests.
 _CompiledForward = CompiledForward
@@ -43,41 +41,24 @@ _length_bucket_order = length_bucket_order
 _restore_original_order = restore_original_order
 
 
-def _resolve_device(device: str | torch.device | None = None) -> torch.device:
-    if device is not None:
-        return torch.device(device)
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
-
-
-def load_trained_classifier(
-    model_dir: str | Path,
-    *,
-    device: str | torch.device | None = None,
-    dtype: str = "float32",
-) -> tuple[PreTrainedTokenizerBase, PreTrainedModel]:
-    target_device = _resolve_device(device)
-    target_dtype = torch_inference_dtype(dtype)
-    if (
-        target_device.type == "cuda"
-        and target_dtype == torch.bfloat16
-        and not torch.cuda.is_bf16_supported()
-    ):
-        raise RuntimeError("the selected CUDA device does not support bfloat16")
-    if target_device.type == "mps" and target_dtype == torch.bfloat16:
-        raise RuntimeError("bfloat16 inference is not supported on MPS")
-    tokenizer = AutoTokenizer.from_pretrained(model_dir, use_fast=True)
-    config_path = Path(model_dir) / "config.json"
-    config_values = json.loads(config_path.read_text(encoding="utf-8"))
-    if config_values.get("model_type") == PoolingSequenceClassifierConfig.model_type:
-        model = PoolingSequenceClassifier.from_pretrained(model_dir)
-    else:
-        model = AutoModelForSequenceClassification.from_pretrained(model_dir)
-    model.to(device=target_device, dtype=target_dtype).eval()
-    return tokenizer, model
+def _model_output_contract(
+    model: Any,
+    logits: np.ndarray,
+) -> TransformerArtifactContract:
+    config = getattr(model, "config", None)
+    if config is not None:
+        return TransformerArtifactContract.from_config(config)
+    num_logits = int(logits.shape[1])
+    return TransformerArtifactContract(
+        profile=(
+            PROMPTED_BINARY_RERANKER_PROFILE
+            if num_logits == 1
+            else SEQUENCE_CLASSIFIER_PROFILE
+        ),
+        head_type="native" if num_logits == 1 else "default",
+        num_logits=num_logits,
+        probability_transform="sigmoid" if num_logits == 1 else "softmax",
+    )
 
 
 @dataclass(slots=True)
@@ -160,6 +141,21 @@ class TransformerPredictor:
     def output_dim(self) -> int:
         return self.executor.output_dim
 
+    @property
+    def _output_contract(self) -> TransformerArtifactContract:
+        contract = getattr(self.executor, "output_contract", None)
+        if contract is not None:
+            return contract
+        num_logits = int(getattr(self.executor, "num_logits", 2))
+        return TransformerArtifactContract(
+            profile=str(
+                getattr(self.executor, "profile", SEQUENCE_CLASSIFIER_PROFILE)
+            ),
+            head_type="native" if num_logits == 1 else "default",
+            num_logits=num_logits,
+            probability_transform="sigmoid" if num_logits == 1 else "softmax",
+        )
+
     def _resolved_max_length(
         self,
         pairs: Sequence[PreparedPair],
@@ -174,6 +170,7 @@ class TransformerPredictor:
             use_field_tokens=self.executor.use_field_tokens,
             max_attribute_value_chars=self.executor.max_attribute_value_chars,
             max_attribute_value_tokens=self.executor.max_attribute_value_tokens,
+            profile=self._output_contract.profile,
         )
 
     def _execute_pairs(
@@ -192,6 +189,7 @@ class TransformerPredictor:
             use_field_tokens=self.executor.use_field_tokens,
             max_attribute_value_chars=self.executor.max_attribute_value_chars,
             max_attribute_value_tokens=self.executor.max_attribute_value_tokens,
+            profile=self._output_contract.profile,
         )
         dataset, order = inference_dataset(
             pairs,
@@ -248,7 +246,7 @@ class TransformerPredictor:
         return self._execute_pairs(
             pairs,
             operation=self.executor.predict_logits,
-            output_width=2,
+            output_width=self._output_contract.num_logits,
             max_length=max_length,
         )
 
@@ -258,9 +256,10 @@ class TransformerPredictor:
         *,
         max_length: int | None = None,
     ) -> np.ndarray:
+        operation = getattr(self.executor, "encode_pooled", self.executor.encode_cls)
         return self._execute_pairs(
             pairs,
-            operation=self.executor.encode_cls,
+            operation=operation,
             output_width=self.output_dim,
             max_length=max_length,
         )
@@ -272,9 +271,7 @@ class TransformerPredictor:
         logits = self.predict_pair_logits(batch.prepared_pairs())
         if not len(logits):
             return np.empty(0, dtype=np.float32)
-        shifted = logits - logits.max(axis=1, keepdims=True)
-        exponentials = np.exp(shifted)
-        return (exponentials[:, 1] / exponentials.sum(axis=1)).astype(
+        return self._output_contract.positive_probabilities(logits).astype(
             np.float32,
             copy=False,
         )
@@ -283,7 +280,9 @@ class TransformerPredictor:
         logits = self.predict_pair_logits(batch.prepared_pairs())
         if not len(logits):
             return np.empty(0, dtype=np.float32)
-        return (logits[:, 1] - logits[:, 0]).astype(np.float32, copy=False)
+        return self._output_contract.logit_margin(logits).astype(
+            np.float32, copy=False
+        )
 
 
 def _pytorch_predictor(
@@ -341,7 +340,7 @@ def predict_pair_logits(
     field_chunk_size: int = 16_384,
     _forward_model: Any | None = None,
 ) -> np.ndarray:
-    """Return two classifier logits for every prepared pair."""
+    """Return classifier logits for every prepared pair."""
     return _pytorch_predictor(
         model,
         tokenizer,
@@ -368,9 +367,7 @@ def predict_match_probabilities(
     logits = predict_pair_logits(model, tokenizer, pairs, **kwargs)
     if not len(logits):
         return np.empty(0, dtype=np.float32)
-    shifted = logits - logits.max(axis=1, keepdims=True)
-    exponentials = np.exp(shifted)
-    return (exponentials[:, 1] / exponentials.sum(axis=1)).astype(
+    return _model_output_contract(model, logits).positive_probabilities(logits).astype(
         np.float32,
         copy=False,
     )
@@ -386,7 +383,9 @@ def predict_logit_margins(
     logits = predict_pair_logits(model, tokenizer, pairs, **kwargs)
     if not len(logits):
         return np.empty(0, dtype=np.float32)
-    return (logits[:, 1] - logits[:, 0]).astype(np.float32, copy=False)
+    return _model_output_contract(model, logits).logit_margin(logits).astype(
+        np.float32, copy=False
+    )
 
 
 def encode_pair_cls(

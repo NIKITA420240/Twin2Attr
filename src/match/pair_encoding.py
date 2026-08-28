@@ -12,7 +12,25 @@ import torch
 from torch.utils.data import Dataset
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
+from .models.transformer.profile import (
+    PROMPTED_BINARY_RERANKER_PROFILE,
+    SEQUENCE_CLASSIFIER_PROFILE,
+    normalize_profile,
+)
+from .pair_serialization import (
+    DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
+    KEY_TOKEN,
+    PAIR_SPECIAL_TOKENS,
+    VAL_TOKEN,
+    serialize_card,
+    serialize_pair,
+)
 from .prepare_data import PreparedCard, PreparedPair
+from .prompted_pair_encoding import (
+    encode_prompted_pairs as _encode_prompted_pairs,
+    serialize_prompted_pair,
+    serialize_prompted_pair_for_tokenizer as _serialize_prompted_pair_for_tokenizer,
+)
 
 __all__ = [
     "DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS",
@@ -28,13 +46,8 @@ __all__ = [
     "pair_special_token_ids",
     "serialize_card",
     "serialize_pair",
+    "serialize_prompted_pair",
 ]
-
-
-KEY_TOKEN = "[KEY]"
-VAL_TOKEN = "[VAL]"
-PAIR_SPECIAL_TOKENS = (KEY_TOKEN, VAL_TOKEN)
-DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS = 32
 
 
 class PreparedPairDataset(Dataset):
@@ -96,30 +109,6 @@ def pair_special_token_ids(
             )
         token_ids.append(int(encoded[0]))
     return tuple(token_ids)
-
-
-def serialize_card(
-    card: PreparedCard,
-    *,
-    use_field_tokens: bool = True,
-) -> str:
-    """Serialize fields in source order without truncation for inspection."""
-    fields = (("name", card.name), ("category", card.category), *card.attributes)
-    if use_field_tokens:
-        return " ".join(f"{KEY_TOKEN} {key} {VAL_TOKEN} {value}" for key, value in fields)
-    return " ".join(f"{key}: {value}" for key, value in fields)
-
-
-def serialize_pair(
-    pair: PreparedPair,
-    *,
-    use_field_tokens: bool = True,
-) -> tuple[str, str]:
-    """Return complete left and right card texts without token-budget trimming."""
-    return (
-        serialize_card(pair.left, use_field_tokens=use_field_tokens),
-        serialize_card(pair.right, use_field_tokens=use_field_tokens),
-    )
 
 
 def _require_pair_special_tokens(tokenizer: PreTrainedTokenizerBase) -> None:
@@ -615,6 +604,101 @@ def encode_prepared_pair_with_attributes(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _PromptedPairBatchEncoder:
+    tokenizer: PreTrainedTokenizerBase
+    max_length: int
+    use_field_tokens: bool
+    max_attribute_value_chars: int | None
+    max_attribute_value_tokens: int | None
+    special_token_count: int
+
+    def encode(
+        self,
+        pairs: Sequence[PreparedPair],
+    ) -> list[dict[str, list[int]]]:
+        return _encode_prompted_pairs(
+            self.tokenizer,
+            pairs,
+            max_length=self.max_length,
+            use_field_tokens=self.use_field_tokens,
+            max_attribute_value_chars=self.max_attribute_value_chars,
+            max_attribute_value_tokens=self.max_attribute_value_tokens,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _LegacyPairBatchEncoder:
+    tokenizer: PreTrainedTokenizerBase
+    max_length: int
+    use_field_tokens: bool
+    max_attribute_value_chars: int | None
+    max_attribute_value_tokens: int | None
+    batch_fields: bool
+    field_chunk_size: int
+    special_token_count: int
+
+    def encode(
+        self,
+        pairs: Sequence[PreparedPair],
+    ) -> list[dict[str, list[int]]]:
+        if self.batch_fields:
+            return _batch_encode_prepared_pairs(
+                self.tokenizer,
+                pairs,
+                max_length=self.max_length,
+                special_token_count=self.special_token_count,
+                use_field_tokens=self.use_field_tokens,
+                max_attribute_value_chars=self.max_attribute_value_chars,
+                max_attribute_value_tokens=self.max_attribute_value_tokens,
+                field_chunk_size=self.field_chunk_size,
+            )
+        return [
+            _encode_prepared_pair(
+                self.tokenizer,
+                pair,
+                max_length=self.max_length,
+                special_token_count=self.special_token_count,
+                use_field_tokens=self.use_field_tokens,
+                max_attribute_value_chars=self.max_attribute_value_chars,
+                max_attribute_value_tokens=self.max_attribute_value_tokens,
+            )
+            for pair in pairs
+        ]
+
+
+def _pair_batch_encoder(
+    tokenizer: PreTrainedTokenizerBase,
+    *,
+    profile: str,
+    max_length: int,
+    use_field_tokens: bool,
+    max_attribute_value_chars: int | None,
+    max_attribute_value_tokens: int | None,
+    batch_fields: bool,
+    field_chunk_size: int,
+) -> _PromptedPairBatchEncoder | _LegacyPairBatchEncoder:
+    if profile == PROMPTED_BINARY_RERANKER_PROFILE:
+        return _PromptedPairBatchEncoder(
+            tokenizer=tokenizer,
+            max_length=max_length,
+            use_field_tokens=use_field_tokens,
+            max_attribute_value_chars=max_attribute_value_chars,
+            max_attribute_value_tokens=max_attribute_value_tokens,
+            special_token_count=int(tokenizer.num_special_tokens_to_add(pair=False)),
+        )
+    return _LegacyPairBatchEncoder(
+        tokenizer=tokenizer,
+        max_length=max_length,
+        use_field_tokens=use_field_tokens,
+        max_attribute_value_chars=max_attribute_value_chars,
+        max_attribute_value_tokens=max_attribute_value_tokens,
+        batch_fields=batch_fields,
+        field_chunk_size=field_chunk_size,
+        special_token_count=_pair_special_token_count(tokenizer),
+    )
+
+
 class PairEncodingCollator:
     """Encode structured pairs and dynamically pad them to the longest batch row."""
 
@@ -630,6 +714,7 @@ class PairEncodingCollator:
         padding_length_buckets: tuple[int, ...] | None = None,
         batch_fields: bool = False,
         field_chunk_size: int = 16_384,
+        profile: str = SEQUENCE_CLASSIFIER_PROFILE,
     ) -> None:
         if max_length < 1:
             raise ValueError("max_length must be positive")
@@ -639,6 +724,7 @@ class PairEncodingCollator:
             raise ValueError("max_attribute_value_tokens must be positive or None")
         if field_chunk_size < 1:
             raise ValueError("field_chunk_size must be positive")
+        profile = normalize_profile(profile)
         if padding_length_buckets is not None:
             if not padding_length_buckets or any(
                 isinstance(value, bool)
@@ -669,37 +755,25 @@ class PairEncodingCollator:
         self.padding_length_buckets = padding_length_buckets
         self.batch_fields = batch_fields
         self.field_chunk_size = field_chunk_size
-        self.special_token_count = _pair_special_token_count(tokenizer)
+        self.profile = profile
+        self._encoder = _pair_batch_encoder(
+            tokenizer,
+            profile=profile,
+            max_length=max_length,
+            use_field_tokens=use_field_tokens,
+            max_attribute_value_chars=max_attribute_value_chars,
+            max_attribute_value_tokens=max_attribute_value_tokens,
+            batch_fields=batch_fields,
+            field_chunk_size=field_chunk_size,
+        )
+        self.special_token_count = self._encoder.special_token_count
         if max_length <= self.special_token_count:
             raise ValueError("max_length must leave room for pair content after special tokens")
 
     def __call__(self, pairs: list[PreparedPair]) -> dict[str, torch.Tensor]:
         if not pairs:
             raise ValueError("cannot collate an empty batch")
-        if self.batch_fields:
-            encoded_pairs = _batch_encode_prepared_pairs(
-                self.tokenizer,
-                pairs,
-                max_length=self.max_length,
-                special_token_count=self.special_token_count,
-                use_field_tokens=self.use_field_tokens,
-                max_attribute_value_chars=self.max_attribute_value_chars,
-                max_attribute_value_tokens=self.max_attribute_value_tokens,
-                field_chunk_size=self.field_chunk_size,
-            )
-        else:
-            encoded_pairs = [
-                _encode_prepared_pair(
-                    self.tokenizer,
-                    pair,
-                    max_length=self.max_length,
-                    special_token_count=self.special_token_count,
-                    use_field_tokens=self.use_field_tokens,
-                    max_attribute_value_chars=self.max_attribute_value_chars,
-                    max_attribute_value_tokens=self.max_attribute_value_tokens,
-                )
-                for pair in pairs
-            ]
+        encoded_pairs = self._encoder.encode(pairs)
         padding: bool | str = True
         padding_max_length: int | None = None
         if self.padding_length_buckets is not None:
@@ -741,6 +815,7 @@ def infer_pair_max_length(
     use_field_tokens: bool = True,
     max_attribute_value_chars: int | None = None,
     max_attribute_value_tokens: int | None = DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
+    profile: str = SEQUENCE_CLASSIFIER_PROFILE,
 ) -> int:
     """Infer a rounded token limit from complete structured pair lengths."""
     if not pairs:
@@ -761,6 +836,33 @@ def infer_pair_max_length(
         sample = [pairs[int(index)] for index in indices]
     else:
         sample = pairs
+
+    profile = normalize_profile(profile)
+    if profile == PROMPTED_BINARY_RERANKER_PROFILE:
+        lengths = np.fromiter(
+            (
+                len(
+                    tokenizer.encode(
+                        _serialize_prompted_pair_for_tokenizer(
+                            tokenizer,
+                            pair,
+                            use_field_tokens=use_field_tokens,
+                            max_attribute_value_chars=max_attribute_value_chars,
+                            max_attribute_value_tokens=max_attribute_value_tokens,
+                        ),
+                        add_special_tokens=True,
+                    )
+                )
+                for pair in sample
+            ),
+            dtype=np.int32,
+        )
+        selected = int(np.quantile(lengths, quantile, method="higher"))
+        selected = max(8, int(math.ceil(selected / 8) * 8))
+        model_limit = getattr(tokenizer, "model_max_length", hard_cap)
+        if not isinstance(model_limit, int) or model_limit <= 0 or model_limit > 100_000:
+            model_limit = hard_cap
+        return min(selected, model_limit, hard_cap)
 
     special_token_count = _pair_special_token_count(tokenizer)
     lengths = np.fromiter(

@@ -5,11 +5,18 @@ from pathlib import Path
 
 from ...pair_encoding import DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS
 from .head import PoolingHeadConfig
+from .profile import (
+    PROMPTED_BINARY_RERANKER_PROFILE,
+    SEQUENCE_CLASSIFIER_PROFILE,
+    is_prompted_profile,
+    validate_profile_head,
+)
 
 
 @dataclass(frozen=True)
 class SequenceClassifierConfig:
     model_path: str
+    profile: str = SEQUENCE_CLASSIFIER_PROFILE
     max_epochs: int = 5
     hpo_trials: int = 10
     learning_rate: float = 2e-5
@@ -109,8 +116,17 @@ class SequenceClassifierConfig:
             raise ValueError("max_length_sample_size must be positive")
         if self.max_length_hard_cap < 8:
             raise ValueError("max_length_hard_cap must be at least 8")
-        if self.head_type not in {"default", "pooling"}:
-            raise ValueError("head_type must be 'default' or 'pooling'")
+        validate_profile_head(self.profile, self.head_type)
+        if (
+            is_prompted_profile(self.profile)
+            and self.head_type == "attention_pooling"
+            and "cls" in self.head_config.poolings
+        ):
+            raise ValueError("Nemotron attention pooling cannot use cls")
+        if is_prompted_profile(self.profile) and self.use_field_tokens:
+            raise ValueError(
+                f"{PROMPTED_BINARY_RERANKER_PROFILE} requires use_field_tokens=False"
+            )
         if self.train_new_token_embeddings_only and not self.use_field_tokens:
             raise ValueError(
                 "train_new_token_embeddings_only requires use_field_tokens"
