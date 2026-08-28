@@ -182,6 +182,12 @@ benchmark:
       enabled: false
       tests_path: configs/benchmark_tests/transitivity_quality.yaml
       selected_tests: null
+
+    codex_annotation_quality:
+      type: training_quality
+      enabled: true
+      tests_path: configs/benchmark_tests/codex_annotation_quality.yaml
+      selected_tests: null
 ```
 
 Каждый запуск создаёт общий timestamp-каталог, сохраняет разрешённый конфиг,
@@ -197,6 +203,7 @@ configs/benchmark_tests/backends.yaml              # четыре backend-а
 configs/benchmark_tests/speed_optimizations.yaml   # технические ускорения
 configs/benchmark_tests/quality_optimizations.yaml # сокращение входа/precision
 configs/benchmark_tests/transitivity_quality.yaml  # влияние весов на обучение
+configs/benchmark_tests/codex_annotation_quality.yaml # ценность Codex-разметки
 ```
 
 Inference benchmark использует один и тот же checkpoint
@@ -225,6 +232,13 @@ split, моделью и гиперпараметрами; затем сравн
 `results.parquet` содержит `training_seconds` каждого запуска,
 `aggregates.parquet` — `total_training_seconds` по каждому варианту, а
 `report.json` — `total_elapsed_seconds` всего теста транзитивности.
+
+Полезность Codex-разметки проверяет `codex_annotation_quality`. Он сравнивает
+`human + 750000 LLM` с таким же бюджетом псевдоразметки:
+`human + 724772 LLM + 25228 Codex`. В обоих случаях validation строится только
+из human-разметки и проверяется по хэшу. `results.parquet` дополнительно содержит
+`total_train_rows`,
+`human_train_rows`, `llm_train_rows` и `codex_reviewed_train_rows`.
 
 Inference-конфиг поддерживает безопасные ограничения `max_length`,
 `max_attribute_value_chars` и `max_attribute_value_tokens`. Они могут только
@@ -389,8 +403,33 @@ uv run python run.py train \
 uv run python run.py train training.data_model=mix_dataset
 ```
 
+`mix_dataset_codex` дополнительно добавляет все 25 228 бинарно переразмеченных
+пар из `data/matches_llm_ambiguous_reviewed.parquet`. Для них используется новая
+колонка `target`; `original_target`, `confidence` и `reason` остаются
+диагностическими и не подаются модели:
+
+```bash
+uv run python run.py train \
+  training.model=transformer \
+  training.data_model=mix_dataset_codex
+```
+
+Обе смешанные модели строят validation из human-источника с тем же seed, поэтому
+их можно использовать для парного сравнения полезности Codex-разметки.
+
 Настройки источников, пороги голосов и ограничение размера LLM-выборки находятся
 в `data_model_description.mix_dataset.sources`.
+
+Пересечения источников разрешаются блоком
+`data_model_description.mix_dataset.overlap_resolution`. Пара `(id1, id2)`
+считается неупорядоченной, поэтому `(A, B)` и `(B, A)` — одно пересечение.
+Если пара присутствует в нескольких источниках, остаются все её строки только
+из первого источника в `source_priority`; это правило действует и при
+совпадающих, и при конфликтующих метках. Список приоритетов при включённой
+настройке должен содержать каждый настроенный источник ровно один раз. Например,
+после добавления проверенной Codex-разметки порядок можно задать как
+`[human, codex_reviewed, llm]`. Разрешение пересечений выполняется после перевода
+голосов в бинарные метки, но до вычисления весов транзитивности и семплирования.
 
 Итоговая модель выбирается одним параметром `training.model`. Значения
 `transformer`, `maxpooling` и `boosting` обучают соответствующую модель, `fusion`

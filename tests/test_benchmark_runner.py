@@ -31,6 +31,7 @@ class ConfiguredBenchmarkRunnerTests(unittest.TestCase):
                 "speed_optimizations",
                 "inference_quality",
                 "transitivity_quality",
+                "codex_annotation_quality",
             ],
         )
         self.assertEqual(settings.jobs[-1].type, "training_quality")

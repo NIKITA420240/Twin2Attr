@@ -25,6 +25,14 @@ data_model_description:
     candidate_splits: 128
     seed: ${runtime.seed}
 
+    # Keep the highest-priority source when the same unordered pair occurs
+    # in more than one dataset.
+    overlap_resolution:
+      enabled: true
+      source_priority:
+        - human
+        - llm
+
     sources:
       human:
         matches: data/matches.parquet
@@ -44,6 +52,66 @@ data_model_description:
         max_rows: 750000
         sampling_strategy: category_target_balanced
         # Penalize graph-local contradictions such as A=B, B=C, A!=C.
+        weight_model:
+          type: transitivity
+          enabled: true
+          penalty_strength: 1.0
+          min_weight_multiplier: 0.25
+          min_comparable_neighbors: 2
+          confidence_weighted_violations: true
+        splitter:
+          splitter_type: binary
+          score_type: votes
+          total_votes: 9
+          negative_threshold: 2
+          positive_threshold: 7
+          uncertain_action: drop
+
+  mix_dataset_codex:
+    items: data/items.parquet
+    validation_source: human
+    validation_fraction: 0.2
+    leakage_scope: pair
+    candidate_splits: 128
+    seed: ${runtime.seed}
+
+    overlap_resolution:
+      enabled: true
+      source_priority:
+        - human
+        - codex_reviewed
+        - llm
+
+    sources:
+      human:
+        matches: data/matches.parquet
+        weight: 3.0
+        max_rows: null
+        sampling_strategy: random
+        weight_model:
+          type: constant
+          enabled: false
+        splitter:
+          splitter_type: binary
+          score_type: label
+
+      codex_reviewed:
+        matches: data/matches_llm_ambiguous_reviewed.parquet
+        weight: 1.0
+        max_rows: null
+        sampling_strategy: random
+        weight_model:
+          type: constant
+          enabled: false
+        splitter:
+          splitter_type: binary
+          score_type: label
+
+      llm:
+        matches: data/matches_llm.parquet
+        weight: 1.0
+        max_rows: 750000
+        sampling_strategy: category_target_balanced
         weight_model:
           type: transitivity
           enabled: true

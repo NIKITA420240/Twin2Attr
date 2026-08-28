@@ -19,6 +19,11 @@ class AppConfigTests(unittest.TestCase):
         self.assertIsInstance(base.items, Path)
         self.assertTrue(base.items.is_absolute())
         self.assertEqual(base.seed, self.config.runtime.seed)
+        overlap = (
+            self.config.data_model_description.mix_dataset.overlap_resolution
+        )
+        self.assertTrue(overlap.enabled)
+        self.assertEqual(overlap.source_priority, ("human", "llm"))
         sources = {
             source.name: source
             for source in self.config.data_model_description.mix_dataset.sources
@@ -227,6 +232,27 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(llm.splitter.total_votes, 9)
         self.assertEqual(llm.splitter.negative_threshold, 2)
         self.assertEqual(llm.splitter.positive_threshold, 7)
+
+    def test_loads_codex_mixed_dataset(self) -> None:
+        mixed = self.config.data_model_description.mix_dataset_codex
+        sources = {source.name: source for source in mixed.sources}
+
+        self.assertEqual(
+            list(sources),
+            ["human", "codex_reviewed", "llm"],
+        )
+        self.assertEqual(
+            mixed.overlap_resolution.source_priority,
+            ("human", "codex_reviewed", "llm"),
+        )
+        codex = sources["codex_reviewed"]
+        self.assertEqual(
+            codex.matches,
+            PROJECT_ROOT / "data" / "matches_llm_ambiguous_reviewed.parquet",
+        )
+        self.assertEqual(codex.weight, 1.0)
+        self.assertIsNone(codex.max_rows)
+        self.assertEqual(codex.splitter.score_type, "label")
 
     def test_rejects_fractional_vote_threshold(self) -> None:
         with self.assertRaisesRegex(ValueError, "whole vote counts"):
@@ -475,6 +501,16 @@ class AppConfigTests(unittest.TestCase):
                 [
                     "data_model_description.base_dataset.validation_fraction=0.6",
                     "data_model_description.base_dataset.stacking_train_fraction=0.4",
+                ],
+            )
+
+    def test_enabled_overlap_resolution_requires_every_source_once(self) -> None:
+        with self.assertRaisesRegex(ValueError, "every configured source"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                [
+                    "data_model_description.mix_dataset."
+                    "overlap_resolution.source_priority=[human]",
                 ],
             )
 

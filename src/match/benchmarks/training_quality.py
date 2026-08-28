@@ -48,6 +48,7 @@ def _seeded_test(test: BenchmarkTest, seed: int) -> BenchmarkTest:
             "runtime.seed",
             "data_model_description.base_dataset.seed",
             "data_model_description.mix_dataset.seed",
+            "data_model_description.mix_dataset_codex.seed",
             "augmentation_models.attribute_shuffle.seed",
             "augmentation_models.attribute_word_dropout.seed",
         )
@@ -87,6 +88,10 @@ def _run_case(
         "validation_pairs_hash": None,
         "same_validation_split_as_reference": None,
         "training_seconds": None,
+        "total_train_rows": None,
+        "human_train_rows": None,
+        "llm_train_rows": None,
+        "codex_reviewed_train_rows": None,
         "llm_mean_weight_multiplier": None,
         "llm_downweighted_fraction": None,
         "llm_violating_fraction": None,
@@ -96,10 +101,12 @@ def _run_case(
     started = perf_counter()
     try:
         configured = apply_benchmark_test(base_config, _seeded_test(test, seed))
-        if configured.training.data_model != "mix_dataset":
+        if configured.training.data_model not in {
+            "mix_dataset",
+            "mix_dataset_codex",
+        }:
             raise ValueError(
-                "training-quality benchmark for sample weighting requires "
-                "training.data_model=mix_dataset"
+                "training-quality benchmark requires a mixed training data model"
             )
         configured, experiment_dir, registry_path = configure_experiment(
             configured,
@@ -113,7 +120,10 @@ def _run_case(
         )
         record_path = experiment_dir / "experiment.json"
         record = json.loads(record_path.read_text(encoding="utf-8"))
-        llm_weighting = record.get("sample_weighting", {}).get("llm", {})
+        weighting = record.get("sample_weighting", {})
+        llm_weighting = weighting.get("llm", {})
+        human_weighting = weighting.get("human", {})
+        codex_weighting = weighting.get("codex_reviewed", {})
         row.update(
             {
                 "status": "completed",
@@ -122,6 +132,10 @@ def _run_case(
                     "validation_pairs_hash"
                 ],
                 "experiment_path": str(experiment_dir),
+                "total_train_rows": record["split"]["train_rows"],
+                "human_train_rows": human_weighting.get("rows"),
+                "llm_train_rows": llm_weighting.get("rows"),
+                "codex_reviewed_train_rows": codex_weighting.get("rows", 0),
                 "llm_mean_weight_multiplier": llm_weighting.get(
                     "mean_weight_multiplier"
                 ),
@@ -177,6 +191,15 @@ def _compare_with_reference(
         )
 
 
+def _mean_present(rows: list[dict[str, Any]], column: str) -> float | None:
+    values = [
+        float(row[column])
+        for row in rows
+        if row.get(column) is not None
+    ]
+    return None if not values else mean(values)
+
+
 def _aggregate(
     rows: list[dict[str, Any]],
     tests: tuple[BenchmarkTest, ...],
@@ -195,6 +218,15 @@ def _aggregate(
             for row in completed
             if row["delta_validation_macro_pr_auc"] is not None
         ]
+        mean_rows = {
+            f"mean_{column}": _mean_present(completed, column)
+            for column in (
+                "total_train_rows",
+                "human_train_rows",
+                "llm_train_rows",
+                "codex_reviewed_train_rows",
+            )
+        }
         result.append(
             {
                 "test": test.key,
@@ -218,6 +250,7 @@ def _aggregate(
                 ),
                 "wins_vs_reference": sum(delta > 0.0 for delta in deltas),
                 "paired_runs": len(deltas),
+                **mean_rows,
                 "mean_training_seconds": (
                     None
                     if not completed

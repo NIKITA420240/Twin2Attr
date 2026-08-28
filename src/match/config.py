@@ -103,6 +103,23 @@ class DatasetSourceSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class DatasetOverlapResolutionSettings:
+    enabled: bool = False
+    source_priority: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if len(set(self.source_priority)) != len(self.source_priority):
+            raise ValueError(
+                "mix_dataset.overlap_resolution.source_priority must be unique"
+            )
+        if any(not name.strip() for name in self.source_priority):
+            raise ValueError(
+                "mix_dataset.overlap_resolution.source_priority names "
+                "must not be empty"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class BaseDatasetSettings:
     items: Path
     matches: Path
@@ -135,6 +152,9 @@ class MixedDatasetSettings:
     leakage_scope: str
     candidate_splits: int
     seed: int
+    overlap_resolution: DatasetOverlapResolutionSettings = (
+        DatasetOverlapResolutionSettings()
+    )
 
     def __post_init__(self) -> None:
         _validate_data_split_settings(
@@ -149,12 +169,20 @@ class MixedDatasetSettings:
             raise ValueError("mix_dataset source names must be unique")
         if self.validation_source not in names:
             raise ValueError("validation_source must name a configured source")
+        if self.overlap_resolution.enabled:
+            priority = self.overlap_resolution.source_priority
+            if set(priority) != set(names) or len(priority) != len(names):
+                raise ValueError(
+                    "enabled mix_dataset.overlap_resolution.source_priority "
+                    "must contain every configured source exactly once"
+                )
 
 
 @dataclass(frozen=True, slots=True)
 class DataModelDescriptionSettings:
     base_dataset: BaseDatasetSettings
     mix_dataset: MixedDatasetSettings
+    mix_dataset_codex: MixedDatasetSettings
 
 
 def _validate_data_split_settings(
@@ -205,9 +233,14 @@ class TrainingSettings:
                 "training.model must be one of: transformer, maxpooling, fusion, "
                 "boosting, stacking"
             )
-        if self.data_model not in {"base_dataset", "mix_dataset"}:
+        if self.data_model not in {
+            "base_dataset",
+            "mix_dataset",
+            "mix_dataset_codex",
+        }:
             raise ValueError(
-                "training.data_model must be one of: base_dataset, mix_dataset"
+                "training.data_model must be one of: base_dataset, mix_dataset, "
+                "mix_dataset_codex"
             )
         if self.model == "stacking" and self.data_model != "base_dataset":
             raise ValueError("stacking training currently requires base_dataset")
@@ -506,9 +539,14 @@ class AnalysisSettings:
                 "analysis.analysis_model must be one of: attribute_importance, "
                 "backend_benchmark"
             )
-        if self.data_model not in {"base_dataset", "mix_dataset"}:
+        if self.data_model not in {
+            "base_dataset",
+            "mix_dataset",
+            "mix_dataset_codex",
+        }:
             raise ValueError(
-                "analysis.data_model must be one of: base_dataset, mix_dataset"
+                "analysis.data_model must be one of: base_dataset, mix_dataset, "
+                "mix_dataset_codex"
             )
 
 
@@ -1318,20 +1356,16 @@ def _dataset_splitter(
 def _dataset_source(
     name: str,
     values: Mapping[str, Any],
+    *,
+    dataset_name: str,
 ) -> DatasetSourceSettings:
+    prefix = f"data_model_description.{dataset_name}.sources.{name}"
     splitter = values.get("splitter", {})
     if not isinstance(splitter, Mapping):
-        raise ValueError(
-            f"data_model_description.mix_dataset.sources.{name}.splitter "
-            "must be a mapping"
-        )
+        raise ValueError(f"{prefix}.splitter must be a mapping")
     weight_model = values.get("weight_model", {})
     if not isinstance(weight_model, Mapping):
-        raise ValueError(
-            f"data_model_description.mix_dataset.sources.{name}.weight_model "
-            "must be a mapping"
-        )
-    prefix = f"data_model_description.mix_dataset.sources.{name}"
+        raise ValueError(f"{prefix}.weight_model must be a mapping")
     return DatasetSourceSettings(
         name=name,
         matches=_path(_required(values, "matches"), f"{prefix}.matches"),
@@ -1361,24 +1395,73 @@ def _dataset_source(
     )
 
 
-def _dataset_sources(values: Any) -> tuple[DatasetSourceSettings, ...]:
+def _dataset_sources(
+    values: Any,
+    *,
+    dataset_name: str,
+) -> tuple[DatasetSourceSettings, ...]:
     if isinstance(values, Mapping):
         entries = values.items()
     elif isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
         normalized: list[tuple[str, Mapping[str, Any]]] = []
         for value in values:
             if not isinstance(value, Mapping):
-                raise ValueError("mix_dataset sources must contain mappings")
+                raise ValueError(f"{dataset_name} sources must contain mappings")
             normalized.append((str(_required(value, "name")), value))
         entries = normalized
     else:
-        raise ValueError("mix_dataset sources must be a mapping or sequence")
+        raise ValueError(f"{dataset_name} sources must be a mapping or sequence")
     sources: list[DatasetSourceSettings] = []
     for name, source in entries:
         if not isinstance(source, Mapping):
-            raise ValueError(f"mix_dataset source {name!r} must be a mapping")
-        sources.append(_dataset_source(str(name), source))
+            raise ValueError(f"{dataset_name} source {name!r} must be a mapping")
+        sources.append(
+            _dataset_source(
+                str(name),
+                source,
+                dataset_name=dataset_name,
+            )
+        )
     return tuple(sources)
+
+
+def _mixed_dataset_settings(
+    values: Mapping[str, Any],
+    *,
+    dataset_name: str,
+    runtime_seed: int,
+) -> MixedDatasetSettings:
+    prefix = f"data_model_description.{dataset_name}"
+    overlap = values.get("overlap_resolution", {})
+    if not isinstance(overlap, Mapping):
+        raise ValueError(
+            f"config section '{prefix}.overlap_resolution' must be a mapping"
+        )
+    return MixedDatasetSettings(
+        items=_path(_required(values, "items"), f"{prefix}.items"),
+        sources=_dataset_sources(
+            _required(values, "sources"),
+            dataset_name=dataset_name,
+        ),
+        validation_source=str(_required(values, "validation_source")),
+        validation_fraction=float(_required(values, "validation_fraction")),
+        leakage_scope=str(_required(values, "leakage_scope")),
+        candidate_splits=int(values.get("candidate_splits", 128)),
+        seed=int(values.get("seed", runtime_seed)),
+        overlap_resolution=DatasetOverlapResolutionSettings(
+            enabled=_bool(
+                overlap.get("enabled", False),
+                f"{prefix}.overlap_resolution.enabled",
+            ),
+            source_priority=tuple(
+                str(name)
+                for name in _sequence(
+                    overlap.get("source_priority", []),
+                    f"{prefix}.overlap_resolution.source_priority",
+                )
+            ),
+        ),
+    )
 
 
 def _benchmark_jobs(values: Any) -> tuple[BenchmarkJobSettings, ...]:
@@ -1445,7 +1528,7 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     data_model_description = _section(resolved, "data_model_description")
     base_dataset = _section(data_model_description, "base_dataset")
     mix_dataset = _section(data_model_description, "mix_dataset")
-    mix_sources = _required(mix_dataset, "sources")
+    mix_dataset_codex = _section(data_model_description, "mix_dataset_codex")
     inference_value = resolved.get("inference", training)
     if not isinstance(inference_value, Mapping):
         raise ValueError("config section 'inference' must be a mapping")
@@ -1619,21 +1702,15 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 ),
                 seed=int(base_dataset.get("seed", _required(runtime, "seed"))),
             ),
-            mix_dataset=MixedDatasetSettings(
-                items=_path(
-                    _required(mix_dataset, "items"),
-                    "data_model_description.mix_dataset.items",
-                ),
-                sources=_dataset_sources(mix_sources),
-                validation_source=str(
-                    _required(mix_dataset, "validation_source")
-                ),
-                validation_fraction=float(
-                    _required(mix_dataset, "validation_fraction")
-                ),
-                leakage_scope=str(_required(mix_dataset, "leakage_scope")),
-                candidate_splits=int(mix_dataset.get("candidate_splits", 128)),
-                seed=int(mix_dataset.get("seed", _required(runtime, "seed"))),
+            mix_dataset=_mixed_dataset_settings(
+                mix_dataset,
+                dataset_name="mix_dataset",
+                runtime_seed=int(_required(runtime, "seed")),
+            ),
+            mix_dataset_codex=_mixed_dataset_settings(
+                mix_dataset_codex,
+                dataset_name="mix_dataset_codex",
+                runtime_seed=int(_required(runtime, "seed")),
             ),
         ),
         inference=InferenceSettings(
@@ -2313,6 +2390,7 @@ __all__ = [
     "ConfigSource",
     "DataModelDescriptionSettings",
     "DatasetSourceSettings",
+    "DatasetOverlapResolutionSettings",
     "DatasetSplitterSettings",
     "DataPostprocessingModelsSettings",
     "FeatureSettings",

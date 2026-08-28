@@ -6,6 +6,7 @@ from pathlib import Path
 import polars as pl
 
 from match.config import (
+    DatasetOverlapResolutionSettings,
     DatasetSourceSettings,
     DatasetSplitterSettings,
     MixedDatasetSettings,
@@ -13,7 +14,10 @@ from match.config import (
 )
 from match.data_models import BaseDatasetModel, build_data_model
 from match.data_models.models import MixedDatasetModel
-from match.data_models.preparation import prepare_source_matches
+from match.data_models.preparation import (
+    prepare_source_matches,
+    resolve_source_overlaps,
+)
 from match.paths import PROJECT_ROOT
 
 
@@ -29,6 +33,38 @@ def _splitter(score_type: str, *, votes: bool = False) -> DatasetSplitterSetting
 
 
 class DataModelTests(unittest.TestCase):
+    def test_overlap_resolution_keeps_highest_priority_symmetric_pair(self) -> None:
+        sources = {
+            "human": pl.DataFrame(
+                {
+                    "id1": [1, 3, 7],
+                    "id2": [2, 4, 8],
+                    "target": [1, 0, 1],
+                }
+            ),
+            "llm": pl.DataFrame(
+                {
+                    "id1": [2, 4, 5],
+                    "id2": [1, 3, 6],
+                    "target": [0, 0, 1],
+                }
+            ),
+        }
+
+        resolved = resolve_source_overlaps(
+            sources,
+            DatasetOverlapResolutionSettings(
+                enabled=True,
+                source_priority=("human", "llm"),
+            ),
+        )
+
+        self.assertEqual(resolved["human"].height, 3)
+        self.assertEqual(
+            resolved["llm"].select("id1", "id2", "target").rows(),
+            [(5, 6, 1)],
+        )
+
     def test_factory_selects_configured_data_model(self) -> None:
         config = load_app_config_file(PROJECT_ROOT / "configs" / "pipeline.yaml")
 
@@ -42,6 +78,20 @@ class DataModelTests(unittest.TestCase):
             ),
         )
         self.assertIsInstance(build_data_model(mixed_config), MixedDatasetModel)
+        codex_config = replace(
+            config,
+            training=replace(
+                config.training,
+                model="transformer",
+                data_model="mix_dataset_codex",
+            ),
+        )
+        codex_model = build_data_model(codex_config)
+        self.assertIsInstance(codex_model, MixedDatasetModel)
+        self.assertEqual(
+            [source.name for source in codex_model.settings.sources],
+            ["human", "codex_reviewed", "llm"],
+        )
 
     def test_converts_vote_scores_and_applies_source_weight(self) -> None:
         items = pl.DataFrame(

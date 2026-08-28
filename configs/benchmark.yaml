@@ -31,3 +31,11 @@ benchmark:
       enabled: true
       tests_path: configs/benchmark_tests/transitivity_quality.yaml
       selected_tests: null
+
+    # Retrains two paired Transformers with the same 750,000-row
+    # pseudo-labeled-data budget.
+    codex_annotation_quality:
+      type: training_quality
+      enabled: true
+      tests_path: configs/benchmark_tests/codex_annotation_quality.yaml
+      selected_tests: null

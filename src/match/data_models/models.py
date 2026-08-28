@@ -18,7 +18,12 @@ from ..config import (
 from ..data import read_parquet
 from ..data_split import DataSplitConfig, split_matches, validate_predefined_split
 from .contracts import InspectionFrames, LoadedTrainingSplits
-from .preparation import prepare_source_matches
+from .preparation import (
+    finalize_source_matches,
+    prepare_source_labels,
+    prepare_source_matches,
+    resolve_source_overlaps,
+)
 
 
 def _split_config(
@@ -187,13 +192,36 @@ class MixedDatasetModel:
             seed=self.settings.seed,
         )
 
+    def _load_source_labels(
+        self,
+        source: DatasetSourceSettings,
+    ) -> pl.DataFrame:
+        matches = read_parquet(
+            source.matches,
+            label=f"{source.name} dataset matches",
+        )
+        return prepare_source_labels(matches, source)
+
     def load_training_splits(self) -> LoadedTrainingSplits:
         item_lookup = _item_lookup(
             self.settings.items,
             label="mixed dataset item lookup",
         )
+        labels = {
+            source.name: self._load_source_labels(source)
+            for source in self.settings.sources
+        }
+        labels = resolve_source_overlaps(
+            labels,
+            self.settings.overlap_resolution,
+        )
         prepared = {
-            source.name: self._load_source(item_lookup, source)
+            source.name: finalize_source_matches(
+                item_lookup,
+                labels[source.name],
+                source,
+                seed=self.settings.seed,
+            )
             for source in self.settings.sources
         }
         validation_source = prepared.pop(self.settings.validation_source)

@@ -21,6 +21,41 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
             / "benchmark_tests"
             / "transitivity_quality.yaml"
         )
+        self.codex_tests_path = (
+            PROJECT_ROOT
+            / "configs"
+            / "benchmark_tests"
+            / "codex_annotation_quality.yaml"
+        )
+
+    def test_codex_suite_compares_equal_size_training_sets(self) -> None:
+        suite = load_benchmark_suite(
+            self.codex_tests_path,
+            allowed_test_types={"training_quality"},
+        )
+        baseline = apply_benchmark_test(
+            self.config,
+            suite.tests["human_llm"],
+        )
+        fixed = apply_benchmark_test(
+            self.config,
+            suite.tests["human_llm_codex_fixed_budget"],
+        )
+        fixed_llm = next(
+            source
+            for source in fixed.data_model_description.mix_dataset_codex.sources
+            if source.name == "llm"
+        )
+
+        self.assertEqual(suite.reference_test, "human_llm")
+        self.assertEqual(
+            list(suite.tests),
+            ["human_llm", "human_llm_codex_fixed_budget"],
+        )
+        self.assertEqual(baseline.training.data_model, "mix_dataset")
+        self.assertEqual(fixed.training.data_model, "mix_dataset_codex")
+        self.assertEqual(fixed_llm.max_rows, 724_772)
+        self.assertEqual(suite.seeds, (42,))
 
     def test_suite_changes_the_intended_weighting_switch(self) -> None:
         suite = load_benchmark_suite(
@@ -67,6 +102,10 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
                 "validation_pairs_hash": "same-split",
                 "same_validation_split_as_reference": None,
                 "training_seconds": 10.0,
+                "total_train_rows": 100,
+                "human_train_rows": 20,
+                "llm_train_rows": 80,
+                "codex_reviewed_train_rows": 0,
                 "llm_mean_weight_multiplier": 0.8,
                 "llm_downweighted_fraction": 0.2,
                 "llm_violating_fraction": 0.1,
@@ -106,6 +145,12 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
             .get_column("total_training_seconds")
             .item(),
             10.0,
+        )
+        self.assertEqual(
+            aggregates.filter(pl.col("test") == "transitivity_on")
+            .get_column("mean_llm_train_rows")
+            .item(),
+            80.0,
         )
         self.assertGreaterEqual(report["total_elapsed_seconds"], 0.0)
         self.assertEqual(report["reference_test"], "transitivity_off")

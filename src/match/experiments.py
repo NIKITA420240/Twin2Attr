@@ -166,18 +166,19 @@ def _head_description(config: AppConfig) -> str:
 def _selected_split_settings(config: AppConfig) -> Any:
     if config.training.data_model == "base_dataset":
         return config.data_model_description.base_dataset
-    return config.data_model_description.mix_dataset
+    return getattr(config.data_model_description, config.training.data_model)
 
 
 def _training_data_label(config: AppConfig) -> str:
     if config.training.data_model == "base_dataset":
         return "Human"
+    settings = _selected_split_settings(config)
     source_names = (
         source.name
-        for source in config.data_model_description.mix_dataset.sources
+        for source in settings.sources
     )
     return " + ".join(
-        name.upper() if name.lower() == "llm" else name.title()
+        name.upper() if name.lower() == "llm" else name.replace("_", " ").title()
         for name in source_names
     )
 
