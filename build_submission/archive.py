@@ -40,6 +40,9 @@ _ONNX_RUNTIME_WHEEL_PATTERNS = (
     "flatbuffers-*.whl",
     "humanfriendly-*.whl",
 )
+_TENSORRT_WHEEL_PATTERNS = (
+    "tensorrt_cu12_bindings-*.whl",
+)
 _SKIPPED_DIRECTORY_NAMES = {".cache", "__pycache__"}
 _STORED_SUFFIXES = {
     ".bin",
@@ -307,6 +310,7 @@ def _collect_inputs(
     include_catboost: bool,
     include_preprocessing_runtime: bool,
     include_onnxruntime: bool,
+    include_tensorrt: bool,
     transformer_dir: Path | None = None,
     skip_transformer_weights: bool = False,
 ) -> tuple[_ArchiveInput, ...]:
@@ -345,6 +349,9 @@ def _collect_inputs(
     if include_onnxruntime:
         _validate_onnxruntime_wheels(wheels_source)
         wheel_patterns.extend(_ONNX_RUNTIME_WHEEL_PATTERNS)
+    if include_tensorrt:
+        _validate_tensorrt_wheels(wheels_source)
+        wheel_patterns.extend(_TENSORRT_WHEEL_PATTERNS)
     for pattern in wheel_patterns:
         for wheel in sorted(wheels_source.glob(pattern)):
             entry = _ArchiveInput(wheel, _VENDOR_WHEELS_TARGET / wheel.name)
@@ -400,6 +407,16 @@ def _validate_onnxruntime_wheels(directory: Path) -> None:
         )
 
 
+def _validate_tensorrt_wheels(directory: Path) -> None:
+    missing = [
+        pattern for pattern in _TENSORRT_WHEEL_PATTERNS if not any(directory.glob(pattern))
+    ]
+    if missing:
+        raise FileNotFoundError(
+            f"bundled TensorRT wheels are missing in {directory}: {missing}"
+        )
+
+
 def _compression(path: Path) -> int:
     return ZIP_STORED if path.suffix.lower() in _STORED_SUFFIXES else ZIP_DEFLATED
 
@@ -414,8 +431,9 @@ def build_submission_archive(
     root = project_root.expanduser().resolve()
     artifacts = _selected_artifacts(config)
     resources = _required_resources(config, artifacts)
-    onnx_only = (
-        config.inference.transformer.backend == "onnxruntime"
+    backend = config.inference.transformer.backend
+    onnx_only = backend == "tensorrt" or (
+        backend == "onnxruntime"
         and not config.inference.transformer.onnxruntime.fallback_to_pytorch
     )
     for resource in resources:
@@ -425,7 +443,7 @@ def build_submission_archive(
             artifacts.transformer_dir,
             require_pytorch_weights=not onnx_only,
         )
-        if config.inference.transformer.backend == "onnxruntime":
+        if backend in {"onnxruntime", "tensorrt"}:
             _validate_onnx_artifacts(
                 artifacts.transformer_dir,
                 predictor=artifacts.predictor,
@@ -446,8 +464,13 @@ def build_submission_archive(
             or config.features.physical.enabled
         ),
         include_onnxruntime=(
-            config.inference.transformer.backend == "onnxruntime"
+            backend == "onnxruntime"
+            or (
+                backend == "tensorrt"
+                and config.inference.transformer.tensorrt.fallback_to_onnxruntime
+            )
         ),
+        include_tensorrt=backend == "tensorrt",
         transformer_dir=artifacts.transformer_dir,
         skip_transformer_weights=onnx_only,
     )

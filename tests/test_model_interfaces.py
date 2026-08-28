@@ -34,7 +34,10 @@ class _FakeExecutor:
         del batch, non_blocking
         return np.ones((1, 16), dtype=np.float32)
 
-    def validate(self, *, classifier, encoder):
+    def prepare(self, *, classifier, encoder):
+        del classifier, encoder
+
+    def warmup(self, *, classifier, encoder):
         del classifier, encoder
 
     def clear_cache(self):

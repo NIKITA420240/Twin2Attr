@@ -164,6 +164,33 @@ def build_solution_manifest(
                 },
             },
         }
+        native_tensorrt = config.inference.transformer.tensorrt
+        solution["tensorrt"] = {
+            "device_id": native_tensorrt.device_id,
+            "workspace_size_gb": native_tensorrt.workspace_size_gb,
+            "builder_optimization_level": (
+                native_tensorrt.builder_optimization_level
+            ),
+            "fallback_to_onnxruntime": (
+                native_tensorrt.fallback_to_onnxruntime
+            ),
+            "engine_cache": {
+                "enabled": native_tensorrt.engine_cache.enabled,
+                "path": native_tensorrt.engine_cache.path,
+            },
+            "timing_cache": {
+                "enabled": native_tensorrt.timing_cache.enabled,
+                "path": native_tensorrt.timing_cache.path,
+            },
+            "profiles": {
+                "min_batch_size": native_tensorrt.profiles.min_batch_size,
+                "opt_batch_size": native_tensorrt.profiles.opt_batch_size,
+                "max_batch_size": native_tensorrt.profiles.max_batch_size,
+                "sequence_lengths": list(
+                    native_tensorrt.profiles.sequence_lengths
+                ),
+            },
+        }
         onnx_export = config.model_description.transformer.export.onnx
         solution["onnx_artifacts"] = {
             "enabled": onnx_export.enabled,

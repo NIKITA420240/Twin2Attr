@@ -7,6 +7,7 @@ import numpy as np
 import polars as pl
 
 from match.models.factory import build_predictor
+from match.models.transformer.tensorrt_common import TensorRTInitializationError
 from match.submission import _predict
 
 
@@ -117,7 +118,7 @@ class PredictorLoadingTests(unittest.TestCase):
             "onnxruntime": {"fallback_to_pytorch": True},
         }
         executor = Mock()
-        executor.validate.side_effect = FileNotFoundError("graph missing")
+        executor.prepare.side_effect = FileNotFoundError("graph missing")
         with (
             patch(
                 "match.models.transformer.factory.AutoTokenizer.from_pretrained",
@@ -220,12 +221,115 @@ class PredictorLoadingTests(unittest.TestCase):
             tensorrt.engine_cache_path,
             self.root / "models/transformer/cache/engines",
         )
-        self.assertEqual(tensorrt.opt_batch_size, 512)
-        self.assertEqual(tensorrt.max_batch_size, 1024)
-        self.assertEqual(tensorrt.sequence_lengths, (64, 96, 128))
-        self.assertIn("token_type_ids", tensorrt.input_names)
+        self.assertEqual(tensorrt.profile.opt_batch_size, 512)
+        self.assertEqual(tensorrt.profile.max_batch_size, 1024)
+        self.assertEqual(tensorrt.profile.sequence_lengths, (64, 96, 128))
+        self.assertIn("token_type_ids", tensorrt.profile.input_names)
         self.assertTrue(tensorrt.fp16_enabled)
-        executor.validate.assert_called_once_with(classifier=True, encoder=False)
+        executor.prepare.assert_called_once_with(classifier=True, encoder=False)
+        executor.warmup.assert_called_once_with(classifier=True, encoder=False)
+
+    def test_native_tensorrt_factory_passes_build_options(self) -> None:
+        solution = {
+            "predictor": "transformer",
+            "backend": "tensorrt",
+            "model_directory": "models/transformer",
+            "batch_size": 256,
+            "tensorrt": {
+                "device_id": 1,
+                "workspace_size_gb": 4,
+                "builder_optimization_level": 2,
+                "fallback_to_onnxruntime": False,
+                "engine_cache": {"path": "onnx/native-cache"},
+                "timing_cache": {"path": "onnx/native-cache/timing.cache"},
+                "profiles": {
+                    "min_batch_size": 1,
+                    "opt_batch_size": 256,
+                    "max_batch_size": 512,
+                    "sequence_lengths": [1, 256, 472],
+                },
+            },
+            "onnx_artifacts": {
+                "precision": "float16",
+                "classifier_path": "onnx/classifier.onnx",
+            },
+        }
+        executor = Mock()
+        predictor = object()
+        with (
+            patch(
+                "match.models.transformer.factory.AutoTokenizer.from_pretrained",
+                return_value=object(),
+            ),
+            patch(
+                "pathlib.Path.read_text",
+                return_value='{"hidden_size": 768, "match_max_length": 472}',
+            ),
+            patch(
+                "match.models.transformer.factory.TensorRTTransformerExecutor",
+                return_value=executor,
+            ) as executor_type,
+            patch(
+                "match.models.transformer.factory.TransformerPredictor",
+                return_value=predictor,
+            ),
+        ):
+            result = build_predictor(solution, self.root)
+
+        self.assertIs(result, predictor)
+        options = executor_type.call_args.kwargs["options"]
+        self.assertEqual(options.device_id, 1)
+        self.assertEqual(options.workspace_size_bytes, 4 * 1024**3)
+        self.assertEqual(options.builder_optimization_level, 2)
+        self.assertEqual(options.profile.max_batch_size, 512)
+        self.assertEqual(options.profile.max_sequence_length, 472)
+        self.assertTrue(options.fp16_enabled)
+        executor.prepare.assert_called_once_with(classifier=True, encoder=False)
+        executor.warmup.assert_called_once_with(classifier=True, encoder=False)
+
+    def test_native_tensorrt_fallback_builds_onnx_directly(self) -> None:
+        solution = {
+            "predictor": "transformer",
+            "backend": "tensorrt",
+            "model_directory": "models/transformer",
+            "batch_size": 256,
+            "tensorrt": {"fallback_to_onnxruntime": True},
+            "onnxruntime": {"device_id": 2},
+            "onnx_artifacts": {"precision": "float16"},
+        }
+        onnx_executor = Mock()
+        predictor = object()
+        with (
+            patch(
+                "match.models.transformer.factory.AutoTokenizer.from_pretrained",
+                return_value=SimpleNamespace(
+                    model_input_names=["input_ids", "attention_mask"]
+                ),
+            ),
+            patch(
+                "pathlib.Path.read_text",
+                return_value='{"hidden_size": 768, "match_max_length": 472}',
+            ),
+            patch(
+                "match.models.transformer.factory.TensorRTTransformerExecutor",
+                side_effect=TensorRTInitializationError("engine failed"),
+            ),
+            patch(
+                "match.models.transformer.factory.OnnxRuntimeTransformerExecutor",
+                return_value=onnx_executor,
+            ) as onnx_type,
+            patch(
+                "match.models.transformer.factory.TransformerPredictor",
+                return_value=predictor,
+            ),
+        ):
+            result = build_predictor(solution, self.root)
+
+        self.assertIs(result, predictor)
+        self.assertEqual(onnx_type.call_args.kwargs["provider"], "cuda")
+        self.assertEqual(onnx_type.call_args.kwargs["device_id"], 2)
+        onnx_executor.prepare.assert_called_once_with(classifier=True, encoder=False)
+        onnx_executor.warmup.assert_called_once_with(classifier=True, encoder=False)
 
     def test_loads_only_maxpooling_for_maxpooling_prediction(self) -> None:
         maxpooling = object()

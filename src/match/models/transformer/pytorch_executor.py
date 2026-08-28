@@ -206,7 +206,12 @@ class PyTorchTransformerExecutor:
         except torch.cuda.OutOfMemoryError as error:
             raise TransformerExecutorOutOfMemoryError from error
 
-    def validate(self, *, classifier: bool, encoder: bool) -> None:
+    def prepare(self, *, classifier: bool, encoder: bool) -> None:
+        del classifier, encoder
+
+    def warmup(self, *, classifier: bool, encoder: bool) -> None:
+        # PyTorch receives real tokenized inputs in TransformerPredictor. Keeping
+        # this hook explicit avoids manufacturing tokenizer-dependent dummy data.
         del classifier, encoder
 
     def clear_cache(self) -> None:

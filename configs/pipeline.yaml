@@ -100,6 +100,27 @@ inference:
             - 64
             - 96
             - 128
+    # Native TensorRT backend. The engine is built from ONNX on the target GPU
+    # and reused from this fingerprinted cache on subsequent evaluator stages.
+    tensorrt:
+      device_id: 0
+      workspace_size_gb: 8
+      builder_optimization_level: 3
+      fallback_to_onnxruntime: true
+      engine_cache:
+        enabled: true
+        path: onnx/native_trt_cache
+      timing_cache:
+        enabled: true
+        path: onnx/native_trt_cache/timing.cache
+      profiles:
+        min_batch_size: 1
+        opt_batch_size: 512
+        max_batch_size: 512
+        sequence_lengths:
+          - 1
+          - 256
+          - 472
 
 analysis:
   analysis_model: attribute_importance

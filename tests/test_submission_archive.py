@@ -127,6 +127,10 @@ class SubmissionArchiveTests(unittest.TestCase):
         (wheels / "humanfriendly-10.0-py2.py3-none-any.whl").write_bytes(
             b"humanfriendly"
         )
+        (
+            wheels
+            / "tensorrt_cu12_bindings-10.9.0.34-cp312-none-manylinux_2_28_x86_64.whl"
+        ).write_bytes(b"tensorrt-bindings")
 
     @staticmethod
     def _trained_transformer(root: Path) -> Path:
@@ -436,6 +440,50 @@ class SubmissionArchiveTests(unittest.TestCase):
         self.assertIn("models/transformer/onnx/classifier.onnx", names)
         self.assertNotIn("models/transformer/model.safetensors", names)
         self.assertTrue(
+            any(name.startswith("vendor_wheels/onnxruntime_gpu-") for name in names)
+        )
+
+    def test_native_tensorrt_packages_bindings_and_onnx_without_weights(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._project(root)
+            transformer = self._trained_transformer(root)
+            onnx_directory = transformer / "onnx"
+            onnx_directory.mkdir()
+            (onnx_directory / "classifier.onnx").write_bytes(b"onnx")
+            config = replace(
+                self._with_model_artifacts(self.config, transformer=transformer),
+                inference=replace(
+                    self.config.inference,
+                    transformer=replace(
+                        self.config.inference.transformer,
+                        backend="tensorrt",
+                        tensorrt=replace(
+                            self.config.inference.transformer.tensorrt,
+                            fallback_to_onnxruntime=False,
+                        ),
+                    ),
+                ),
+                submission=replace(
+                    self.config.submission,
+                    output_path=root / "submission.zip",
+                ),
+            )
+
+            result = build_submission_archive(config, project_root=root)
+            with ZipFile(result.path) as archive:
+                names = set(archive.namelist())
+                solution = json.loads(archive.read("solution.json"))
+
+        self.assertEqual(solution["backend"], "tensorrt")
+        self.assertNotIn("models/transformer/model.safetensors", names)
+        self.assertTrue(
+            any(
+                name.startswith("vendor_wheels/tensorrt_cu12_bindings-")
+                for name in names
+            )
+        )
+        self.assertFalse(
             any(name.startswith("vendor_wheels/onnxruntime_gpu-") for name in names)
         )
 

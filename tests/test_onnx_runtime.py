@@ -9,8 +9,9 @@ import torch
 
 from match.models.transformer.onnx_runtime import (
     OnnxRuntimeTransformerExecutor,
-    TensorRTExecutionOptions,
+    OrtTensorRTProviderOptions,
 )
+from match.models.transformer.tensorrt_common import TensorRTProfile
 
 
 class _FakeSessionOptions:
@@ -25,8 +26,8 @@ class _FakeSession:
 
     def get_inputs(self):
         return [
-            SimpleNamespace(name="input_ids"),
-            SimpleNamespace(name="attention_mask"),
+            SimpleNamespace(name="input_ids", type="tensor(int64)"),
+            SimpleNamespace(name="attention_mask", type="tensor(int64)"),
         ]
 
     def get_outputs(self):
@@ -83,7 +84,8 @@ class OnnxRuntimePredictorTests(unittest.TestCase):
                 provider="cpu",
                 io_binding=False,
             )
-
+            executor.prepare(classifier=True, encoder=False)
+            executor.warmup(classifier=True, encoder=False)
             session = executor._session("classifier")
             logits = executor._run_session(
                 session,
@@ -133,17 +135,21 @@ class OnnxRuntimePredictorTests(unittest.TestCase):
                 model_config={"hidden_size": 16},
                 provider="tensorrt",
                 device_id=2,
-                tensorrt=TensorRTExecutionOptions(
+                tensorrt=OrtTensorRTProviderOptions(
                     engine_cache_path=root / "engine-cache",
                     timing_cache_path=root / "timing-cache",
-                    min_batch_size=1,
-                    opt_batch_size=1024,
-                    max_batch_size=2048,
-                    sequence_lengths=(64, 96, 128),
-                    input_names=(
-                        "input_ids",
-                        "attention_mask",
-                        "token_type_ids",
+                    profile=TensorRTProfile(
+                        min_batch_size=1,
+                        opt_batch_size=1024,
+                        max_batch_size=2048,
+                        min_sequence_length=64,
+                        opt_sequence_length=96,
+                        max_sequence_length=128,
+                        input_names=(
+                            "input_ids",
+                            "attention_mask",
+                            "token_type_ids",
+                        ),
                     ),
                     fp16_enabled=True,
                 ),

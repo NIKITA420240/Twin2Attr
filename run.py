@@ -42,6 +42,7 @@ LOGURU_VERSION = "0.7.3"
 PINT_VERSION = "0.25.3"
 ORJSON_VERSION = "3.11.9"
 ONNXRUNTIME_GPU_VERSION = "1.23.2"
+TENSORRT_VERSION = "10.9.0.34"
 
 
 def ensure_polars_available() -> None:
@@ -265,7 +266,13 @@ def ensure_onnxruntime_available(
     if not path.is_file():
         return
     solution = json.loads(path.read_text(encoding="utf-8"))
-    if solution.get("backend") != "onnxruntime":
+    backend = solution.get("backend")
+    native_fallback = bool(
+        solution.get("tensorrt", {}).get("fallback_to_onnxruntime", True)
+    )
+    if backend != "onnxruntime" and not (
+        backend == "tensorrt" and native_fallback
+    ):
         return
 
     wheels_dir = Path(__file__).resolve().parent / "vendor_wheels"
@@ -325,6 +332,56 @@ def ensure_onnxruntime_available(
             f"bundled ONNX Runtime does not expose {required_provider}; "
             f"available providers: {runtime.get_available_providers()}"
         )
+
+
+def ensure_tensorrt_available(solution_path: str | Path | None = None) -> None:
+    """Install bundled native TensorRT bindings and libraries when selected."""
+    import json
+
+    path = (
+        Path(solution_path)
+        if solution_path is not None
+        else Path(__file__).resolve().parent / "solution.json"
+    ).expanduser().resolve()
+    if not path.is_file():
+        return
+    solution = json.loads(path.read_text(encoding="utf-8"))
+    if solution.get("backend") != "tensorrt":
+        return
+    wheels_dir = Path(__file__).resolve().parent / "vendor_wheels"
+    tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
+    bindings = sorted(
+        wheels_dir.glob(f"tensorrt_cu12_bindings-*-{tag}-*-manylinux*.whl")
+    )
+    if not bindings:
+        raise RuntimeError(
+            f"TensorRT is not bundled for the evaluator's Python version ({tag})"
+        )
+    install_dir = (
+        Path(tempfile.gettempdir()) / f"twin2attr_tensorrt_{TENSORRT_VERSION}_{tag}"
+    )
+    install_dir.mkdir(parents=True, exist_ok=True)
+    if not (install_dir / "tensorrt").is_dir():
+        print(f"Installing bundled TensorRT into {install_dir}")
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--no-index",
+                "--no-deps",
+                "--upgrade",
+                "--target",
+                str(install_dir),
+                str(bindings[-1]),
+            ],
+            check=True,
+        )
+    sys.path.insert(0, str(install_dir))
+    importlib.invalidate_caches()
+    importlib.import_module("tensorrt")
 
 
 def _with_default_command(arguments: Sequence[str]) -> list[str]:
@@ -445,6 +502,7 @@ def run_predict(args: argparse.Namespace) -> None:
     ensure_preprocessing_runtime_available(solution_path)
     ensure_catboost_available(solution_path)
     ensure_onnxruntime_available(solution_path)
+    ensure_tensorrt_available(solution_path)
 
     from match.submission import create_submission
 
