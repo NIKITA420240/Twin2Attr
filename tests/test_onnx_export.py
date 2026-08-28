@@ -2,6 +2,7 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import ANY, patch
 
 import numpy as np
 from transformers import (
@@ -10,7 +11,10 @@ from transformers import (
     BertTokenizerFast,
 )
 
-from match.models.transformer.onnx_export import export_transformer_to_onnx
+from match.models.transformer.onnx_export import (
+    _convert_to_float16,
+    export_transformer_to_onnx,
+)
 from match.models.transformer.onnx_runtime import (
     OnnxRuntimeTransformerExecutor,
 )
@@ -30,6 +34,45 @@ _ONNX_AVAILABLE = all(
 
 @unittest.skipUnless(_ONNX_AVAILABLE, "optional ONNX dependencies are not installed")
 class OnnxExportIntegrationTests(unittest.TestCase):
+    def test_float16_conversion_uses_path_shape_inference(self) -> None:
+        import onnx
+        from onnx import helper
+        from onnxconverter_common import float16
+
+        source_model = helper.make_model(helper.make_graph([], "empty", [], []))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.onnx"
+            destination = root / "destination.onnx"
+            onnx.save(source_model, str(source))
+            with (
+                patch.object(
+                    float16,
+                    "convert_float_to_float16_model_path",
+                    side_effect=AssertionError("Windows-unsafe path helper used"),
+                ),
+                patch.object(
+                    onnx.shape_inference,
+                    "infer_shapes_path",
+                    wraps=onnx.shape_inference.infer_shapes_path,
+                ) as infer_path,
+                patch.object(
+                    float16,
+                    "convert_float_to_float16",
+                    wraps=float16.convert_float_to_float16,
+                ) as convert,
+            ):
+                _convert_to_float16(source, destination)
+
+            onnx.checker.check_model(onnx.load(str(destination)))
+
+        infer_path.assert_called_once()
+        convert.assert_called_once_with(
+            ANY,
+            keep_io_types=True,
+            disable_shape_infer=True,
+        )
+
     def test_exported_graphs_match_pytorch_end_to_end(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
