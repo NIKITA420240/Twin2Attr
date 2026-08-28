@@ -22,5 +22,5 @@ llm_evaluation:
   request_batch_size: 64
   max_concurrency: 64
   # Меняйте версию при изменении prompt, чтобы не переиспользовать старые ответы.
-  prompt_version: v1
+  prompt_version: v2
   output_parts_dir: data/human_llm_evaluation_parts
