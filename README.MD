@@ -256,6 +256,9 @@ replacement, поэтому один seed воспроизводит те же �
 записываются `llm_negative_rows`, `llm_positive_rows` и колонки
 `llm_vote_0_rows` … `llm_vote_9_rows`; это позволяет проверить фактический
 состав каждого обучающего датасета.
+Для быстрого первичного отбора все три варианта обучают локальный
+`weights/rubert-tiny2`. Выбранную стратегию следует затем подтвердить на целевом
+Transformer; inference backend-бенчмарки продолжают использовать L12 checkpoint.
 
 Inference-конфиг поддерживает безопасные ограничения `max_length`,
 `max_attribute_value_chars` и `max_attribute_value_tokens`. Они могут только

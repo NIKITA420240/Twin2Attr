@@ -50,6 +50,10 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
             self.assertEqual(llm.max_rows, 750_000)
             self.assertEqual(llm.splitter.negative_threshold, 2)
             self.assertEqual(llm.splitter.positive_threshold, 7)
+            self.assertEqual(
+                configured.model_description.transformer.pretrained_model_path,
+                "weights/rubert-tiny2",
+            )
             strategies[key] = llm.sampling_strategy
 
         self.assertEqual(suite.reference_test, "random")
