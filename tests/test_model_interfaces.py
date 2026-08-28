@@ -125,6 +125,19 @@ class ModelInterfaceTests(unittest.TestCase):
         self.assertIsInstance(predictor, MatchPredictor)
         self.assertEqual(predictor.output_dim, 16)
 
+    def test_transformer_accepts_safe_runtime_length_override(self) -> None:
+        predictor = TransformerPredictor(
+            object(),
+            _FakeExecutor(),
+            max_length=16,
+            max_attribute_value_chars=64,
+            max_attribute_value_tokens=8,
+        )
+
+        self.assertEqual(predictor._resolved_max_length([object()], None), 16)
+        with self.assertRaisesRegex(ValueError, "exceeds trained model"):
+            predictor._resolved_max_length([object()], 64)
+
     def test_maxpooling_supports_encoding_and_prediction(self) -> None:
         predictor = MaxPoolingPredictor(
             SimpleNamespace(vector_size=4),

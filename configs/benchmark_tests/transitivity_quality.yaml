@@ -1,0 +1,51 @@
+# This is a training ablation, not an inference benchmark: changing sample
+# weights can affect quality only after fitting a new model.
+test_type: training_quality
+reference_test: transitivity_off
+
+# Start with one paired seed. For the final decision use at least three seeds,
+# for example [42, 43, 44], because fine-tuning variance can hide a small gain.
+seeds:
+  - 42
+
+tests:
+  transitivity_off:
+    name: constant_llm_weights
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.data_model
+        value: mix_dataset
+      - path: data_model_description.mix_dataset.sources.llm.weight_model.type
+        value: transitivity
+      - path: data_model_description.mix_dataset.sources.llm.weight_model.enabled
+        value: false
+      - path: model_description.transformer.hpo_trials
+        value: 1
+      # Export is irrelevant to training quality and only adds work afterward.
+      - path: model_description.transformer.export.onnx.enabled
+        value: false
+
+  transitivity_on:
+    name: transitivity_weighted_llm
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.data_model
+        value: mix_dataset
+      - path: data_model_description.mix_dataset.sources.llm.weight_model.type
+        value: transitivity
+      - path: data_model_description.mix_dataset.sources.llm.weight_model.enabled
+        value: true
+      - path: data_model_description.mix_dataset.sources.llm.weight_model.penalty_strength
+        value: 1.0
+      - path: data_model_description.mix_dataset.sources.llm.weight_model.min_weight_multiplier
+        value: 0.25
+      - path: data_model_description.mix_dataset.sources.llm.weight_model.min_comparable_neighbors
+        value: 2
+      - path: data_model_description.mix_dataset.sources.llm.weight_model.confidence_weighted_violations
+        value: true
+      - path: model_description.transformer.hpo_trials
+        value: 1
+      - path: model_description.transformer.export.onnx.enabled
+        value: false

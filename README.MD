@@ -155,7 +155,84 @@ uv run python run.py inspect
 
 # Посчитать важность атрибутов по attention pooling обученного Transformer
 uv run python run.py analyze
+
+# Запустить все benchmark-задачи, включённые в configs/benchmark.yaml
+uv run python run.py benchmark
 ```
+
+`configs/benchmark.yaml` — небольшая управляющая конфигурация benchmark-запуска.
+Все параметры данных, модели, обучения, preprocessing и inference вынесены в
+`configs/benchmark_pipeline.yaml`; поле `base_config_path` указывает, откуда их
+загрузить. Блок `benchmark.jobs` определяет, какие наборы запускать. У каждой задачи есть
+`enabled`, `type`, `tests_path` и необязательный `selected_tests`. Поэтому для
+обычного запуска не нужно передавать пути в CLI: достаточно изменить YAML и
+выполнить `uv run python run.py benchmark`.
+
+```yaml
+benchmark:
+  base_config_path: configs/benchmark_pipeline.yaml
+  output_dir: analysis/benchmark
+  fail_fast: false
+  jobs:
+    backends:
+      type: inference
+      enabled: true
+      tests_path: configs/benchmark_tests/backends.yaml
+      selected_tests: null
+
+    transitivity_quality:
+      type: training_quality
+      enabled: false
+      tests_path: configs/benchmark_tests/transitivity_quality.yaml
+      selected_tests: null
+```
+
+Каждый запуск создаёт общий timestamp-каталог, сохраняет разрешённый конфиг,
+отдельный каталог каждой задачи и сводный `report.json`. При `fail_fast: false`
+ошибка одного backend-а не мешает выполнить остальные независимые задачи.
+Тяжёлый `transitivity_quality` по умолчанию выключен, поскольку он заново
+обучает две модели даже для одного seed.
+
+Наборы benchmark-тестов разделены по назначению:
+
+```text
+configs/benchmark_tests/backends.yaml              # четыре backend-а
+configs/benchmark_tests/speed_optimizations.yaml   # технические ускорения
+configs/benchmark_tests/quality_optimizations.yaml # сокращение входа/precision
+configs/benchmark_tests/transitivity_quality.yaml  # влияние весов на обучение
+```
+
+Inference benchmark использует один и тот же checkpoint
+`weights/cross-encoder-ms-marco-l12-v3`. Fallback между backend-ами отключается,
+чтобы тест ONNX или TensorRT не измерил PyTorch незаметно. Speed-suite требует
+эквивалентности reference-предсказаниям: максимальная
+разница вероятностей не больше `1e-3` и ни один класс при пороге `0.5` не должен
+измениться. Quality-suite считает `PR-AUC`, `ROC-AUC`, accuracy, precision,
+recall и F1 вместе с дельтами относительно своего reference-теста.
+
+Влияние транзитивности проверяется отдельным training-quality benchmark. Он
+заново обучает `transitivity_off` и `transitivity_on` с одинаковыми seed,
+split, моделью и гиперпараметрами; затем сравнивает
+`validation_macro_pr_auc`. Хэш validation-пар проверяется автоматически, а
+результаты, агрегаты и обе версии модели сохраняются в timestamp-каталоге:
+
+Для его запуска достаточно установить
+`benchmark.jobs.transitivity_quality.enabled: true` в `benchmark.yaml` и снова
+выполнить общую команду benchmark.
+
+Первый smoke-test настроен на seed `42`. Для окончательного решения следует
+указать в YAML как минимум три seed, например `[42, 43, 44]`, и смотреть на
+среднюю парную дельту, а не только на один удачный запуск. В отчёт также входят
+доля LLM-пар с уменьшенным весом и средний множитель веса — это показывает,
+насколько активно транзитивность действительно воздействовала на обучение.
+`results.parquet` содержит `training_seconds` каждого запуска,
+`aggregates.parquet` — `total_training_seconds` по каждому варианту, а
+`report.json` — `total_elapsed_seconds` всего теста транзитивности.
+
+Inference-конфиг поддерживает безопасные ограничения `max_length`,
+`max_attribute_value_chars` и `max_attribute_value_tokens`. Они могут только
+сократить вход относительно лимитов обученного checkpoint; попытка увеличить
+`max_length` выше лимита модели завершается ошибкой.
 
 Режим `analyze` не обучает и не изменяет модель. Он загружает Transformer из
 `model_description.transformer.artifact_dir`, один раз инференсит выборку и

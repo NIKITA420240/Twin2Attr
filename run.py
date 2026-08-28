@@ -32,8 +32,9 @@ SOURCE_ROOT = Path(__file__).resolve().parent / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-COMMANDS = {"train", "predict", "inspect", "initialize", "analyze"}
+COMMANDS = {"train", "predict", "inspect", "initialize", "analyze", "benchmark"}
 DEFAULT_CONFIG = "configs/pipeline.yaml"
+DEFAULT_BENCHMARK_CONFIG = "configs/benchmark.yaml"
 POLARS_VERSION = "1.43.2"
 CATBOOST_VERSION = "1.2.10"
 PYMORPHY3_VERSION = "2.0.6"
@@ -392,11 +393,16 @@ def _with_default_command(arguments: Sequence[str]) -> list[str]:
     return ["predict", *values]
 
 
-def _add_config_arguments(parser: argparse.ArgumentParser) -> None:
+def _add_config_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    default_config: str = DEFAULT_CONFIG,
+    config_help: str = "Path to the base YAML configuration file",
+) -> None:
     parser.add_argument(
         "--config",
-        default=DEFAULT_CONFIG,
-        help="Path to the base YAML configuration file",
+        default=default_config,
+        help=config_help,
     )
     parser.add_argument(
         "overrides",
@@ -432,6 +438,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Calculate configured offline model statistics",
     )
     _add_config_arguments(analyze)
+
+    benchmark = commands.add_parser(
+        "benchmark",
+        help="Run a reproducible benchmark suite",
+    )
+    _add_config_arguments(
+        benchmark,
+        default_config=DEFAULT_BENCHMARK_CONFIG,
+        config_help="Path to the benchmark orchestration YAML file",
+    )
 
     predict = commands.add_parser("predict", help="Create evaluator-compatible CSV")
     predict.add_argument(
@@ -572,10 +588,25 @@ def run_analyze(args: argparse.Namespace) -> None:
 
     config = _load_workflow_config(args.config, args.overrides)
     result = analyze(config)
-    print(
-        f"Attribute importance saved to {result.output_path}; "
-        f"sample_rows={result.sample_rows}, attribute_rows={result.attribute_rows}"
-    )
+    summary = getattr(result, "summary", None)
+    if callable(summary):
+        print(summary())
+    else:
+        print(
+            f"Attribute importance saved to {result.output_path}; "
+            f"sample_rows={result.sample_rows}, attribute_rows={result.attribute_rows}"
+        )
+
+
+def run_benchmark(args: argparse.Namespace) -> None:
+    """Run every benchmark job enabled in the benchmark config."""
+    ensure_polars_available()
+    from match.benchmarks.runner import run_configured_benchmarks
+    from match.config import load_benchmark_config_file
+
+    config = load_benchmark_config_file(args.config, args.overrides)
+    result = run_configured_benchmarks(config)
+    print(result.summary())
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -599,6 +630,10 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if args.command == "analyze":
         run_analyze(args)
+        return
+
+    if args.command == "benchmark":
+        run_benchmark(args)
         return
 
     raise ValueError(f"Unsupported command: {args.command!r}")

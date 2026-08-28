@@ -139,6 +139,13 @@ class UnifiedCliTests(unittest.TestCase):
             ],
         )
 
+    def test_parses_training_quality_benchmark(self) -> None:
+        args = parse_args(["benchmark"])
+
+        self.assertEqual(args.command, "benchmark")
+        self.assertEqual(args.config, "configs/benchmark.yaml")
+        self.assertEqual(args.overrides, [])
+
     def test_bootstraps_bundled_polars_when_image_does_not_have_it(self) -> None:
         missing = ModuleNotFoundError("No module named 'polars'", name="polars")
         with (

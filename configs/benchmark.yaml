@@ -1,0 +1,33 @@
+# One command runs every enabled job below:
+#   uv run python run.py benchmark
+benchmark:
+  # Full model, data, preprocessing, training and inference configuration.
+  base_config_path: configs/benchmark_pipeline.yaml
+  output_dir: analysis/benchmark
+  fail_fast: false
+
+  jobs:
+    backends:
+      type: inference
+      enabled: true
+      tests_path: configs/benchmark_tests/backends.yaml
+      selected_tests: null
+
+    speed_optimizations:
+      type: inference
+      enabled: true
+      tests_path: configs/benchmark_tests/speed_optimizations.yaml
+      selected_tests: null
+
+    inference_quality:
+      type: inference
+      enabled: true
+      tests_path: configs/benchmark_tests/quality_optimizations.yaml
+      selected_tests: null
+
+    # Retrains two Transformer models even with one seed.
+    transitivity_quality:
+      type: training_quality
+      enabled: true
+      tests_path: configs/benchmark_tests/transitivity_quality.yaml
+      selected_tests: null

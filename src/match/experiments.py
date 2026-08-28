@@ -182,6 +182,52 @@ def _training_data_label(config: AppConfig) -> str:
     )
 
 
+def _sample_weighting_summary(matches: pl.DataFrame) -> dict[str, Any]:
+    """Summarize how source and graph weights changed the training loss."""
+    if "sample_weight" not in matches.columns:
+        return {}
+    sources = (
+        matches.get_column("data_source").unique().sort().to_list()
+        if "data_source" in matches.columns
+        else ["all"]
+    )
+    result: dict[str, Any] = {}
+    for source in sources:
+        selected = (
+            matches
+            if source == "all"
+            else matches.filter(pl.col("data_source") == source)
+        )
+        summary: dict[str, Any] = {
+            "rows": selected.height,
+            "mean_sample_weight": float(
+                selected.get_column("sample_weight").mean()
+            ),
+        }
+        if "weight_multiplier" in selected.columns:
+            multipliers = selected.get_column("weight_multiplier").drop_nulls()
+            if len(multipliers):
+                summary.update(
+                    {
+                        "mean_weight_multiplier": float(multipliers.mean()),
+                        "min_weight_multiplier": float(multipliers.min()),
+                        "downweighted_fraction": float(
+                            (multipliers < 1.0).mean()
+                        ),
+                    }
+                )
+        if "transitivity_violations" in selected.columns:
+            violations = selected.get_column(
+                "transitivity_violations"
+            ).drop_nulls()
+            if len(violations):
+                summary["violating_fraction"] = float(
+                    (violations > 0).mean()
+                )
+        result[str(source)] = summary
+    return result
+
+
 def save_experiment_record(
     config: AppConfig,
     artifacts: TrainingArtifacts,
@@ -266,6 +312,7 @@ def save_experiment_record(
             "validation_rows": splits.validation_matches.height,
             "validation_pairs_hash": split_hash,
         },
+        "sample_weighting": _sample_weighting_summary(splits.train_matches),
     }
     record_path = experiment_dir / "experiment.json"
     record_path.write_text(

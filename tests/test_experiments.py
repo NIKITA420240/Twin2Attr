@@ -100,7 +100,12 @@ class ExperimentTrackingTests(unittest.TestCase):
             splits = SimpleNamespace(
                 items=pl.DataFrame({"id": [1, 2, 3, 4]}),
                 train_matches=pl.DataFrame(
-                    {"id1": [1], "id2": [2], "target": [1]}
+                    {
+                        "id1": [1],
+                        "id2": [2],
+                        "target": [1],
+                        "sample_weight": [1.0],
+                    }
                 ),
                 validation_matches=pl.DataFrame(
                     {"id1": [3], "id2": [4], "target": [0]}
@@ -128,6 +133,7 @@ class ExperimentTrackingTests(unittest.TestCase):
             self.assertEqual(record["train_data"], "Human")
             self.assertEqual(record["split"]["train_rows"], 1)
             self.assertTrue(record["split"]["validation_pairs_hash"])
+            self.assertEqual(record["sample_weighting"]["all"]["rows"], 1)
             with saved_registry.open(encoding="utf-8", newline="") as source:
                 rows = list(csv.DictReader(source))
             self.assertEqual(len(rows), 1)

@@ -1,0 +1,355 @@
+# transformer | maxpooling | fusion | boosting | stacking
+training:
+  model: stacking
+  data_model: base_dataset
+  augmentation_model: attribute_word_dropout
+  data_postprocessing_model: null
+  resolved_config_path: models/twin2attr/pipeline_config.yaml
+  solution_path: solution.json
+
+data_model_description:
+  base_dataset:
+    items: data/items_human.parquet
+    matches: data/matches.parquet
+    validation_fraction: 0.2
+    stacking_train_fraction: 0.15
+    leakage_scope: pair
+    candidate_splits: 128
+    seed: ${runtime.seed}
+
+  mix_dataset:
+    items: data/items.parquet
+    validation_source: human
+    validation_fraction: 0.2
+    leakage_scope: pair
+    candidate_splits: 128
+    seed: ${runtime.seed}
+
+    sources:
+      human:
+        matches: data/matches.parquet
+        weight: 3.0
+        max_rows: null
+        sampling_strategy: random
+        weight_model:
+          type: constant
+          enabled: false
+        splitter:
+          splitter_type: binary
+          score_type: label
+
+      llm:
+        matches: data/matches_llm.parquet
+        weight: 1.0
+        max_rows: 750000
+        sampling_strategy: category_target_balanced
+        # Penalize graph-local contradictions such as A=B, B=C, A!=C.
+        weight_model:
+          type: transitivity
+          enabled: true
+          penalty_strength: 1.0
+          min_weight_multiplier: 0.25
+          min_comparable_neighbors: 2
+          confidence_weighted_violations: true
+        splitter:
+          splitter_type: binary
+          score_type: votes
+          total_votes: 9
+          negative_threshold: 2
+          positive_threshold: 7
+          uncertain_action: drop
+
+# transformer | maxpooling | fusion | boosting | cascade | stacking
+inference:
+  model: transformer
+  augmentation_model: null
+  data_postprocessing_model: null
+  solution_path: configs/backend_benchmark_solution.json
+  transformer:
+    # Keep PyTorch as the default until the exported ONNX graphs pass the
+    # accuracy and end-to-end H100 benchmark gates.
+    backend: pytorch
+    batch_size: 512
+    dtype: float16
+    max_length: 256
+    max_attribute_value_chars: 256
+    max_attribute_value_tokens: 16
+    # Prepare and prefetch batches in parallel while the GPU runs the model.
+    num_workers: 8
+    prefetch_factor: 2
+    pin_memory: true
+    non_blocking_transfer: true
+    # Group similarly sized pairs and limit the tensor shapes seen by the GPU.
+    length_bucketing:
+      enabled: false
+      padding_length_buckets:
+        - 64
+        - 96
+        - 128
+        - 160
+        - 192
+        - 224
+        - 256
+    torch_compile:
+      enabled: false
+      mode: reduce-overhead
+      dynamic: true
+    onnxruntime:
+      provider: cuda
+      device_id: 0
+      io_binding: true
+      graph_optimization: all
+      fallback_to_pytorch: true
+      tensorrt:
+        engine_cache:
+          enabled: true
+          path: onnx/trt_cache
+        timing_cache:
+          enabled: true
+        profiles:
+          min_batch_size: 1
+          opt_batch_size: 512
+          max_batch_size: 512
+          sequence_lengths:
+            - 1
+            - 128
+            - 256
+    # Native TensorRT backend. The engine is built from ONNX on the target GPU
+    # and reused from this fingerprinted cache on subsequent evaluator stages.
+    tensorrt:
+      device_id: 0
+      workspace_size_gb: 8
+      builder_optimization_level: 3
+      fallback_to_onnxruntime: true
+      engine_cache:
+        enabled: true
+        path: onnx/native_trt_cache
+      timing_cache:
+        enabled: true
+        path: onnx/native_trt_cache/timing.cache
+      profiles:
+        min_batch_size: 1
+        opt_batch_size: 512
+        max_batch_size: 512
+        sequence_lengths:
+          - 1
+          - 128
+          - 256
+
+analysis:
+  analysis_model: backend_benchmark
+  data_model: base_dataset
+  augmentation_model: null
+  data_postprocessing_model: null
+
+augmentation_models:
+  attribute_shuffle:
+    shuffled_copies: 1
+    keep_original: false
+    seed: ${runtime.seed}
+    shuffle_cards_independently: true
+    skip_oversized: true
+
+  attribute_word_dropout:
+    pair_probability: 0.5
+    attribute_dropout_probability: 0.15
+    word_dropout_probability: 0.03
+    keyboard_typo_probability: 0.01
+    word_shuffle_probability: 0.0
+    seed: ${runtime.seed}
+
+data_postprocessing_models:
+  attribute_sort:
+    priorities_path: ${analysis_models.attribute_importance.output_dir}/${analysis_models.attribute_importance.output_file}
+
+analysis_models:
+  backend_benchmark:
+    sample_size: 100000
+    warmup_batches: 10
+    measured_runs: 3
+    tests_path: configs/benchmark_tests/backends.yaml
+    # null runs every test from tests_path.
+    selected_tests: null
+    reference_test: test_1
+    compare_predictions: true
+    output_dir: analysis/backend_benchmark
+
+  attribute_importance:
+    model: transformer
+    output_dir: analysis/attribute_importance
+    # null analyzes the complete selected dataset.
+    sample_size: null
+    group_by_category: true
+    min_occurrences: 30
+    score_type: normalized_mean_attention
+    output_file: attribute_importance.parquet
+    metadata_file: attribute_importance_metadata.json
+
+model_description:
+  transformer:
+    pretrained_model_path: weights/cross-encoder-ms-marco-l12-v3
+    artifact_dir: weights/cross-encoder-ms-marco-l12-v3
+    tokenizer:
+      batch_fields:
+        enabled: true
+        chunk_size: 16384
+    export:
+      onnx:
+        enabled: true
+        opset: 18
+        precision: float16
+        dynamic_batch: true
+        dynamic_sequence_length: true
+        export_classifier: true
+        export_encoder: true
+    pair_encoding:
+      use_field_tokens: true
+      # null disables the pre-tokenization character hard cap.
+      max_attribute_value_chars: 256
+      # null disables per-attribute value truncation.
+      max_attribute_value_tokens: 16
+      # null lets the training data determine the limit.
+      max_length: 256
+      quantile: 0.95
+      sample_size: 10000
+      hard_cap: 512
+    max_epochs: 15
+    hpo_trials: 1
+    # Used directly when hpo_trials=1; otherwise these are initial values.
+    # Base LR for Transformer encoder layers and the value tuned by HPO.
+    learning_rate: 3.0e-5
+    # Only the newly added [KEY]/[VAL] rows use this embedding LR.
+    embeddings_learning_rate: 1.0e-6
+    train_new_token_embeddings_only: false
+    # Freeze the rest of the backbone and fine-tune only its three highest layers.
+    train_last_n_layers: Null
+    head_learning_rate: 1.0e-4
+    layerwise_lr_decay: 0.9
+    weight_decay: 0.01
+    hpo_learning_rate_min: 0.000001
+    hpo_learning_rate_max: 0.00005
+    hpo_weight_decay_min: 0.0
+    hpo_weight_decay_max: 0.1
+    train_batch_size: 64
+    eval_batch_size: 64
+    gradient_accumulation_steps: 4
+    warmup_ratio: 0.06
+    # Supported values: linear, cosine.
+    lr_scheduler_type: cosine
+    max_grad_norm: 1.0
+    early_stopping_patience: 2
+    auto_find_batch_size: true
+    head:
+      # default keeps the Hugging Face CLS head; pooling builds the branches below.
+      type: pooling
+      # Supported values: cls, mean, max, attention. Their outputs are concatenated.
+      poolings: [cls, attention]
+      # Empty list gives a single linear classifier after pooling.
+      mlp_hidden_dims: [384]
+      dropout: 0.15
+      attention_hidden_dim: 192
+      # Independent learned token-importance distributions, concatenated before MLP.
+      attention_num_heads: 1
+
+  maxpooling:
+    artifact_path: models/twin2attr/maxpooling.joblib
+    vector_size: 256
+    window: 5
+    min_count: 2
+    workers: 8
+    fasttext_epochs: 10
+    classifier_epochs: 50
+    batch_size: 512
+    patience: 7
+    dropout: 0.2
+    learning_rate: 0.001
+    weight_decay: 0.0001
+
+  fusion:
+    artifact_path: models/twin2attr/fusion.pt
+    # Batch size used to extract frozen Transformer CLS embeddings.
+    embedding_batch_size: 64
+    hidden_dim: 256
+    dropout: 0.2
+    batch_size: 512
+    max_epochs: 30
+    patience: 5
+    learning_rate: 0.001
+    weight_decay: 0.0001
+
+  boosting:
+    artifact_dir: models/twin2attr/boosting
+    iterations: 500
+    depth: 8
+    learning_rate: 0.05
+    loss_function: Logloss
+    early_stopping_rounds: 50
+    # -1 lets CatBoost use all available CPU cores.
+    thread_count: -1
+
+  cascade:
+    fast_model: boosting
+    main_model: transformer
+    negative_threshold: 0.01
+    positive_threshold: 0.99
+
+  stacking:
+    artifact_dir: models/twin2attr/stacking/boosting
+    base_model: transformer
+    stacking_model: boosting
+
+features:
+  # Every stage must occur exactly once; enabled controls whether it runs.
+  execution_order:
+    - normalization
+    - ner
+    - physical
+
+  normalization:
+    enabled: true
+    output_column: normalized_attributes
+    synonyms_path: data/synonyms.parquet
+    unique_attributes_path: data/unique_attributes.parquet
+    n_jobs: 8
+    chunk_size: 5000
+  ner:
+    enabled: false
+    provider: word_ner
+    model_dir: models/ner/rubert_tiny2_word_ner
+    cluster_centers_path: models/ner/cluster_centers.pt
+    source_column: name
+    output_column: ner_attributes
+    enriched_column: enriched_attributes
+    merge_policy: missing_only
+    batch_size: 512
+    max_length: 100
+    use_amp: true
+    semantic_cleanup: true
+  physical:
+    enabled: false
+    source_column: name
+    output_column: physical_attributes
+    enriched_column: feature_attributes
+    merge_policy: missing_only
+    normalize_units: true
+    n_jobs: 1
+    chunk_size: 10000
+
+runtime:
+  device: null
+  seed: 42
+
+logging:
+  level: INFO
+  file: logs/pipeline.log
+  rotation: 100 MB
+
+submission:
+  output_path: dist/twin2attr_submission.zip
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: .
+  output_subdir: null

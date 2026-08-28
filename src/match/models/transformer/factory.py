@@ -65,8 +65,15 @@ def _batching_options(solution: Mapping[str, Any]) -> dict[str, Any]:
     batch_fields = tokenizer.get("batch_fields", {})
     if not isinstance(batch_fields, Mapping):
         raise ValueError("solution field 'tokenizer.batch_fields' must be an object")
+    pair_encoding = solution.get("pair_encoding", {})
+    if not isinstance(pair_encoding, Mapping):
+        raise ValueError("solution field 'pair_encoding' must be an object")
     length_bucketing, padding_length_buckets = _length_bucketing_options(solution)
-    return {
+    def optional_int(name: str) -> int | None:
+        value = pair_encoding.get(name)
+        return None if value is None else int(value)
+
+    options = {
         "batch_size": int(solution.get("batch_size", 64)),
         "num_workers": int(solution.get("num_workers", 0)),
         "prefetch_factor": int(solution.get("prefetch_factor", 2)),
@@ -77,6 +84,15 @@ def _batching_options(solution: Mapping[str, Any]) -> dict[str, Any]:
         "batch_fields": bool(batch_fields.get("enabled", False)),
         "field_chunk_size": int(batch_fields.get("chunk_size", 16_384)),
     }
+    for name in (
+        "max_length",
+        "max_attribute_value_chars",
+        "max_attribute_value_tokens",
+    ):
+        value = optional_int(name)
+        if value is not None:
+            options[name] = value
+    return options
 
 
 def _artifact_path(model_directory: Path, value: Any) -> Path | None:

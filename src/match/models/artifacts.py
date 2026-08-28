@@ -101,6 +101,15 @@ def build_solution_manifest(
         solution["backend"] = config.inference.transformer.backend
         solution["batch_size"] = config.inference.transformer.batch_size
         solution["dtype"] = config.inference.transformer.dtype
+        solution["pair_encoding"] = {
+            "max_length": config.inference.transformer.max_length,
+            "max_attribute_value_chars": (
+                config.inference.transformer.max_attribute_value_chars
+            ),
+            "max_attribute_value_tokens": (
+                config.inference.transformer.max_attribute_value_tokens
+            ),
+        }
         solution["num_workers"] = config.inference.transformer.num_workers
         solution["prefetch_factor"] = (
             config.inference.transformer.prefetch_factor
