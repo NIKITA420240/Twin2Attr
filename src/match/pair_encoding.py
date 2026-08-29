@@ -660,6 +660,11 @@ class PairEncodingCollator:
                 )
         if use_field_tokens:
             _require_pair_special_tokens(tokenizer)
+        # Pair encodings are assembled manually so that card and attribute
+        # budgets are preserved. Calling tokenizer.pad() afterwards is therefore
+        # intentional, despite the generic fast-tokenizer performance advice.
+        if getattr(tokenizer, "is_fast", False):
+            tokenizer.deprecation_warnings["Asking-to-pad-a-fast-tokenizer"] = True
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.use_field_tokens = use_field_tokens

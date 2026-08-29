@@ -225,6 +225,22 @@ class SequenceClassifierModelTests(unittest.TestCase):
         self.assertEqual(tokenizer.last_padding, "max_length")
         self.assertEqual(tokenizer.last_max_length, expected_length)
 
+    def test_collator_suppresses_irrelevant_fast_tokenizer_padding_advice(self) -> None:
+        tokenizer = TransformersV5BertTokenizer()
+        tokenizer.is_fast = True
+        tokenizer.deprecation_warnings = {}
+
+        PairEncodingCollator(
+            tokenizer,
+            32,
+            use_field_tokens=False,
+            include_labels=False,
+        )
+
+        self.assertTrue(
+            tokenizer.deprecation_warnings["Asking-to-pad-a-fast-tokenizer"]
+        )
+
     def test_batched_field_tokenization_matches_scalar_encoding(self) -> None:
         tokenizer = TransformersV5BertTokenizer()
         pairs = [
