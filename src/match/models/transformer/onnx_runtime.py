@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,25 @@ def _require_onnxruntime() -> Any:
             "install the project with the 'onnx-cpu' or 'onnx-gpu' extra"
         ) from error
     return ort
+
+
+def _preload_gpu_dependencies(ort: Any, provider: str) -> None:
+    """Load the CUDA 12/cuDNN and TensorRT libraries before creating a session."""
+    if provider == "cpu":
+        return
+    preload_dlls = getattr(ort, "preload_dlls", None)
+    if not callable(preload_dlls):
+        raise OnnxRuntimeUnavailableError(
+            "GPU inference requires onnxruntime-gpu>=1.21 with preload_dlls"
+        )
+    try:
+        preload_dlls(directory="")
+        if provider == "tensorrt":
+            importlib.import_module("tensorrt")
+    except (ImportError, OSError, RuntimeError) as error:
+        raise OnnxRuntimeUnavailableError(
+            f"failed to preload {provider} runtime libraries: {error}"
+        ) from error
 
 
 def _graph_optimization_level(ort: Any, value: str) -> Any:
@@ -102,6 +122,7 @@ class OnnxRuntimeTransformerExecutor:
             raise ValueError("unsupported ONNX graph optimization level")
 
         self._ort = _require_onnxruntime()
+        _preload_gpu_dependencies(self._ort, self.provider)
         requested = {
             "cpu": "CPUExecutionProvider",
             "cuda": "CUDAExecutionProvider",

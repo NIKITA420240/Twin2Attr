@@ -10,6 +10,7 @@ import torch
 from match.models.transformer.onnx_runtime import (
     OnnxRuntimeTransformerExecutor,
     OrtTensorRTProviderOptions,
+    _preload_gpu_dependencies,
 )
 from match.models.transformer.tensorrt_common import TensorRTProfile
 
@@ -65,6 +66,16 @@ class _FakeTensorRtOrt(_FakeOrt):
 
 
 class OnnxRuntimePredictorTests(unittest.TestCase):
+    def test_preloads_cuda_and_tensorrt_dependencies(self) -> None:
+        ort = SimpleNamespace(preload_dlls=unittest.mock.Mock())
+        with patch(
+            "match.models.transformer.onnx_runtime.importlib.import_module"
+        ) as import_module:
+            _preload_gpu_dependencies(ort, "tensorrt")
+
+        ort.preload_dlls.assert_called_once_with(directory="")
+        import_module.assert_called_once_with("tensorrt")
+
     def test_cpu_session_runs_torch_batches_without_pytorch_model(self) -> None:
         with (
             tempfile.TemporaryDirectory() as directory,
@@ -127,6 +138,9 @@ class OnnxRuntimePredictorTests(unittest.TestCase):
             patch(
                 "match.models.transformer.onnx_runtime.torch.cuda.current_stream",
                 return_value=SimpleNamespace(cuda_stream=123),
+            ),
+            patch(
+                "match.models.transformer.onnx_runtime._preload_gpu_dependencies"
             ),
         ):
             root = Path(directory)
@@ -194,6 +208,9 @@ class OnnxRuntimePredictorTests(unittest.TestCase):
             patch(
                 "match.models.transformer.onnx_runtime.torch.cuda.current_stream",
                 return_value=SimpleNamespace(cuda_stream=123),
+            ),
+            patch(
+                "match.models.transformer.onnx_runtime._preload_gpu_dependencies"
             ),
         ):
             root = Path(directory)
