@@ -288,7 +288,7 @@ Confidence weighting и транзитивные веса отключены, а
 на фиксированном наборе ID.
 
 Исходный файл должен находиться в
-`data/matches_llm_neural_review.parquet`. Запустить только этот benchmark:
+`data/llm_annotations/annotations.parquet`. Запустить только этот benchmark:
 
 ```bash
 uv run python run.py benchmark \
