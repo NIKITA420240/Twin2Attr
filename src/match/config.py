@@ -35,8 +35,10 @@ class DatasetSplitterSettings:
     def __post_init__(self) -> None:
         if self.splitter_type != "binary":
             raise ValueError("splitter_type currently must be 'binary'")
-        if self.score_type not in {"label", "votes"}:
-            raise ValueError("score_type must be one of: label, votes")
+        if self.score_type not in {"label", "votes", "probability"}:
+            raise ValueError(
+                "score_type must be one of: label, votes, probability"
+            )
         if self.target_mode not in {"hard", "soft"}:
             raise ValueError("target_mode must be one of: hard, soft")
         if self.score_type == "label" and self.target_mode != "hard":
@@ -58,6 +60,21 @@ class DatasetSplitterSettings:
                 raise ValueError(
                     "vote thresholds must satisfy 0 <= negative < positive "
                     "<= total_votes"
+                )
+        elif self.score_type == "probability":
+            if self.total_votes is not None:
+                raise ValueError(
+                    "probability splitter must not define total_votes"
+                )
+            if not (
+                0.0
+                <= self.negative_threshold
+                <= self.positive_threshold
+                <= 1.0
+            ):
+                raise ValueError(
+                    "probability thresholds must satisfy 0 <= negative <= "
+                    "positive <= 1"
                 )
         elif self.total_votes is not None:
             raise ValueError("label splitter must not define total_votes")
@@ -125,10 +142,13 @@ class DatasetSourceSettings:
         ConfidenceWeightingSettings()
     )
     confidence_power: float = 2.0
+    target_column: str = "target"
 
     def __post_init__(self) -> None:
         if not self.name.strip():
             raise ValueError("dataset source name must not be empty")
+        if not self.target_column.strip():
+            raise ValueError("dataset source target_column must not be empty")
         if self.weight <= 0.0:
             raise ValueError("dataset source weight must be positive")
         if self.max_rows is not None and self.max_rows < 1:
@@ -229,6 +249,7 @@ class DataModelDescriptionSettings:
     base_dataset: BaseDatasetSettings
     mix_dataset: MixedDatasetSettings
     mix_dataset_codex: MixedDatasetSettings
+    mix_dataset_neural_review: MixedDatasetSettings
 
 
 def _validate_data_split_settings(
@@ -283,10 +304,11 @@ class TrainingSettings:
             "base_dataset",
             "mix_dataset",
             "mix_dataset_codex",
+            "mix_dataset_neural_review",
         }:
             raise ValueError(
                 "training.data_model must be one of: base_dataset, mix_dataset, "
-                "mix_dataset_codex"
+                "mix_dataset_codex, mix_dataset_neural_review"
             )
         if self.model == "stacking" and self.data_model != "base_dataset":
             raise ValueError("stacking training currently requires base_dataset")
@@ -589,10 +611,11 @@ class AnalysisSettings:
             "base_dataset",
             "mix_dataset",
             "mix_dataset_codex",
+            "mix_dataset_neural_review",
         }:
             raise ValueError(
                 "analysis.data_model must be one of: base_dataset, mix_dataset, "
-                "mix_dataset_codex"
+                "mix_dataset_codex, mix_dataset_neural_review"
             )
 
 
@@ -1477,6 +1500,7 @@ def _dataset_source(
             power=float(confidence_weighting.get("power", 1.0)),
         ),
         confidence_power=float(values.get("confidence_power", 2.0)),
+        target_column=str(values.get("target_column", "target")),
     )
 
 
@@ -1614,6 +1638,10 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     base_dataset = _section(data_model_description, "base_dataset")
     mix_dataset = _section(data_model_description, "mix_dataset")
     mix_dataset_codex = _section(data_model_description, "mix_dataset_codex")
+    mix_dataset_neural_review = _section(
+        data_model_description,
+        "mix_dataset_neural_review",
+    )
     inference_value = resolved.get("inference", training)
     if not isinstance(inference_value, Mapping):
         raise ValueError("config section 'inference' must be a mapping")
@@ -1798,6 +1826,11 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             mix_dataset_codex=_mixed_dataset_settings(
                 mix_dataset_codex,
                 dataset_name="mix_dataset_codex",
+                runtime_seed=int(_required(runtime, "seed")),
+            ),
+            mix_dataset_neural_review=_mixed_dataset_settings(
+                mix_dataset_neural_review,
+                dataset_name="mix_dataset_neural_review",
                 runtime_seed=int(_required(runtime, "seed")),
             ),
         ),

@@ -32,6 +32,7 @@ class ConfiguredBenchmarkRunnerTests(unittest.TestCase):
                 "inference_quality",
                 "transitivity_quality",
                 "codex_annotation_quality",
+                "neural_relabel_quality",
                 "llm_vote_sampling_quality",
                 "soft_label_confidence_quality",
             ],
@@ -44,7 +45,7 @@ class ConfiguredBenchmarkRunnerTests(unittest.TestCase):
                 self.config.benchmark,
                 output_dir=Path(directory),
                 jobs=(
-                    self.config.benchmark.jobs[0],
+                    replace(self.config.benchmark.jobs[0], enabled=True),
                     replace(self.config.benchmark.jobs[-1], enabled=True),
                 ),
             )

@@ -1,0 +1,63 @@
+# Three-arm benchmark for 100,337 old 5/9 LLM pairs relabeled by DeepSeek.
+# Confidence weighting and transitivity weighting are disabled in every arm.
+test_type: training_quality
+reference_test: old_labels_fixed_pairs
+
+# Start with one paired seed. Use [42, 43, 44] for the final decision.
+seeds:
+  - 42
+
+tests:
+  current_pipeline:
+    name: current_confident_llm_only
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.data_model
+        value: mix_dataset
+      - path: data_model_description.mix_dataset.sources.llm.max_rows
+        value: 750000
+      - path: data_model_description.mix_dataset.sources.llm.splitter.target_mode
+        value: hard
+      - path: data_model_description.mix_dataset.sources.llm.confidence_weighting.enabled
+        value: false
+      - path: data_model_description.mix_dataset.sources.llm.weight_model.enabled
+        value: false
+      - path: model_description.transformer.hpo_trials
+        value: 1
+      - path: model_description.transformer.max_epochs
+        value: 4
+      - path: model_description.transformer.export.onnx.enabled
+        value: false
+
+  old_labels_fixed_pairs:
+    name: old_labels_on_fixed_pairs
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.data_model
+        value: mix_dataset_neural_review
+      - path: data_model_description.mix_dataset_neural_review.sources.neural_review.target_column
+        value: source_score
+      - path: model_description.transformer.hpo_trials
+        value: 1
+      - path: model_description.transformer.max_epochs
+        value: 4
+      - path: model_description.transformer.export.onnx.enabled
+        value: false
+
+  new_labels_fixed_pairs:
+    name: new_labels_on_fixed_pairs
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.data_model
+        value: mix_dataset_neural_review
+      - path: data_model_description.mix_dataset_neural_review.sources.neural_review.target_column
+        value: llm_score
+      - path: model_description.transformer.hpo_trials
+        value: 1
+      - path: model_description.transformer.max_epochs
+        value: 4
+      - path: model_description.transformer.export.onnx.enabled
+        value: false

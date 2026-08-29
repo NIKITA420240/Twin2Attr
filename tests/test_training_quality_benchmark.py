@@ -39,6 +39,68 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
             / "benchmark_tests"
             / "soft_label_confidence_quality.yaml"
         )
+        self.neural_relabel_tests_path = (
+            PROJECT_ROOT
+            / "configs"
+            / "benchmark_tests"
+            / "neural_relabel_quality.yaml"
+        )
+
+    def test_neural_relabel_suite_has_three_equal_budget_arms(self) -> None:
+        suite = load_benchmark_suite(
+            self.neural_relabel_tests_path,
+            allowed_test_types={"training_quality"},
+        )
+        configured = {
+            key: apply_benchmark_test(self.config, test)
+            for key, test in suite.tests.items()
+        }
+
+        self.assertEqual(suite.reference_test, "old_labels_fixed_pairs")
+        self.assertEqual(
+            list(suite.tests),
+            [
+                "current_pipeline",
+                "old_labels_fixed_pairs",
+                "new_labels_fixed_pairs",
+            ],
+        )
+        self.assertEqual(
+            configured["current_pipeline"].training.data_model,
+            "mix_dataset",
+        )
+        self.assertEqual(
+            {
+                config.model_description.transformer.max_epochs
+                for config in configured.values()
+            },
+            {4},
+        )
+        for key, target_column in (
+            ("old_labels_fixed_pairs", "source_score"),
+            ("new_labels_fixed_pairs", "llm_score"),
+        ):
+            config = configured[key]
+            self.assertEqual(
+                config.training.data_model,
+                "mix_dataset_neural_review",
+            )
+            sources = {
+                source.name: source
+                for source in config.data_model_description
+                .mix_dataset_neural_review.sources
+            }
+            self.assertEqual(sources["llm"].max_rows, 649_663)
+            self.assertEqual(
+                sources["neural_review"].target_column,
+                target_column,
+            )
+            self.assertFalse(sources["llm"].weight_model.enabled)
+            self.assertFalse(sources["neural_review"].weight_model.enabled)
+            self.assertFalse(
+                sources["neural_review"].confidence_weighting.enabled
+            )
+        self.assertEqual(suite.seeds, (42,))
 
     def test_soft_label_confidence_suite_is_full_factorial(self) -> None:
         suite = load_benchmark_suite(

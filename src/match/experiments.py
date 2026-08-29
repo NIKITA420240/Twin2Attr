@@ -108,24 +108,36 @@ def configure_experiment(
     return configured, experiment_dir, root / "experiments.csv"
 
 
-def validation_pairs_hash(matches: pl.DataFrame) -> str:
-    """Return a row- and pair-direction-independent validation split hash."""
-    columns = [name for name in ("id1", "id2", "target") if name in matches.columns]
-    if columns != ["id1", "id2", "target"]:
-        raise ValueError("validation matches must contain id1, id2 and target")
+def _matches_hash(matches: pl.DataFrame, *, include_target: bool) -> str:
+    required = [
+        "id1",
+        "id2",
+        *(("target",) if include_target else ()),
+    ]
+    if any(name not in matches.columns for name in required):
+        raise ValueError(f"matches must contain {', '.join(required)}")
     left = pl.col("id1").cast(pl.String).fill_null("<null>")
     right = pl.col("id2").cast(pl.String).fill_null("<null>")
-    canonical = (
-        matches.select(
-            pl.min_horizontal(left, right).alias("id1"),
-            pl.max_horizontal(left, right).alias("id2"),
-            pl.col("target").cast(pl.String).fill_null("<null>"),
+    expressions = [
+        pl.min_horizontal(left, right).alias("id1"),
+        pl.max_horizontal(left, right).alias("id2"),
+    ]
+    if include_target:
+        expressions.append(
+            pl.col("target").cast(pl.String).fill_null("<null>")
         )
-        .sort(columns)
+    canonical = (
+        matches.select(expressions)
+        .sort(required)
         .write_csv()
         .encode("utf-8")
     )
     return hashlib.sha256(canonical).hexdigest()
+
+
+def validation_pairs_hash(matches: pl.DataFrame) -> str:
+    """Return a row- and pair-direction-independent validation split hash."""
+    return _matches_hash(matches, include_target=True)
 
 
 def _training_metadata(config: AppConfig) -> dict[str, Any]:
@@ -212,6 +224,15 @@ def _sample_weighting_summary(matches: pl.DataFrame) -> dict[str, Any]:
                 .iter_rows(named=True)
             },
         }
+        if {"id1", "id2"}.issubset(selected.columns):
+            summary["pairs_hash"] = _matches_hash(
+                selected,
+                include_target=False,
+            )
+            summary["targets_hash"] = _matches_hash(
+                selected,
+                include_target=True,
+            )
         if "annotation_votes" in selected.columns:
             vote_rows = selected.filter(pl.col("annotation_votes").is_not_null())
             if vote_rows.height:

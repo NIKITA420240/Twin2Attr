@@ -264,6 +264,28 @@ class AppConfigTests(unittest.TestCase):
         self.assertIsNone(codex.max_rows)
         self.assertEqual(codex.splitter.score_type, "label")
 
+    def test_loads_neural_review_mixed_dataset(self) -> None:
+        mixed = self.config.data_model_description.mix_dataset_neural_review
+        sources = {source.name: source for source in mixed.sources}
+
+        self.assertEqual(
+            list(sources),
+            ["human", "neural_review", "llm"],
+        )
+        self.assertEqual(
+            mixed.overlap_resolution.source_priority,
+            ("human", "neural_review", "llm"),
+        )
+        review = sources["neural_review"]
+        self.assertEqual(review.target_column, "source_score")
+        self.assertEqual(review.splitter.score_type, "probability")
+        self.assertEqual(review.splitter.negative_threshold, 0.5)
+        self.assertEqual(review.splitter.positive_threshold, 0.5)
+        self.assertEqual(review.splitter.target_mode, "hard")
+        self.assertFalse(review.confidence_weighting.enabled)
+        self.assertFalse(review.weight_model.enabled)
+        self.assertEqual(sources["llm"].max_rows, 649_663)
+
     def test_rejects_fractional_vote_threshold(self) -> None:
         with self.assertRaisesRegex(ValueError, "whole vote counts"):
             load_app_config_file(

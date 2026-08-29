@@ -1,0 +1,14 @@
+# Run only the three-arm old-vs-new neural relabeling benchmark:
+#   uv run python run.py benchmark \
+#     --config configs/benchmark_neural_relabel.yaml
+benchmark:
+  base_config_path: configs/benchmark_pipeline.yaml
+  output_dir: analysis/benchmark
+  fail_fast: false
+
+  jobs:
+    neural_relabel_quality:
+      type: training_quality
+      enabled: true
+      tests_path: configs/benchmark_tests/neural_relabel_quality.yaml
+      selected_tests: null

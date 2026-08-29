@@ -216,6 +216,7 @@ configs/benchmark_tests/speed_optimizations.yaml   # технические ус
 configs/benchmark_tests/quality_optimizations.yaml # сокращение входа/precision
 configs/benchmark_tests/transitivity_quality.yaml  # влияние весов на обучение
 configs/benchmark_tests/codex_annotation_quality.yaml # ценность Codex-разметки
+configs/benchmark_tests/neural_relabel_quality.yaml # старая и новая разметка 5/9-пар
 configs/benchmark_tests/llm_vote_sampling_quality.yaml # выбор по уверенности LLM
 configs/benchmark_tests/soft_label_confidence_quality.yaml # target × loss weight
 ```
@@ -267,6 +268,39 @@ uv run python run.py benchmark \
 из human-разметки и проверяется по хэшу. `results.parquet` дополнительно содержит
 `total_train_rows`,
 `human_train_rows`, `llm_train_rows` и `codex_reviewed_train_rows`.
+
+Влияние новой нейронной переразметки проверяет трёхвариантный benchmark
+`neural_relabel_quality`:
+
+- `current_pipeline` обучается на 750 000 уверенных старых LLM-пар и не
+  использует спорные пары с исходной оценкой `5/9`;
+- `old_labels_fixed_pairs` заменяет 100 337 уверенных строк на те же 100 337
+  спорных пар, размеченных по `source_score`;
+- `new_labels_fixed_pairs` использует совершенно те же пары, но выбирает
+  `llm_score` как target.
+
+В двух fixed-pair вариантах остаются 649 663 уверенных LLM-строки, поэтому
+общий бюджет псевдоразметки равен 750 000 во всех трёх случаях. Scores
+бинаризуются правилом `score < 0.5 -> 0`, `score >= 0.5 -> 1`.
+Confidence weighting и транзитивные веса отключены, а `neural_review` и `llm`
+получают одинаковый базовый вес `1.0`. Главная парная дельта —
+`new_labels_fixed_pairs - old_labels_fixed_pairs`: она меняет только targets
+на фиксированном наборе ID.
+
+Исходный файл должен находиться в
+`data/matches_llm_neural_review.parquet`. Запустить только этот benchmark:
+
+```bash
+uv run python run.py benchmark \
+  --config configs/benchmark_neural_relabel.yaml
+```
+
+Для первичной проверки suite использует seed `42`; для финального решения
+следует заменить список на `[42, 43, 44]`.
+
+`results.parquet` дополнительно сохраняет число строк и классов
+`neural_review`, хэши его пар и targets, а также проверку совпадения ID с
+reference-вариантом.
 
 `llm_vote_sampling_quality` при одинаковых порогах `2/7`, лимите `750000` и
 квотах `category × target` сравнивает три способа выбрать LLM-строки:

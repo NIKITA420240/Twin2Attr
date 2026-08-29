@@ -46,15 +46,49 @@ def _binary_targets(
             pl.lit(1.0).cast(pl.Float32).alias("_annotation_confidence"),
         )
 
+    numeric_targets = targets.cast(pl.Float64)
+    values = numeric_targets.to_numpy()
+    if (
+        not np.all(np.isfinite(values))
+        or np.any(values < 0.0)
+        or np.any(values > 1.0)
+    ):
+        raise ValueError(
+            f"dataset source {source_name!r} scores must be in [0, 1]"
+        )
+    if splitter.score_type == "probability":
+        with_scores = matches.with_columns(
+            numeric_targets.cast(pl.Float32).alias("training_target"),
+            pl.Series(
+                "_annotation_confidence",
+                np.abs(2.0 * values - 1.0).astype(np.float32, copy=False),
+            ),
+        )
+        if splitter.uncertain_action == "drop":
+            selected = with_scores.filter(
+                (pl.col("training_target") <= splitter.negative_threshold)
+                | (pl.col("training_target") >= splitter.positive_threshold)
+            )
+        else:
+            selected = with_scores
+        selected = selected.with_columns(
+            (pl.col("training_target") >= splitter.positive_threshold)
+            .cast(pl.Int8)
+            .alias("target")
+        )
+        if splitter.target_mode == "hard":
+            selected = selected.with_columns(
+                pl.col("target").cast(pl.Float32).alias("training_target")
+            )
+        if selected.height == 0:
+            raise ValueError(
+                f"dataset source {source_name!r} thresholds removed every row"
+            )
+        return selected
+
     total_votes = splitter.total_votes
     if total_votes is None:
         raise RuntimeError("votes splitter is missing total_votes")
-    numeric_targets = targets.cast(pl.Float64)
-    values = numeric_targets.to_numpy()
-    if not np.all(np.isfinite(values)) or np.any(values < 0.0) or np.any(values > 1.0):
-        raise ValueError(
-            f"dataset source {source_name!r} vote scores must be in [0, 1]"
-        )
     scaled = values * total_votes
     rounded = np.rint(scaled)
     if not np.allclose(scaled, rounded, atol=1e-5, rtol=0.0):
@@ -190,6 +224,15 @@ def prepare_source_labels(
     source: DatasetSourceSettings,
 ) -> pl.DataFrame:
     """Validate one source and normalize its selected rows to binary labels."""
+    if source.target_column not in matches.columns:
+        raise ValueError(
+            f"dataset source {source.name!r} is missing target column "
+            f"{source.target_column!r}"
+        )
+    if source.target_column != "target":
+        matches = matches.with_columns(
+            pl.col(source.target_column).alias("target")
+        )
     _validate_match_columns(matches, source_name=source.name)
     return _binary_targets(
         matches,

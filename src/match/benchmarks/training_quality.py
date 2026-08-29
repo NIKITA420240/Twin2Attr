@@ -49,6 +49,7 @@ def _seeded_test(test: BenchmarkTest, seed: int) -> BenchmarkTest:
             "data_model_description.base_dataset.seed",
             "data_model_description.mix_dataset.seed",
             "data_model_description.mix_dataset_codex.seed",
+            "data_model_description.mix_dataset_neural_review.seed",
             "augmentation_models.attribute_shuffle.seed",
             "augmentation_models.attribute_word_dropout.seed",
         )
@@ -92,6 +93,12 @@ def _run_case(
         "human_train_rows": None,
         "llm_train_rows": None,
         "codex_reviewed_train_rows": None,
+        "neural_review_train_rows": None,
+        "neural_review_negative_rows": None,
+        "neural_review_positive_rows": None,
+        "neural_review_pairs_hash": None,
+        "neural_review_targets_hash": None,
+        "same_neural_review_pairs_as_reference": None,
         "llm_negative_rows": None,
         "llm_positive_rows": None,
         **{f"llm_vote_{vote}_rows": None for vote in range(10)},
@@ -107,6 +114,7 @@ def _run_case(
         if configured.training.data_model not in {
             "mix_dataset",
             "mix_dataset_codex",
+            "mix_dataset_neural_review",
         }:
             raise ValueError(
                 "training-quality benchmark requires a mixed training data model"
@@ -127,6 +135,8 @@ def _run_case(
         llm_weighting = weighting.get("llm", {})
         human_weighting = weighting.get("human", {})
         codex_weighting = weighting.get("codex_reviewed", {})
+        neural_weighting = weighting.get("neural_review", {})
+        neural_targets = neural_weighting.get("target_counts", {})
         llm_targets = llm_weighting.get("target_counts", {})
         llm_votes = llm_weighting.get("vote_counts", {})
         row.update(
@@ -141,6 +151,15 @@ def _run_case(
                 "human_train_rows": human_weighting.get("rows"),
                 "llm_train_rows": llm_weighting.get("rows"),
                 "codex_reviewed_train_rows": codex_weighting.get("rows", 0),
+                "neural_review_train_rows": neural_weighting.get("rows", 0),
+                "neural_review_negative_rows": neural_targets.get("0", 0),
+                "neural_review_positive_rows": neural_targets.get("1", 0),
+                "neural_review_pairs_hash": neural_weighting.get(
+                    "pairs_hash"
+                ),
+                "neural_review_targets_hash": neural_weighting.get(
+                    "targets_hash"
+                ),
                 "llm_negative_rows": llm_targets.get("0"),
                 "llm_positive_rows": llm_targets.get("1"),
                 **{
@@ -196,6 +215,22 @@ def _compare_with_reference(
                 "validation split differs from the paired reference run"
             )
             continue
+        if (
+            row.get("neural_review_pairs_hash") is not None
+            and reference.get("neural_review_pairs_hash") is not None
+        ):
+            same_review_pairs = (
+                row["neural_review_pairs_hash"]
+                == reference["neural_review_pairs_hash"]
+            )
+            row["same_neural_review_pairs_as_reference"] = same_review_pairs
+            if not same_review_pairs:
+                row["status"] = "failed"
+                row["error"] = (
+                    "neural-review training pairs differ from the paired "
+                    "reference run"
+                )
+                continue
         row["delta_validation_macro_pr_auc"] = float(
             row["validation_macro_pr_auc"]
             - reference["validation_macro_pr_auc"]
@@ -236,6 +271,9 @@ def _aggregate(
                 "human_train_rows",
                 "llm_train_rows",
                 "codex_reviewed_train_rows",
+                "neural_review_train_rows",
+                "neural_review_negative_rows",
+                "neural_review_positive_rows",
                 "llm_negative_rows",
                 "llm_positive_rows",
                 *(f"llm_vote_{vote}_rows" for vote in range(10)),

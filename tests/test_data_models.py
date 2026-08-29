@@ -34,6 +34,52 @@ def _splitter(score_type: str, *, votes: bool = False) -> DatasetSplitterSetting
 
 
 class DataModelTests(unittest.TestCase):
+    def test_probability_source_uses_configured_target_column(self) -> None:
+        items = pl.DataFrame(
+            {"id": list(range(1, 9)), "category": ["a"] * 8}
+        )
+        matches = pl.DataFrame(
+            {
+                "id1": [1, 2, 3, 4],
+                "id2": [5, 6, 7, 8],
+                "source_score": [5 / 9] * 4,
+                "llm_score": [0.0, 0.49, 0.5, 0.95],
+            }
+        )
+        source = DatasetSourceSettings(
+            name="neural_review",
+            matches=Path("matches.parquet"),
+            weight=1.0,
+            max_rows=None,
+            sampling_strategy="random",
+            splitter=DatasetSplitterSettings(
+                splitter_type="binary",
+                score_type="probability",
+                total_votes=None,
+                negative_threshold=0.5,
+                positive_threshold=0.5,
+                uncertain_action="keep",
+                target_mode="hard",
+            ),
+            target_column="llm_score",
+        )
+
+        prepared = prepare_source_matches(items, matches, source, seed=42)
+
+        self.assertEqual(prepared.height, 4)
+        self.assertEqual(
+            prepared.get_column("target").to_list(),
+            [0, 0, 1, 1],
+        )
+        self.assertEqual(
+            prepared.get_column("training_target").to_list(),
+            [0.0, 0.0, 1.0, 1.0],
+        )
+        self.assertEqual(
+            prepared.get_column("sample_weight").to_list(),
+            [1.0, 1.0, 1.0, 1.0],
+        )
+
     def test_soft_vote_targets_and_confidence_weights_are_preserved(self) -> None:
         items = pl.DataFrame(
             {"id": list(range(1, 9)), "category": ["a"] * 8}
@@ -237,6 +283,20 @@ class DataModelTests(unittest.TestCase):
         self.assertEqual(
             [source.name for source in codex_model.settings.sources],
             ["human", "codex_reviewed", "llm"],
+        )
+        neural_config = replace(
+            config,
+            training=replace(
+                config.training,
+                model="transformer",
+                data_model="mix_dataset_neural_review",
+            ),
+        )
+        neural_model = build_data_model(neural_config)
+        self.assertIsInstance(neural_model, MixedDatasetModel)
+        self.assertEqual(
+            [source.name for source in neural_model.settings.sources],
+            ["human", "neural_review", "llm"],
         )
 
     def test_converts_vote_scores_and_applies_source_weight(self) -> None:
