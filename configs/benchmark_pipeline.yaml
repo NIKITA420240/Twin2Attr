@@ -166,7 +166,7 @@ data_model_description:
           score_type: label
 
       neural_review:
-        matches: data/matches_llm_neural_review.parquet
+        matches: data/llm_annotations/annotations.parquet
         target_column: source_score
         weight: 1.0
         max_rows: null
