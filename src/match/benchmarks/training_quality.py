@@ -49,6 +49,7 @@ def _seeded_test(test: BenchmarkTest, seed: int) -> BenchmarkTest:
             "data_model_description.base_dataset.seed",
             "data_model_description.mix_dataset.seed",
             "data_model_description.mix_dataset_codex.seed",
+            "data_model_description.mix_dataset_hard_negative.seed",
             "augmentation_models.attribute_shuffle.seed",
             "augmentation_models.attribute_word_dropout.seed",
         )
@@ -107,6 +108,7 @@ def _run_case(
         if configured.training.data_model not in {
             "mix_dataset",
             "mix_dataset_codex",
+            "mix_dataset_hard_negative",
         }:
             raise ValueError(
                 "training-quality benchmark requires a mixed training data model"
