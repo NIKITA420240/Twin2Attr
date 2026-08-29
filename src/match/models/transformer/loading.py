@@ -13,7 +13,12 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-from .head import PoolingSequenceClassifier, PoolingSequenceClassifierConfig
+from .head import (
+    HybridSequenceClassifier,
+    HybridSequenceClassifierConfig,
+    PoolingSequenceClassifier,
+    PoolingSequenceClassifierConfig,
+)
 from .nemotron import NemotronAttentionConfig, NemotronAttentionSequenceClassifier
 from .profile import TransformerArtifactContract
 from .precision import torch_inference_dtype
@@ -60,6 +65,8 @@ def load_trained_classifier(
     model_type = config_values.get("model_type")
     if model_type == NemotronAttentionConfig.model_type:
         model = NemotronAttentionSequenceClassifier.from_artifact(directory)
+    elif model_type == HybridSequenceClassifierConfig.model_type:
+        model = HybridSequenceClassifier.from_pretrained(directory)
     elif model_type == PoolingSequenceClassifierConfig.model_type:
         model = PoolingSequenceClassifier.from_pretrained(directory)
     else:

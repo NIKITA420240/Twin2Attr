@@ -43,6 +43,7 @@ __all__ = [
     "encode_prepared_pair",
     "encode_prepared_pair_with_attributes",
     "infer_pair_max_length",
+    "initialize_pair_special_token_embeddings",
     "pair_special_token_ids",
     "serialize_card",
     "serialize_pair",
@@ -109,6 +110,61 @@ def pair_special_token_ids(
             )
         token_ids.append(int(encoded[0]))
     return tuple(token_ids)
+
+
+def initialize_pair_special_token_embeddings(
+    tokenizer: PreTrainedTokenizerBase,
+    model: PreTrainedModel,
+    *,
+    key_seed_texts: Sequence[str],
+    value_seed_texts: Sequence[str],
+) -> dict[str, tuple[int, ...]]:
+    """Initialize ``[KEY]`` and ``[VAL]`` from means of existing token rows.
+
+    Every seed text is tokenized with the active tokenizer. Its non-special
+    subword ids are collected, and their input-embedding rows are averaged into
+    the corresponding new field token. The return value records the source ids
+    used for each target token and is useful for structured logging.
+    """
+    embeddings = model.get_input_embeddings()
+    if embeddings is None or not hasattr(embeddings, "weight"):
+        raise ValueError("model does not expose input embeddings")
+    weight = embeddings.weight
+    if weight.ndim != 2:
+        raise ValueError("model input embeddings must be a rank-2 matrix")
+
+    target_ids = dict(zip(PAIR_SPECIAL_TOKENS, pair_special_token_ids(tokenizer)))
+    special_ids = {int(token_id) for token_id in tokenizer.all_special_ids}
+
+    def source_ids(seed_texts: Sequence[str], *, target_token: str) -> tuple[int, ...]:
+        ids: list[int] = []
+        for seed_text in seed_texts:
+            if not isinstance(seed_text, str) or not seed_text.strip():
+                raise ValueError(f"{target_token} seed texts must be non-empty strings")
+            ids.extend(
+                int(token_id)
+                for token_id in tokenizer.encode(seed_text, add_special_tokens=False)
+                if int(token_id) not in special_ids
+            )
+        if not ids:
+            raise ValueError(
+                f"{target_token} seed texts produced no usable non-special tokens"
+            )
+        vocabulary_size = int(weight.shape[0])
+        if min(ids) < 0 or max(ids) >= vocabulary_size:
+            raise ValueError(f"{target_token} seed token id is outside the embedding matrix")
+        return tuple(ids)
+
+    sources = {
+        KEY_TOKEN: source_ids(key_seed_texts, target_token=KEY_TOKEN),
+        VAL_TOKEN: source_ids(value_seed_texts, target_token=VAL_TOKEN),
+    }
+    with torch.no_grad():
+        for target_token, token_ids in sources.items():
+            source_tensor = torch.tensor(token_ids, device=weight.device)
+            mean_embedding = weight.index_select(0, source_tensor).float().mean(dim=0)
+            weight[target_ids[target_token]].copy_(mean_embedding.to(dtype=weight.dtype))
+    return sources
 
 
 def _require_pair_special_tokens(tokenizer: PreTrainedTokenizerBase) -> None:

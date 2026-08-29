@@ -328,10 +328,83 @@ class TorchCompileSettings:
             "max-autotune-no-cudagraphs",
         }:
             raise ValueError(
-                "inference.transformer.torch_compile.mode must be one of: "
+                "torch_compile.mode must be one of: "
                 "default, reduce-overhead, max-autotune, "
                 "max-autotune-no-cudagraphs"
             )
+
+
+@dataclass(frozen=True, slots=True)
+class TrainingLengthBucketingSettings:
+    enabled: bool = True
+    mega_batch_multiplier: int = 50
+    padding_length_buckets: tuple[int, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if self.mega_batch_multiplier < 1:
+            raise ValueError(
+                "transformer.training_runtime.length_bucketing."
+                "mega_batch_multiplier must be positive"
+            )
+        buckets = self.padding_length_buckets
+        if buckets is None:
+            return
+        if not buckets or any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 1
+            for value in buckets
+        ):
+            raise ValueError(
+                "transformer.training_runtime.length_bucketing."
+                "padding_length_buckets must contain positive integers"
+            )
+        if tuple(sorted(set(buckets))) != buckets:
+            raise ValueError(
+                "transformer.training_runtime.length_bucketing."
+                "padding_length_buckets must be strictly increasing"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class TrainingDataLoaderSettings:
+    num_workers: int = 4
+    prefetch_factor: int = 2
+    persistent_workers: bool = True
+    pin_memory: bool = True
+    non_blocking_transfer: bool = True
+
+    def __post_init__(self) -> None:
+        if self.num_workers < 0:
+            raise ValueError(
+                "transformer.training_runtime.dataloader.num_workers "
+                "must not be negative"
+            )
+        if self.prefetch_factor < 1:
+            raise ValueError(
+                "transformer.training_runtime.dataloader.prefetch_factor "
+                "must be positive"
+            )
+        if self.num_workers == 0 and self.persistent_workers:
+            raise ValueError(
+                "transformer.training_runtime.dataloader.persistent_workers "
+                "requires num_workers > 0"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class TrainingPerformanceLoggingSettings:
+    enabled: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class TransformerTrainingRuntimeSettings:
+    length_bucketing: TrainingLengthBucketingSettings = (
+        TrainingLengthBucketingSettings()
+    )
+    dataloader: TrainingDataLoaderSettings = TrainingDataLoaderSettings()
+    performance_logging: TrainingPerformanceLoggingSettings = (
+        TrainingPerformanceLoggingSettings()
+    )
+    torch_compile: TorchCompileSettings = TorchCompileSettings()
 
 
 @dataclass(frozen=True, slots=True)
@@ -620,6 +693,80 @@ class AnalysisSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class LlmLabelingSettings:
+    base_url: str
+    model: str
+    token_env: str
+    temperature: float
+    verify_ssl: bool
+    request_batch_size: int
+    max_concurrency: int
+    min_concurrency: int
+    max_attempts: int
+    max_rounds: int
+    retry_base_seconds: float
+    max_prompt_chars: int
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("base_url", self.base_url),
+            ("model", self.model),
+            ("token_env", self.token_env),
+        ):
+            if not value.strip():
+                raise ValueError(f"labeling.llm.{name} must not be empty")
+        if self.temperature < 0.0:
+            raise ValueError("labeling.llm.temperature must not be negative")
+        if self.request_batch_size < 1:
+            raise ValueError("labeling.llm.request_batch_size must be positive")
+        if self.max_concurrency < 1:
+            raise ValueError("labeling.llm.max_concurrency must be positive")
+        if not 1 <= self.min_concurrency <= self.max_concurrency:
+            raise ValueError(
+                "labeling.llm.min_concurrency must be between 1 and "
+                "max_concurrency"
+            )
+        if self.max_attempts < 1:
+            raise ValueError("labeling.llm.max_attempts must be positive")
+        if self.max_rounds < 1:
+            raise ValueError("labeling.llm.max_rounds must be positive")
+        if self.retry_base_seconds < 0.0:
+            raise ValueError(
+                "labeling.llm.retry_base_seconds must not be negative"
+            )
+        if self.max_prompt_chars < 1:
+            raise ValueError("labeling.llm.max_prompt_chars must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetLabelingSettings:
+    source_matches_path: Path
+    items_path: Path
+    output_path: Path
+    score_column: str
+    lower_p: float
+    upper_p: float
+    sample_size: int
+    seed: int
+    checkpoint_every_batches: int
+    llm: LlmLabelingSettings
+
+    def __post_init__(self) -> None:
+        if not self.score_column.strip():
+            raise ValueError("labeling.score_column must not be empty")
+        if not 0.0 <= self.lower_p <= self.upper_p <= 1.0:
+            raise ValueError(
+                "labeling thresholds must satisfy 0 <= lower_p <= upper_p <= 1"
+            )
+        if self.sample_size < 1:
+            raise ValueError("labeling.sample_size must be positive")
+        if self.checkpoint_every_batches < 1:
+            raise ValueError(
+                "labeling.checkpoint_every_batches must be positive"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class NormalizationSettings:
     enabled: bool
     output_column: str
@@ -648,6 +795,54 @@ class PairEncodingSettings:
                 "model_description.transformer.pair_encoding."
                 "max_attribute_value_chars must be positive or null"
             )
+
+
+@dataclass(frozen=True, slots=True)
+class SpecialTokenInitializationSettings:
+    """Semantic initialization settings for the pair field tokens."""
+
+    enabled: bool = False
+    key_seed_texts: tuple[str, ...] = ()
+    value_seed_texts: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.enabled:
+            return
+        for texts, name in (
+            (self.key_seed_texts, "key"),
+            (self.value_seed_texts, "value"),
+        ):
+            if not texts or any(not value.strip() for value in texts):
+                raise ValueError(
+                    "model_description.transformer.special_token_initialization."
+                    f"{name}_seed_texts must contain non-empty strings"
+                )
+
+
+@dataclass(frozen=True, slots=True)
+class FastDevValidationSettings:
+    """Small fixed validation sample used only for frequent diagnostics."""
+
+    enabled: bool = False
+    max_rows: int = 20_000
+    every_n_optimizer_steps: int = 1_000
+
+    def __post_init__(self) -> None:
+        if self.max_rows < 1:
+            raise ValueError(
+                "model_description.transformer.validation.fast_dev.max_rows "
+                "must be positive"
+            )
+        if self.every_n_optimizer_steps < 1:
+            raise ValueError(
+                "model_description.transformer.validation.fast_dev."
+                "every_n_optimizer_steps must be positive"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class TransformerValidationSettings:
+    fast_dev: FastDevValidationSettings = FastDevValidationSettings()
 
 
 @dataclass(frozen=True, slots=True)
@@ -708,13 +903,23 @@ class TransformerHeadParameters:
     dropout: float = 0.1
     attention_hidden_dim: int | None = None
     attention_num_heads: int = 1
+    native_logit_weight: float = 1.0
+    attention_logit_weight: float = 0.0
+    train_logit_weights: bool = True
 
     def __post_init__(self) -> None:
         normalized_type = self.type.strip().lower()
-        if normalized_type not in {"default", "pooling", "native", "attention_pooling"}:
+        supported_types = {
+            "default",
+            "pooling",
+            "hybrid",
+            "native",
+            "attention_pooling",
+        }
+        if normalized_type not in supported_types:
             raise ValueError(
-                "transformer.head.type must be one of: default, pooling, native, "
-                "attention_pooling"
+                "transformer.head.type must be one of: default, pooling, hybrid, "
+                "native, attention_pooling"
             )
         normalized_poolings = tuple(
             pooling.strip().lower() for pooling in self.poolings
@@ -741,6 +946,10 @@ class TransformerHeadParameters:
             raise ValueError(
                 "transformer.head.attention_num_heads must be positive"
             )
+        if self.native_logit_weight < 0.0 or self.attention_logit_weight < 0.0:
+            raise ValueError("transformer.head logit weights must be non-negative")
+        if self.native_logit_weight == 0.0 and self.attention_logit_weight == 0.0:
+            raise ValueError("at least one transformer.head logit weight must be positive")
         object.__setattr__(self, "type", normalized_type)
         object.__setattr__(
             self,
@@ -775,9 +984,16 @@ class TransformerParameters:
     embeddings_learning_rate: float | None = None
     train_new_token_embeddings_only: bool = False
     train_last_n_layers: int | None = None
+    special_token_initialization: SpecialTokenInitializationSettings = (
+        SpecialTokenInitializationSettings()
+    )
+    validation: TransformerValidationSettings = TransformerValidationSettings()
     lr_scheduler_type: str = "linear"
     head_learning_rate: float | None = None
     layerwise_lr_decay: float = 1.0
+    training_runtime: TransformerTrainingRuntimeSettings = (
+        TransformerTrainingRuntimeSettings()
+    )
     head: TransformerHeadParameters = TransformerHeadParameters()
 
     def __post_init__(self) -> None:
@@ -812,6 +1028,13 @@ class TransformerParameters:
             raise ValueError("transformer optimizer parameters are invalid")
         if self.train_last_n_layers is not None and self.train_last_n_layers < 1:
             raise ValueError("transformer optimizer parameters are invalid")
+        if (
+            self.special_token_initialization.enabled
+            and not self.pair_encoding.use_field_tokens
+        ):
+            raise ValueError(
+                "special token initialization requires pair_encoding.use_field_tokens"
+            )
         if self.lr_scheduler_type not in {"linear", "cosine"}:
             raise ValueError(
                 "transformer.lr_scheduler_type must be 'linear' or 'cosine'"
@@ -1221,6 +1444,7 @@ class AppConfig:
     data_model_description: DataModelDescriptionSettings
     inference: InferenceSettings
     analysis: AnalysisSettings
+    labeling: DatasetLabelingSettings
     analysis_models: AnalysisModelsSettings
     augmentation_models: AugmentationModelsSettings
     data_postprocessing_models: DataPostprocessingModelsSettings
@@ -1274,6 +1498,15 @@ def _sequence(value: Any, name: str) -> Sequence[Any]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         raise ValueError(f"config field {name!r} must be a sequence")
     return value
+
+
+def _string_tuple(value: Any, name: str) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(f"config value {name!r} must be a sequence of strings")
+    texts = tuple(value)
+    if any(not isinstance(text, str) or not text.strip() for text in texts):
+        raise ValueError(f"config value {name!r} must contain non-empty strings")
+    return texts
 
 
 def _int(value: Any, name: str) -> int:
@@ -1694,6 +1927,8 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             "config section 'inference.transformer.tensorrt' must be a mapping"
         )
     analysis = _section(resolved, "analysis")
+    labeling = _section(resolved, "labeling")
+    labeling_llm = _section(labeling, "llm")
     analysis_models = _section(resolved, "analysis_models")
     attribute_importance = _section(
         analysis_models,
@@ -1740,10 +1975,72 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             "config section 'transformer.export.onnx' must be a mapping"
         )
     encoding = _section(transformer, "pair_encoding")
+    special_token_initialization_value = transformer.get(
+        "special_token_initialization", {}
+    )
+    if not isinstance(special_token_initialization_value, Mapping):
+        raise ValueError(
+            "config section 'transformer.special_token_initialization' must be a mapping"
+        )
+    validation_value = transformer.get("validation", {})
+    if not isinstance(validation_value, Mapping):
+        raise ValueError("config section 'transformer.validation' must be a mapping")
+    fast_dev_validation_value = validation_value.get("fast_dev", {})
+    if not isinstance(fast_dev_validation_value, Mapping):
+        raise ValueError(
+            "config section 'transformer.validation.fast_dev' must be a mapping"
+        )
     transformer_head_value = transformer.get("head", {})
     if not isinstance(transformer_head_value, Mapping):
         raise ValueError("config section 'transformer.head' must be a mapping")
     transformer_head = transformer_head_value
+    training_runtime_value = transformer.get("training_runtime", {})
+    if not isinstance(training_runtime_value, Mapping):
+        raise ValueError(
+            "config section 'transformer.training_runtime' must be a mapping"
+        )
+    training_length_bucketing_value = training_runtime_value.get(
+        "length_bucketing", {}
+    )
+    if not isinstance(training_length_bucketing_value, Mapping):
+        raise ValueError(
+            "config section 'transformer.training_runtime.length_bucketing' "
+            "must be a mapping"
+        )
+    training_padding_buckets_value = training_length_bucketing_value.get(
+        "padding_length_buckets"
+    )
+    if training_padding_buckets_value is None:
+        training_padding_buckets = None
+    elif isinstance(training_padding_buckets_value, Sequence) and not isinstance(
+        training_padding_buckets_value, (str, bytes)
+    ):
+        training_padding_buckets = tuple(training_padding_buckets_value)
+    else:
+        raise ValueError(
+            "config field 'transformer.training_runtime.length_bucketing."
+            "padding_length_buckets' must be a sequence or null"
+        )
+    training_dataloader_value = training_runtime_value.get("dataloader", {})
+    if not isinstance(training_dataloader_value, Mapping):
+        raise ValueError(
+            "config section 'transformer.training_runtime.dataloader' "
+            "must be a mapping"
+        )
+    performance_logging_value = training_runtime_value.get(
+        "performance_logging", {}
+    )
+    if not isinstance(performance_logging_value, Mapping):
+        raise ValueError(
+            "config section 'transformer.training_runtime.performance_logging' "
+            "must be a mapping"
+        )
+    training_torch_compile_value = training_runtime_value.get("torch_compile", {})
+    if not isinstance(training_torch_compile_value, Mapping):
+        raise ValueError(
+            "config section 'transformer.training_runtime.torch_compile' "
+            "must be a mapping"
+        )
     maxpooling = _section(model_description, "maxpooling")
     fusion = _section(model_description, "fusion")
     boosting = _section(model_description, "boosting")
@@ -1927,6 +2224,55 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 None
                 if analysis.get("data_postprocessing_model") is None
                 else str(analysis["data_postprocessing_model"])
+            ),
+        ),
+        labeling=DatasetLabelingSettings(
+            source_matches_path=_path(
+                _required(labeling, "source_matches_path"),
+                "labeling.source_matches_path",
+            ),
+            items_path=_path(
+                _required(labeling, "items_path"),
+                "labeling.items_path",
+            ),
+            output_path=_path(
+                _required(labeling, "output_path"),
+                "labeling.output_path",
+            ),
+            score_column=str(_required(labeling, "score_column")),
+            lower_p=float(_required(labeling, "lower_p")),
+            upper_p=float(_required(labeling, "upper_p")),
+            sample_size=int(_required(labeling, "sample_size")),
+            seed=int(labeling.get("seed", _required(runtime, "seed"))),
+            checkpoint_every_batches=int(
+                _required(labeling, "checkpoint_every_batches")
+            ),
+            llm=LlmLabelingSettings(
+                base_url=str(_required(labeling_llm, "base_url")),
+                model=str(_required(labeling_llm, "model")),
+                token_env=str(_required(labeling_llm, "token_env")),
+                temperature=float(labeling_llm.get("temperature", 0.0)),
+                verify_ssl=_bool(
+                    labeling_llm.get("verify_ssl", True),
+                    "labeling.llm.verify_ssl",
+                ),
+                request_batch_size=int(
+                    _required(labeling_llm, "request_batch_size")
+                ),
+                max_concurrency=int(
+                    _required(labeling_llm, "max_concurrency")
+                ),
+                min_concurrency=int(
+                    _required(labeling_llm, "min_concurrency")
+                ),
+                max_attempts=int(_required(labeling_llm, "max_attempts")),
+                max_rounds=int(_required(labeling_llm, "max_rounds")),
+                retry_base_seconds=float(
+                    _required(labeling_llm, "retry_base_seconds")
+                ),
+                max_prompt_chars=int(
+                    _required(labeling_llm, "max_prompt_chars")
+                ),
             ),
         ),
         analysis_models=AnalysisModelsSettings(
@@ -2132,6 +2478,44 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 train_last_n_layers=_optional_int(
                     transformer.get("train_last_n_layers")
                 ),
+                special_token_initialization=SpecialTokenInitializationSettings(
+                    enabled=_bool(
+                        special_token_initialization_value.get("enabled", False),
+                        "model_description.transformer.special_token_initialization."
+                        "enabled",
+                    ),
+                    key_seed_texts=_string_tuple(
+                        special_token_initialization_value.get(
+                            "key_seed_texts", ()
+                        ),
+                        "model_description.transformer.special_token_initialization."
+                        "key_seed_texts",
+                    ),
+                    value_seed_texts=_string_tuple(
+                        special_token_initialization_value.get(
+                            "value_seed_texts", ()
+                        ),
+                        "model_description.transformer.special_token_initialization."
+                        "value_seed_texts",
+                    ),
+                ),
+                validation=TransformerValidationSettings(
+                    fast_dev=FastDevValidationSettings(
+                        enabled=_bool(
+                            fast_dev_validation_value.get("enabled", False),
+                            "model_description.transformer.validation.fast_dev."
+                            "enabled",
+                        ),
+                        max_rows=int(
+                            fast_dev_validation_value.get("max_rows", 20_000)
+                        ),
+                        every_n_optimizer_steps=int(
+                            fast_dev_validation_value.get(
+                                "every_n_optimizer_steps", 1_000
+                            )
+                        ),
+                    )
+                ),
                 lr_scheduler_type=str(
                     transformer.get("lr_scheduler_type", "linear")
                 ),
@@ -2142,6 +2526,72 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 ),
                 layerwise_lr_decay=float(
                     transformer.get("layerwise_lr_decay", 1.0)
+                ),
+                training_runtime=TransformerTrainingRuntimeSettings(
+                    length_bucketing=TrainingLengthBucketingSettings(
+                        enabled=_bool(
+                            training_length_bucketing_value.get("enabled", True),
+                            "model_description.transformer.training_runtime."
+                            "length_bucketing.enabled",
+                        ),
+                        mega_batch_multiplier=int(
+                            training_length_bucketing_value.get(
+                                "mega_batch_multiplier", 50
+                            )
+                        ),
+                        padding_length_buckets=training_padding_buckets,
+                    ),
+                    dataloader=TrainingDataLoaderSettings(
+                        num_workers=int(
+                            training_dataloader_value.get("num_workers", 4)
+                        ),
+                        prefetch_factor=int(
+                            training_dataloader_value.get("prefetch_factor", 2)
+                        ),
+                        persistent_workers=_bool(
+                            training_dataloader_value.get(
+                                "persistent_workers", True
+                            ),
+                            "model_description.transformer.training_runtime."
+                            "dataloader.persistent_workers",
+                        ),
+                        pin_memory=_bool(
+                            training_dataloader_value.get("pin_memory", True),
+                            "model_description.transformer.training_runtime."
+                            "dataloader.pin_memory",
+                        ),
+                        non_blocking_transfer=_bool(
+                            training_dataloader_value.get(
+                                "non_blocking_transfer", True
+                            ),
+                            "model_description.transformer.training_runtime."
+                            "dataloader.non_blocking_transfer",
+                        ),
+                    ),
+                    performance_logging=TrainingPerformanceLoggingSettings(
+                        enabled=_bool(
+                            performance_logging_value.get("enabled", True),
+                            "model_description.transformer.training_runtime."
+                            "performance_logging.enabled",
+                        )
+                    ),
+                    torch_compile=TorchCompileSettings(
+                        enabled=_bool(
+                            training_torch_compile_value.get("enabled", False),
+                            "model_description.transformer.training_runtime."
+                            "torch_compile.enabled",
+                        ),
+                        mode=str(
+                            training_torch_compile_value.get(
+                                "mode", "reduce-overhead"
+                            )
+                        ),
+                        dynamic=_bool(
+                            training_torch_compile_value.get("dynamic", True),
+                            "model_description.transformer.training_runtime."
+                            "torch_compile.dynamic",
+                        ),
+                    ),
                 ),
                 weight_decay=float(_required(transformer, "weight_decay")),
                 hpo_learning_rate_min=float(
@@ -2197,9 +2647,19 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     attention_hidden_dim=_optional_int(
                         transformer_head.get("attention_hidden_dim")
                     ),
-                    attention_num_heads=int(
-                        transformer_head.get("attention_num_heads", 1)
-                    ),
+                     attention_num_heads=int(
+                         transformer_head.get("attention_num_heads", 1)
+                     ),
+                     native_logit_weight=float(
+                         transformer_head.get("native_logit_weight", 1.0)
+                     ),
+                     attention_logit_weight=float(
+                         transformer_head.get("attention_logit_weight", 0.0)
+                     ),
+                     train_logit_weights=_bool(
+                         transformer_head.get("train_logit_weights", True),
+                         "model_description.transformer.head.train_logit_weights",
+                     ),
                 ),
             ),
             maxpooling=MaxPoolingParameters(
@@ -2520,6 +2980,7 @@ __all__ = [
     "CascadeParameters",
     "ConfigSource",
     "DataModelDescriptionSettings",
+    "DatasetLabelingSettings",
     "DatasetSourceSettings",
     "DatasetOverlapResolutionSettings",
     "DatasetSplitterSettings",
@@ -2529,6 +2990,7 @@ __all__ = [
     "InferenceSettings",
     "LoggingSettings",
     "LengthBucketingSettings",
+    "LlmLabelingSettings",
     "MaxPoolingParameters",
     "MixedDatasetSettings",
     "ModelDescriptionSettings",
@@ -2541,6 +3003,7 @@ __all__ = [
     "PhysicalFeatureSettings",
     "RuntimeSettings",
     "SampleWeightModelSettings",
+    "SpecialTokenInitializationSettings",
     "SubmissionSettings",
     "TensorRTEngineCacheSettings",
     "TensorRTProfileSettings",
@@ -2548,6 +3011,10 @@ __all__ = [
     "TensorRTTimingCacheSettings",
     "TrainingSettings",
     "TorchCompileSettings",
+    "TrainingDataLoaderSettings",
+    "TrainingLengthBucketingSettings",
+    "TrainingPerformanceLoggingSettings",
+    "TransformerTrainingRuntimeSettings",
     "TransformerExportSettings",
     "TransformerHeadParameters",
     "TransformerInferenceSettings",

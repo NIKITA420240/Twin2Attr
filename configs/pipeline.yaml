@@ -1,8 +1,8 @@
 # transformer | maxpooling | fusion | boosting | stacking
 training:
   model: transformer
-  data_model: base_dataset
-  augmentation_model: attribute_word_dropout
+  data_model: mix_dataset
+  augmentation_model: null
   data_postprocessing_model: null
   resolved_config_path: models/twin2attr/pipeline_config.yaml
   solution_path: solution.json
@@ -220,8 +220,8 @@ inference:
   transformer:
     # Keep PyTorch as the default until the exported ONNX graphs pass the
     # accuracy and end-to-end H100 benchmark gates.
-    backend: onnxruntime
-    batch_size: 64
+    backend: pytorch
+    batch_size: 1
     dtype: bfloat16
     # Prepare and prefetch batches in parallel while the GPU runs the model.
     num_workers: 8
@@ -248,7 +248,7 @@ inference:
       device_id: 0
       io_binding: true
       graph_optimization: all
-      fallback_to_pytorch: false
+      fallback_to_pytorch: true
       tensorrt:
         engine_cache:
           enabled: true
@@ -290,6 +290,32 @@ analysis:
   data_model: base_dataset
   augmentation_model: attribute_shuffle
   data_postprocessing_model: null
+
+labeling:
+  source_matches_path: data/matches_llm.parquet
+  items_path: data/items.parquet
+  # A single cumulative file; successful rows are atomically merged into it.
+  output_path: data/llm_annotations/annotations.parquet
+  score_column: target
+  lower_p: 0.54
+  upper_p: 0.56
+  sample_size: 100000
+  seed: ${runtime.seed}
+  checkpoint_every_batches: 10
+  llm:
+    base_url: https://llm-proxy.t-tech.team
+    model: tgpt/deepseek-v4-flash-fp8
+    token_env: LLM_PROXY_TOKEN
+    temperature: 0.0
+    verify_ssl: false
+    request_batch_size: 64
+    max_concurrency: 64
+    # Every next round halves concurrency until this lower bound is reached.
+    min_concurrency: 32
+    max_attempts: 3
+    max_rounds: 1000
+    retry_base_seconds: 2.0
+    max_prompt_chars: 6000
 
 augmentation_models:
   attribute_shuffle:
@@ -336,7 +362,7 @@ model_description:
         chunk_size: 16384
     export:
       onnx:
-        enabled: true
+        enabled: false
         opset: 18
         precision: float16
         dynamic_batch: true
@@ -354,16 +380,24 @@ model_description:
       quantile: 0.95
       sample_size: 10000
       hard_cap: 512
-    max_epochs: 15
+    max_epochs: 2
     hpo_trials: 1
     # Used directly when hpo_trials=1; otherwise these are initial values.
     # Base LR for Transformer encoder layers and the value tuned by HPO.
     learning_rate: 3.0e-5
-    # Only the newly added [KEY]/[VAL] rows use this embedding LR.
-    embeddings_learning_rate: 1.0e-6
+    # Unused while input embeddings are frozen. Set a positive value only with
+    # train_new_token_embeddings_only=true.
+    embeddings_learning_rate: null
     train_new_token_embeddings_only: false
-    # Freeze the rest of the backbone and fine-tune only its three highest layers.
-    train_last_n_layers: Null
+    # null: full fine-tune; N: freeze embeddings and all but the top N encoder
+    # layers. P0 starts with top-3 plus the classifier head.
+    train_last_n_layers: 3
+    # Seed the new [KEY]/[VAL] rows from meaningful existing BGE subwords before
+    # freezing them. These texts are tokenized; they are not vocabulary ids.
+    special_token_initialization:
+      enabled: false
+      key_seed_texts: [key, attribute, ключ, поле]
+      value_seed_texts: [value, значение, характеристика]
     head_learning_rate: 1.0e-4
     layerwise_lr_decay: 0.9
     weight_decay: 0.01
@@ -371,15 +405,47 @@ model_description:
     hpo_learning_rate_max: 0.00005
     hpo_weight_decay_min: 0.0
     hpo_weight_decay_max: 0.1
-    train_batch_size: 64
-    eval_batch_size: 64
-    gradient_accumulation_steps: 4
+    train_batch_size: 256
+    # Eval has no backward pass; use a larger batch independently of train.
+    eval_batch_size: 256
+    gradient_accumulation_steps: 1
     warmup_ratio: 0.06
     # Supported values: linear, cosine.
     lr_scheduler_type: cosine
     max_grad_norm: 1.0
     early_stopping_patience: 2
     auto_find_batch_size: true
+    validation:
+      # A fixed human-validation sample for progress diagnostics during a long
+      # epoch. It never controls early stopping or best-checkpoint selection.
+      fast_dev:
+        enabled: true
+        max_rows: 20000
+        every_n_optimizer_steps: 1000
+    # Train-time throughput settings. Safe optimizations are enabled by default;
+    # compilation and fixed padding shapes remain opt-in.
+    training_runtime:
+      length_bucketing:
+        enabled: true
+        # Shuffle globally, then sort only inside megabatches of this many
+        # microbatches to retain stochastic training.
+        mega_batch_multiplier: 50
+        # Keep null for minimal dynamic padding. Define discrete lengths only
+        # when benchmarking torch.compile with stable tensor shapes.
+        padding_length_buckets: null
+      dataloader:
+        num_workers: 4
+        prefetch_factor: 2
+        persistent_workers: true
+        pin_memory: true
+        non_blocking_transfer: true
+      performance_logging:
+        # Emit one compact summary per completed train epoch and persist the
+        # same records in training_metadata.json.
+        enabled: true
+      torch_compile:
+        enabled: false
+        mode: reduce-overhead
     head:
       # default keeps the Hugging Face CLS head; pooling builds the branches below.
       type: native
@@ -391,6 +457,9 @@ model_description:
       attention_hidden_dim: 192
       # Independent learned token-importance distributions, concatenated before MLP.
       attention_num_heads: 1
+      native_logit_weight: 1.0
+      attention_logit_weight: 0.0
+      train_logit_weights: false
 
   maxpooling:
     artifact_path: models/twin2attr/maxpooling.joblib

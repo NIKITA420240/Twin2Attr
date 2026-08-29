@@ -11,6 +11,7 @@ from match.config import (
     DatasetSourceSettings,
     DatasetSplitterSettings,
     MixedDatasetSettings,
+    SampleWeightModelSettings,
     load_app_config_file,
 )
 from match.data_models import BaseDatasetModel, build_data_model
@@ -260,16 +261,16 @@ class DataModelTests(unittest.TestCase):
     def test_factory_selects_configured_data_model(self) -> None:
         config = load_app_config_file(PROJECT_ROOT / "configs" / "pipeline.yaml")
 
-        self.assertIsInstance(build_data_model(config), BaseDatasetModel)
-        mixed_config = replace(
+        self.assertIsInstance(build_data_model(config), MixedDatasetModel)
+        base_config = replace(
             config,
             training=replace(
                 config.training,
                 model="boosting",
-                data_model="mix_dataset",
+                data_model="base_dataset",
             ),
         )
-        self.assertIsInstance(build_data_model(mixed_config), MixedDatasetModel)
+        self.assertIsInstance(build_data_model(base_config), BaseDatasetModel)
         codex_config = replace(
             config,
             training=replace(
@@ -412,6 +413,83 @@ class DataModelTests(unittest.TestCase):
             .item(0, 1)
             .to_list(),
             [1.0],
+        )
+
+    def test_mixed_dataset_accepts_source_weight_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            items_path = root / "items.parquet"
+            human_path = root / "human.parquet"
+            llm_path = root / "llm.parquet"
+            pl.DataFrame(
+                {
+                    "id": list(range(1, 12)),
+                    "name": [f"item {index}" for index in range(1, 12)],
+                    "category": ["a"] * 11,
+                    "attributes": ["{}"] * 11,
+                }
+            ).write_parquet(items_path)
+            pl.DataFrame(
+                {
+                    "id1": [1, 3, 5, 7],
+                    "id2": [2, 4, 6, 8],
+                    "target": [0, 1, 0, 1],
+                }
+            ).write_parquet(human_path)
+            pl.DataFrame(
+                {
+                    "id1": [9, 10, 9],
+                    "id2": [10, 11, 11],
+                    "target": [8 / 9, 8 / 9, 1 / 9],
+                }
+            ).write_parquet(llm_path)
+            settings = MixedDatasetSettings(
+                items=items_path,
+                sources=(
+                    DatasetSourceSettings(
+                        "human",
+                        human_path,
+                        3.0,
+                        None,
+                        "random",
+                        _splitter("label"),
+                    ),
+                    DatasetSourceSettings(
+                        "llm",
+                        llm_path,
+                        1.0,
+                        None,
+                        "random",
+                        _splitter("votes", votes=True),
+                        SampleWeightModelSettings(
+                            type="transitivity",
+                            enabled=True,
+                            min_comparable_neighbors=1,
+                        ),
+                    ),
+                ),
+                validation_source="human",
+                validation_fraction=0.5,
+                leakage_scope="none",
+                candidate_splits=8,
+                seed=7,
+            )
+
+            result = MixedDatasetModel(settings).load_training_splits()
+
+        self.assertTrue(
+            {
+                "id1",
+                "id2",
+                "target",
+                "sample_weight",
+                "data_source",
+            }.issubset(result.train_matches.columns)
+        )
+        self.assertIn("annotation_votes", result.train_matches.columns)
+        self.assertEqual(
+            set(result.train_matches.get_column("data_source")),
+            {"human", "llm"},
         )
 
 

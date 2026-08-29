@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from transformers import (
@@ -10,8 +11,16 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-from ...pair_encoding import add_pair_special_tokens, pair_special_token_ids
-from .head import PoolingHeadConfig, PoolingSequenceClassifier
+from ...pair_encoding import (
+    add_pair_special_tokens,
+    initialize_pair_special_token_embeddings,
+    pair_special_token_ids,
+)
+from .head import (
+    HybridSequenceClassifier,
+    PoolingHeadConfig,
+    PoolingSequenceClassifier,
+)
 from .nemotron import NemotronAttentionSequenceClassifier
 from .optimizer import (
     freeze_backbone_except_last_layers,
@@ -48,6 +57,14 @@ def _build_classifier(
             head_config=head_config
             or PoolingHeadConfig(poolings=("mean", "attention")),
         )
+    if head_type == "hybrid":
+        return HybridSequenceClassifier.from_backbone_pretrained(
+            model_path,
+            head_config=head_config
+            or PoolingHeadConfig(poolings=("attention",)),
+            id2label={0: "different", 1: "match"},
+            label2id={"different": 0, "match": 1},
+        )
     if head_type == "pooling":
         return PoolingSequenceClassifier.from_backbone_pretrained(
             model_path,
@@ -72,6 +89,9 @@ def model_factory(
     tokenizer: PreTrainedTokenizerBase,
     *,
     use_field_tokens: bool,
+    special_token_initialization_enabled: bool = False,
+    special_token_key_seed_texts: Sequence[str] = (),
+    special_token_value_seed_texts: Sequence[str] = (),
     train_new_token_embeddings_only: bool = False,
     train_last_n_layers: int | None = None,
     head_type: str = "default",
@@ -103,6 +123,13 @@ def model_factory(
             model.base_model.config.use_cache = False
         if use_field_tokens:
             add_pair_special_tokens(tokenizer, model)
+            if special_token_initialization_enabled:
+                initialize_pair_special_token_embeddings(
+                    tokenizer,
+                    model,
+                    key_seed_texts=special_token_key_seed_texts,
+                    value_seed_texts=special_token_value_seed_texts,
+                )
             if train_new_token_embeddings_only:
                 restrict_word_embedding_updates(
                     model,

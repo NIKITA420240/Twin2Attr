@@ -40,6 +40,10 @@ _EXPORTS = {
     "TransformerPredictor": (".models", "TransformerPredictor"),
     "VAL_TOKEN": (".pair_encoding", "VAL_TOKEN"),
     "add_pair_special_tokens": (".pair_encoding", "add_pair_special_tokens"),
+    "initialize_pair_special_token_embeddings": (
+        ".pair_encoding",
+        "initialize_pair_special_token_embeddings",
+    ),
     "build_trainer": (".models.factory", "build_trainer"),
     "encode_attribute_pairs": (
         ".models.maxpooling.features",
@@ -54,6 +58,7 @@ _EXPORTS = {
     ),
     "load_app_config": (".config", "load_app_config"),
     "load_app_config_file": (".config", "load_app_config_file"),
+    "label_dataset": (".workflows.label", "label_dataset"),
     "load_trained_classifier": (
         ".models.transformer.predictor",
         "load_trained_classifier",

@@ -166,6 +166,13 @@ def _head_description(config: AppConfig) -> str:
     head = config.model_description.transformer.head
     if head.type == "default":
         return "Default HF: CLS -> Dropout -> Linear(2)"
+    if head.type == "hybrid":
+        mode = "trainable" if head.train_logit_weights else "fixed"
+        return (
+            "Hybrid("
+            f"native={head.native_logit_weight}, "
+            f"attention={head.attention_logit_weight}, weights={mode})"
+        )
     poolings = ", ".join(
         "AttentionPool" if pooling == "attention" else pooling.upper()
         for pooling in head.poolings

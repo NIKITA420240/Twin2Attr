@@ -18,7 +18,7 @@ TRANSFORMER_PROFILES = frozenset(
 )
 
 PROFILE_HEAD_TYPES = {
-    SEQUENCE_CLASSIFIER_PROFILE: frozenset({"default", "pooling"}),
+    SEQUENCE_CLASSIFIER_PROFILE: frozenset({"default", "pooling", "hybrid"}),
     PROMPTED_BINARY_RERANKER_PROFILE: frozenset({"native", "attention_pooling"}),
 }
 

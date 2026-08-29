@@ -46,12 +46,9 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(confidence_weighting.min_weight_multiplier, 0.2)
         self.assertEqual(confidence_weighting.power, 1.0)
-        self.assertEqual(self.config.training.model, "stacking")
-        self.assertEqual(self.config.training.data_model, "base_dataset")
-        self.assertEqual(
-            self.config.training.augmentation_model,
-            "attribute_word_dropout",
-        )
+        self.assertEqual(self.config.training.model, "transformer")
+        self.assertEqual(self.config.training.data_model, "mix_dataset")
+        self.assertIsNone(self.config.training.augmentation_model)
         self.assertIsNone(self.config.training.data_postprocessing_model)
         self.assertEqual(self.config.inference.model, "transformer")
         self.assertIsNone(self.config.inference.augmentation_model)
@@ -68,7 +65,7 @@ class AppConfigTests(unittest.TestCase):
             self.config.inference.solution_path,
             self.config.training.solution_path,
         )
-        self.assertEqual(self.config.inference.transformer.batch_size, 512)
+        self.assertEqual(self.config.inference.transformer.batch_size, 1)
         self.assertEqual(self.config.inference.transformer.dtype, "bfloat16")
         self.assertEqual(self.config.inference.transformer.backend, "pytorch")
         self.assertEqual(self.config.inference.transformer.num_workers, 8)
@@ -93,6 +90,26 @@ class AppConfigTests(unittest.TestCase):
         self.assertTrue(
             self.config.inference.transformer.torch_compile.dynamic
         )
+        training_runtime = self.config.model_description.transformer.training_runtime
+        self.assertTrue(training_runtime.length_bucketing.enabled)
+        self.assertEqual(
+            training_runtime.length_bucketing.mega_batch_multiplier,
+            50,
+        )
+        self.assertIsNone(
+            training_runtime.length_bucketing.padding_length_buckets
+        )
+        self.assertEqual(training_runtime.dataloader.num_workers, 4)
+        self.assertEqual(training_runtime.dataloader.prefetch_factor, 2)
+        self.assertTrue(training_runtime.dataloader.persistent_workers)
+        self.assertTrue(training_runtime.dataloader.pin_memory)
+        self.assertTrue(training_runtime.dataloader.non_blocking_transfer)
+        self.assertTrue(training_runtime.performance_logging.enabled)
+        self.assertFalse(training_runtime.torch_compile.enabled)
+        fast_dev = self.config.model_description.transformer.validation.fast_dev
+        self.assertTrue(fast_dev.enabled)
+        self.assertEqual(fast_dev.max_rows, 20_000)
+        self.assertEqual(fast_dev.every_n_optimizer_steps, 1_000)
         onnxruntime = self.config.inference.transformer.onnxruntime
         self.assertEqual(onnxruntime.provider, "cuda")
         self.assertEqual(onnxruntime.device_id, 0)
@@ -125,6 +142,15 @@ class AppConfigTests(unittest.TestCase):
             "attribute_shuffle",
         )
         self.assertIsNone(self.config.analysis.data_postprocessing_model)
+        labeling = self.config.labeling
+        self.assertEqual(labeling.lower_p, 0.54)
+        self.assertEqual(labeling.upper_p, 0.56)
+        self.assertEqual(labeling.sample_size, 100000)
+        self.assertEqual(labeling.seed, self.config.runtime.seed)
+        self.assertEqual(labeling.llm.max_concurrency, 64)
+        self.assertEqual(labeling.llm.min_concurrency, 32)
+        self.assertEqual(labeling.llm.max_rounds, 1000)
+        self.assertEqual(labeling.llm.token_env, "LLM_PROXY_TOKEN")
         augmentation = self.config.augmentation_models.attribute_shuffle
         self.assertEqual(augmentation.shuffled_copies, 1)
         self.assertFalse(augmentation.keep_original)
@@ -165,7 +191,7 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             self.config.model_description.transformer.artifact_dir,
-            PROJECT_ROOT / "models" / "twin2attr" / "stacking" / "transformer",
+            PROJECT_ROOT / "models" / "twin2attr" / "nemotron-native",
         )
         self.assertEqual(
             self.config.model_description.stacking.artifact_dir,
@@ -173,7 +199,11 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             self.config.model_description.transformer.pretrained_model_path,
-            "models/rubert-base-cased",
+            "models/llama-nemotron-rerank-1b-v2",
+        )
+        self.assertEqual(
+            self.config.model_description.transformer.profile,
+            "prompted_binary_reranker",
         )
         encoding = self.config.model_description.transformer.pair_encoding
         batch_fields = (
@@ -186,13 +216,26 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(onnx_export.opset, 18)
         self.assertEqual(onnx_export.precision, "float16")
         self.assertTrue(onnx_export.export_classifier)
-        self.assertTrue(onnx_export.export_encoder)
-        self.assertTrue(encoding.use_field_tokens)
+        self.assertFalse(onnx_export.export_encoder)
+        self.assertFalse(encoding.use_field_tokens)
+        self.assertFalse(
+            self.config.model_description.transformer.special_token_initialization.enabled
+        )
         self.assertFalse(
             self.config.model_description.transformer.train_new_token_embeddings_only
         )
-        self.assertIsNone(
-            self.config.model_description.transformer.train_last_n_layers
+        self.assertEqual(
+            self.config.model_description.transformer.train_last_n_layers,
+            3,
+        )
+        self.assertEqual(self.config.model_description.transformer.max_epochs, 2)
+        self.assertEqual(
+            self.config.model_description.transformer.train_batch_size,
+            256,
+        )
+        self.assertEqual(
+            self.config.model_description.transformer.gradient_accumulation_steps,
+            1,
         )
         self.assertEqual(
             self.config.model_description.transformer.lr_scheduler_type,
@@ -203,7 +246,7 @@ class AppConfigTests(unittest.TestCase):
             int,
         )
         self.assertEqual(encoding.max_attribute_value_chars, 256)
-        self.assertEqual(encoding.max_length, 256)
+        self.assertEqual(encoding.max_length, 128)
         self.assertEqual(base.stacking_train_fraction, 0.15)
         self.assertEqual(
             self.config.model_description.stacking.base_model,
@@ -302,6 +345,9 @@ class AppConfigTests(unittest.TestCase):
                 "model_description.transformer.hpo_trials=1",
                 "model_description.transformer.learning_rate=0.00001",
                 "model_description.transformer.embeddings_learning_rate=0.000005",
+                "model_description.transformer.profile=sequence_classifier",
+                "model_description.transformer.head.type=default",
+                "model_description.transformer.pair_encoding.use_field_tokens=true",
                 "model_description.transformer.train_new_token_embeddings_only=true",
                 "model_description.transformer.train_last_n_layers=3",
                 "model_description.transformer.lr_scheduler_type=cosine",
@@ -327,16 +373,22 @@ class AppConfigTests(unittest.TestCase):
     def test_loads_composable_transformer_head(self) -> None:
         head = self.config.model_description.transformer.head
 
-        self.assertEqual(head.type, "pooling")
+        self.assertEqual(head.type, "native")
         self.assertEqual(head.poolings, ("cls", "attention"))
         self.assertEqual(head.mlp_hidden_dims, (384,))
         self.assertEqual(head.attention_hidden_dim, 192)
         self.assertEqual(head.attention_num_heads, 1)
+        self.assertEqual(head.native_logit_weight, 1.0)
+        self.assertEqual(head.attention_logit_weight, 0.0)
+        self.assertFalse(head.train_logit_weights)
 
     def test_can_select_original_transformer_head(self) -> None:
         config = load_app_config_file(
             PROJECT_ROOT / "configs" / "pipeline.yaml",
-            ["model_description.transformer.head.type=default"],
+            [
+                "model_description.transformer.profile=sequence_classifier",
+                "model_description.transformer.head.type=default",
+            ],
         )
 
         self.assertEqual(config.model_description.transformer.head.type, "default")

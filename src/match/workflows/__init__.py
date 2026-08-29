@@ -7,6 +7,7 @@ from typing import Any
 _EXPORTS = {
     "analyze": (".analyze", "analyze"),
     "initialize": (".initialize", "initialize"),
+    "label_dataset": (".label", "label_dataset"),
     "train": (".train", "train"),
 }
 

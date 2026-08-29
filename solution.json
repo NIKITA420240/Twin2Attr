@@ -93,7 +93,7 @@
     "precision": "float16",
     "opset": 18,
     "classifier_path": "onnx/classifier.onnx",
-    "encoder_path": "onnx/encoder.onnx",
+    "encoder_path": null,
     "dynamic_batch": true,
     "dynamic_sequence_length": true
   },
