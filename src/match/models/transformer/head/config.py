@@ -17,6 +17,8 @@ class PoolingHeadConfig:
     dropout: float = 0.1
     attention_hidden_dim: int | None = None
     attention_num_heads: int = 1
+    native_logit_weight: float = 1.0
+    attention_logit_weight: float = 0.0
 
     def __post_init__(self) -> None:
         normalized = tuple(pooling.strip().lower() for pooling in self.poolings)
@@ -38,6 +40,10 @@ class PoolingHeadConfig:
             raise ValueError("attention_hidden_dim must be positive or None")
         if self.attention_num_heads < 1:
             raise ValueError("attention_num_heads must be positive")
+        if self.native_logit_weight < 0.0 or self.attention_logit_weight < 0.0:
+            raise ValueError("hybrid logit weights must be non-negative")
+        if self.native_logit_weight == 0.0 and self.attention_logit_weight == 0.0:
+            raise ValueError("at least one hybrid logit weight must be positive")
         object.__setattr__(self, "poolings", normalized)
 
     def to_dict(self) -> dict[str, object]:
@@ -47,6 +53,8 @@ class PoolingHeadConfig:
             "dropout": self.dropout,
             "attention_hidden_dim": self.attention_hidden_dim,
             "attention_num_heads": self.attention_num_heads,
+            "native_logit_weight": self.native_logit_weight,
+            "attention_logit_weight": self.attention_logit_weight,
         }
 
     @classmethod
@@ -63,6 +71,8 @@ class PoolingHeadConfig:
                 else int(values["attention_hidden_dim"])
             ),
             attention_num_heads=int(values.get("attention_num_heads", 1)),
+            native_logit_weight=float(values.get("native_logit_weight", 1.0)),
+            attention_logit_weight=float(values.get("attention_logit_weight", 0.0)),
         )
 
 

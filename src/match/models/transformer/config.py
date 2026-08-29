@@ -27,6 +27,12 @@ class SequenceClassifierConfig:
     auto_find_batch_size: bool = True
     seed: int = 42
     use_field_tokens: bool = True
+    special_token_initialization_enabled: bool = False
+    special_token_key_seed_texts: tuple[str, ...] = ()
+    special_token_value_seed_texts: tuple[str, ...] = ()
+    fast_dev_validation_enabled: bool = False
+    fast_dev_validation_max_rows: int = 20_000
+    fast_dev_validation_every_n_optimizer_steps: int = 1_000
     batch_fields: bool = False
     field_chunk_size: int = 16_384
     max_attribute_value_chars: int | None = None
@@ -43,6 +49,17 @@ class SequenceClassifierConfig:
     lr_scheduler_type: str = "linear"
     head_learning_rate: float | None = None
     layerwise_lr_decay: float = 1.0
+    train_length_bucketing: bool = True
+    train_mega_batch_multiplier: int = 50
+    train_padding_length_buckets: tuple[int, ...] | None = None
+    dataloader_num_workers: int = 0
+    dataloader_prefetch_factor: int = 2
+    dataloader_persistent_workers: bool = False
+    dataloader_pin_memory: bool = True
+    non_blocking_transfer: bool = True
+    performance_logging: bool = True
+    torch_compile: bool = False
+    torch_compile_mode: str = "reduce-overhead"
     onnx_export_enabled: bool = False
     onnx_opset: int = 18
     onnx_precision: str = "float16"
@@ -89,8 +106,48 @@ class SequenceClassifierConfig:
             raise ValueError("max_grad_norm must be positive")
         if self.early_stopping_patience < 1:
             raise ValueError("early_stopping_patience must be positive")
+        if self.fast_dev_validation_max_rows < 1:
+            raise ValueError("fast_dev_validation_max_rows must be positive")
+        if self.fast_dev_validation_every_n_optimizer_steps < 1:
+            raise ValueError(
+                "fast_dev_validation_every_n_optimizer_steps must be positive"
+            )
         if self.field_chunk_size < 1:
             raise ValueError("field_chunk_size must be positive")
+        if self.train_mega_batch_multiplier < 1:
+            raise ValueError("train_mega_batch_multiplier must be positive")
+        if self.dataloader_num_workers < 0:
+            raise ValueError("dataloader_num_workers must not be negative")
+        if self.dataloader_prefetch_factor < 1:
+            raise ValueError("dataloader_prefetch_factor must be positive")
+        if self.dataloader_num_workers == 0 and self.dataloader_persistent_workers:
+            raise ValueError(
+                "dataloader_persistent_workers requires dataloader_num_workers > 0"
+            )
+        buckets = self.train_padding_length_buckets
+        if buckets is not None:
+            if not buckets or any(
+                isinstance(value, bool) or not isinstance(value, int) or value < 1
+                for value in buckets
+            ):
+                raise ValueError(
+                    "train_padding_length_buckets must contain positive integers"
+                )
+            if tuple(sorted(set(buckets))) != buckets:
+                raise ValueError(
+                    "train_padding_length_buckets must be strictly increasing"
+                )
+            if self.max_length is not None and buckets[-1] != self.max_length:
+                raise ValueError(
+                    "the final train padding bucket must equal max_length"
+                )
+        if self.torch_compile_mode not in {
+            "default",
+            "reduce-overhead",
+            "max-autotune",
+            "max-autotune-no-cudagraphs",
+        }:
+            raise ValueError("unsupported torch_compile_mode")
         if (
             self.max_attribute_value_chars is not None
             and self.max_attribute_value_chars < 1
@@ -109,12 +166,25 @@ class SequenceClassifierConfig:
             raise ValueError("max_length_sample_size must be positive")
         if self.max_length_hard_cap < 8:
             raise ValueError("max_length_hard_cap must be at least 8")
-        if self.head_type not in {"default", "pooling"}:
-            raise ValueError("head_type must be 'default' or 'pooling'")
+        if self.head_type not in {"default", "pooling", "hybrid"}:
+            raise ValueError("head_type must be 'default', 'pooling' or 'hybrid'")
         if self.train_new_token_embeddings_only and not self.use_field_tokens:
             raise ValueError(
                 "train_new_token_embeddings_only requires use_field_tokens"
             )
+        if self.special_token_initialization_enabled:
+            if not self.use_field_tokens:
+                raise ValueError(
+                    "special_token_initialization requires use_field_tokens"
+                )
+            for seed_texts, name in (
+                (self.special_token_key_seed_texts, "key"),
+                (self.special_token_value_seed_texts, "value"),
+            ):
+                if not seed_texts or any(not value.strip() for value in seed_texts):
+                    raise ValueError(
+                        f"special_token_{name}_seed_texts must be non-empty"
+                    )
         if self.train_last_n_layers is not None and self.train_last_n_layers < 1:
             raise ValueError("train_last_n_layers must be positive or None")
         if self.lr_scheduler_type not in {"linear", "cosine"}:
@@ -152,6 +222,12 @@ class ResolvedTrainingConfig:
     layerwise_lr_decay: float
     weight_decay: float
     use_field_tokens: bool
+    special_token_initialization_enabled: bool
+    special_token_key_seed_texts: tuple[str, ...]
+    special_token_value_seed_texts: tuple[str, ...]
+    fast_dev_validation_enabled: bool
+    fast_dev_validation_max_rows: int
+    fast_dev_validation_every_n_optimizer_steps: int
     batch_fields: bool
     field_chunk_size: int
     max_attribute_value_chars: int | None
@@ -161,6 +237,17 @@ class ResolvedTrainingConfig:
     gradient_clip_norm: float
     early_stopping_patience: int
     auto_find_batch_size: bool
+    train_length_bucketing: bool
+    train_mega_batch_multiplier: int
+    train_padding_length_buckets: tuple[int, ...] | None
+    dataloader_num_workers: int
+    dataloader_prefetch_factor: int
+    dataloader_persistent_workers: bool
+    dataloader_pin_memory: bool
+    non_blocking_transfer: bool
+    performance_logging: bool
+    torch_compile: bool
+    torch_compile_mode: str
 
 
 @dataclass(frozen=True)

@@ -230,11 +230,19 @@ model_description:
     # Used directly when hpo_trials=1; otherwise these are initial values.
     # Base LR for Transformer encoder layers and the value tuned by HPO.
     learning_rate: 3.0e-5
-    # Only the newly added [KEY]/[VAL] rows use this embedding LR.
-    embeddings_learning_rate: 1.0e-6
+    # Unused while input embeddings are frozen. Set a positive value only with
+    # train_new_token_embeddings_only=true.
+    embeddings_learning_rate: null
     train_new_token_embeddings_only: false
-    # Freeze the rest of the backbone and fine-tune only its three highest layers.
-    train_last_n_layers: Null
+    # null: full fine-tune; N: freeze embeddings and all but the top N encoder
+    # layers. P0 starts with top-3 plus the classifier head.
+    train_last_n_layers: 3
+    # Seed the new [KEY]/[VAL] rows from meaningful existing BGE subwords before
+    # freezing them. These texts are tokenized; they are not vocabulary ids.
+    special_token_initialization:
+      enabled: true
+      key_seed_texts: [key, attribute, ключ, поле]
+      value_seed_texts: [value, значение, характеристика]
     head_learning_rate: 1.0e-4
     layerwise_lr_decay: 0.9
     weight_decay: 0.01
@@ -243,7 +251,8 @@ model_description:
     hpo_weight_decay_min: 0.0
     hpo_weight_decay_max: 0.1
     train_batch_size: 64
-    eval_batch_size: 64
+    # Eval has no backward pass; use a larger batch independently of train.
+    eval_batch_size: 256
     gradient_accumulation_steps: 4
     warmup_ratio: 0.06
     # Supported values: linear, cosine.
@@ -251,9 +260,43 @@ model_description:
     max_grad_norm: 1.0
     early_stopping_patience: 2
     auto_find_batch_size: true
+    validation:
+      # A fixed human-validation sample for progress diagnostics during a long
+      # epoch. It never controls early stopping or best-checkpoint selection.
+      fast_dev:
+        enabled: true
+        max_rows: 20000
+        every_n_optimizer_steps: 1000
+    # Train-time throughput settings. Safe optimizations are enabled by default;
+    # compilation and fixed padding shapes remain opt-in.
+    training_runtime:
+      length_bucketing:
+        enabled: true
+        # Shuffle globally, then sort only inside megabatches of this many
+        # microbatches to retain stochastic training.
+        mega_batch_multiplier: 50
+        # Keep null for minimal dynamic padding. Define discrete lengths only
+        # when benchmarking torch.compile with stable tensor shapes.
+        padding_length_buckets: null
+      dataloader:
+        num_workers: 4
+        prefetch_factor: 2
+        persistent_workers: true
+        pin_memory: true
+        non_blocking_transfer: true
+      performance_logging:
+        # Emit one compact summary per completed train epoch and persist the
+        # same records in training_metadata.json.
+        enabled: true
+      torch_compile:
+        enabled: false
+        mode: reduce-overhead
     head:
-      # default keeps the Hugging Face CLS head; pooling builds the branches below.
-      type: pooling
+      # default: Hugging Face two-class classifier head (reinitialized when the
+      # checkpoint head shape differs); pooling: a new pooling classifier;
+      # hybrid: pretrained scalar reranker head plus a new attention branch.
+      # Use hybrid only for a checkpoint whose native head emits one score/pair.
+      type: hybrid
       # Supported values: cls, mean, max, attention. Their outputs are concatenated.
       poolings: [cls, attention]
       # Empty list gives a single linear classifier after pooling.
@@ -262,6 +305,8 @@ model_description:
       attention_hidden_dim: 192
       # Independent learned token-importance distributions, concatenated before MLP.
       attention_num_heads: 1
+      native_logit_weight: 1.0
+      attention_logit_weight: 0.0
 
   maxpooling:
     artifact_path: models/twin2attr/maxpooling.joblib

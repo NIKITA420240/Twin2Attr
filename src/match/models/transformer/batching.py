@@ -43,7 +43,21 @@ def length_bucket_order(
     max_attribute_value_chars: int | None = None,
 ) -> np.ndarray:
     """Return sorted-position to original-position indices for bucketing."""
-    estimates = np.fromiter(
+    estimates = estimated_pair_lengths(
+        pairs,
+        max_attribute_value_tokens,
+        max_attribute_value_chars,
+    )
+    return np.argsort(estimates, kind="stable")
+
+
+def estimated_pair_lengths(
+    pairs: Sequence[PreparedPair],
+    max_attribute_value_tokens: int | None,
+    max_attribute_value_chars: int | None = None,
+) -> np.ndarray:
+    """Estimate pair lengths once for inference or train-time bucketing."""
+    return np.fromiter(
         (
             _estimated_card_length(
                 pair.left,
@@ -60,7 +74,6 @@ def length_bucket_order(
         dtype=np.int64,
         count=len(pairs),
     )
-    return np.argsort(estimates, kind="stable")
 
 
 class _OrderedPreparedPairDataset(Dataset):
@@ -179,6 +192,7 @@ class TransformerBatchingSettings:
 
 __all__ = [
     "TransformerBatchingSettings",
+    "estimated_pair_lengths",
     "inference_dataset",
     "inference_loader",
     "length_bucket_order",

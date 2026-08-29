@@ -79,6 +79,26 @@ class AppConfigTests(unittest.TestCase):
         self.assertTrue(
             self.config.inference.transformer.torch_compile.dynamic
         )
+        training_runtime = self.config.model_description.transformer.training_runtime
+        self.assertTrue(training_runtime.length_bucketing.enabled)
+        self.assertEqual(
+            training_runtime.length_bucketing.mega_batch_multiplier,
+            50,
+        )
+        self.assertIsNone(
+            training_runtime.length_bucketing.padding_length_buckets
+        )
+        self.assertEqual(training_runtime.dataloader.num_workers, 4)
+        self.assertEqual(training_runtime.dataloader.prefetch_factor, 2)
+        self.assertTrue(training_runtime.dataloader.persistent_workers)
+        self.assertTrue(training_runtime.dataloader.pin_memory)
+        self.assertTrue(training_runtime.dataloader.non_blocking_transfer)
+        self.assertTrue(training_runtime.performance_logging.enabled)
+        self.assertFalse(training_runtime.torch_compile.enabled)
+        fast_dev = self.config.model_description.transformer.validation.fast_dev
+        self.assertTrue(fast_dev.enabled)
+        self.assertEqual(fast_dev.max_rows, 20_000)
+        self.assertEqual(fast_dev.every_n_optimizer_steps, 1_000)
         onnxruntime = self.config.inference.transformer.onnxruntime
         self.assertEqual(onnxruntime.provider, "cuda")
         self.assertEqual(onnxruntime.device_id, 0)
@@ -278,7 +298,7 @@ class AppConfigTests(unittest.TestCase):
     def test_loads_composable_transformer_head(self) -> None:
         head = self.config.model_description.transformer.head
 
-        self.assertEqual(head.type, "pooling")
+        self.assertEqual(head.type, "hybrid")
         self.assertEqual(head.poolings, ("cls", "attention"))
         self.assertEqual(head.mlp_hidden_dims, (384,))
         self.assertEqual(head.attention_hidden_dim, 192)

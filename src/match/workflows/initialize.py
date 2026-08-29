@@ -63,6 +63,15 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
             parameters.pretrained_model_path,
             tokenizer,
             use_field_tokens=encoding.use_field_tokens,
+            special_token_initialization_enabled=(
+                parameters.special_token_initialization.enabled
+            ),
+            special_token_key_seed_texts=(
+                parameters.special_token_initialization.key_seed_texts
+            ),
+            special_token_value_seed_texts=(
+                parameters.special_token_initialization.value_seed_texts
+            ),
             head_type=parameters.head.type,
             head_config=head_config,
         )()
@@ -89,6 +98,15 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
             "use_field_tokens": encoding.use_field_tokens,
             "max_attribute_value_chars": encoding.max_attribute_value_chars,
             "max_attribute_value_tokens": encoding.max_attribute_value_tokens,
+            "special_token_initialization": {
+                "enabled": parameters.special_token_initialization.enabled,
+                "key_seed_texts": (
+                    parameters.special_token_initialization.key_seed_texts
+                ),
+                "value_seed_texts": (
+                    parameters.special_token_initialization.value_seed_texts
+                ),
+            },
         }
         (output_path / "initialization_metadata.json").write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",

@@ -397,6 +397,120 @@ uv run python run.py train \
 
 При `hpo_trials > 1` итоговые `learning_rate` и `weight_decay` выбирает Optuna
 из диапазонов `hpo_learning_rate_min/max` и `hpo_weight_decay_min/max`.
+
+### Частичный fine-tuning Transformer
+
+Для BGE reranker по умолчанию включён P0-режим: обучаются только три верхних
+encoder layer и classifier head. Input embeddings, включая добавленные
+`[KEY]`/`[VAL]`, и более ранние слои backbone заморожены. Это уменьшает
+потребление памяти optimizer/gradient и не строит backward-граф через нижнюю
+часть модели.
+
+```yaml
+model_description:
+  transformer:
+    learning_rate: 3.0e-5
+    train_last_n_layers: 3
+    train_new_token_embeddings_only: false
+    embeddings_learning_rate: null
+    special_token_initialization:
+      enabled: true
+      key_seed_texts: [key, attribute, ключ, поле]
+      value_seed_texts: [value, значение, характеристика]
+    head_learning_rate: 1.0e-4
+    layerwise_lr_decay: 0.9
+```
+
+`train_last_n_layers` одновременно является переключателем и числом
+обучаемых верхних блоков:
+
+- `null` — полный fine-tune: обучаются embeddings, все encoder layers и head;
+- `3` — P0: обучаются top-3 и head;
+- `5` или `6` — абляции с большей адаптационной способностью;
+- значение больше количества layers модели завершается понятной ошибкой.
+
+При численном `train_last_n_layers` значение
+`train_new_token_embeddings_only: false` оставляет всю embedding matrix frozen.
+Не включайте `train_new_token_embeddings_only: true` в P0: хотя optimizer
+обновляет только две новые строки, autograd всё равно должен пройти до
+embedding layer, что заметно ухудшает экономию памяти и времени. Этот режим
+оставлен только для отдельного эксперимента с адаптацией `[KEY]`/`[VAL]`; в
+нём `embeddings_learning_rate` задаёт LR этих строк.
+
+При `special_token_initialization.enabled=true` новые `[KEY]` и `[VAL]`
+инициализируются до freeze. Каждый текст из `key_seed_texts` или
+`value_seed_texts` разбирается текущим BGE tokenizer на subword ids; среднее
+их существующих embedding-векторов записывается соответственно в `[KEY]` или
+`[VAL]`. Это обычные слова-доноры, а не ручные номера vocabulary. Например,
+`значение` может состоять из нескольких subword-токенов, и все они войдут в
+среднее. Пустой список или текст, дающий только special/unknown tokens,
+завершает запуск ошибкой, чтобы не получить случайную инициализацию.
+
+Для сравнимых экспериментов меняйте только глубину и сохраняйте одинаковыми
+датасет, seed, `learning_rate` и effective batch:
+
+```bash
+# P0: top-3 + head
+uv run python run.py train \
+  model_description.transformer.train_last_n_layers=3
+
+# Абляция: top-6 + head
+uv run python run.py train \
+  model_description.transformer.train_last_n_layers=6
+
+# Полный fine-tune
+uv run python run.py train \
+  model_description.transformer.train_last_n_layers=null
+```
+
+### Скорость обучения Transformer
+
+Без дополнительных флагов train использует динамический padding, length-aware
+sampler и неблокирующую передачу батчей на GPU. Sampler сначала случайно
+перемешивает примеры, затем упорядочивает только внутри `mega-batch`; поэтому
+длинные и короткие карточки реже попадают в один batch, но глобальный порядок
+не превращается в сортировку по длине. В конце каждой train-эпохи пишется ровно
+одна компактная строка с `examples/s`, `real_tokens/s`, `padded_tokens/s`,
+эффективностью padding и пиком CUDA-памяти. Те же записи сохраняются в
+`training_metadata.json` как `performance_history`.
+
+В `model_description.transformer.training_runtime` автоматически включены:
+
+- `length_bucketing.enabled=true` и `mega_batch_multiplier=50`;
+- четыре worker'а DataLoader, prefetch, persistent workers и pinned memory;
+- `non_blocking_transfer=true`;
+- эпоховое performance-логирование.
+
+Обычно менять их не нужно. Для машины с другой CPU-производительностью можно
+переопределить workers, например:
+
+```bash
+uv run python run.py train \
+  model_description.transformer.training_runtime.dataloader.num_workers=8
+```
+
+Две опции намеренно выключены по умолчанию, поскольку требуют замера на
+конкретной модели и H100:
+
+```yaml
+model_description:
+  transformer:
+    training_runtime:
+      length_bucketing:
+        # Ограничивает число форм тензоров; последний bucket равен max_length.
+        padding_length_buckets: [128, 192, 256]
+      torch_compile:
+        enabled: true
+        mode: reduce-overhead
+```
+
+`padding_length_buckets` полезен прежде всего вместе с `torch_compile`: он
+округляет длину batch до ближайшей указанной длины, снижая число перекомпиляций
+ценой дополнительного padding. Перед постоянным включением сравните
+`real_tokens/s`, `padded_tokens/s`, peak CUDA memory и PR-AUC в metadata хотя
+бы на одной полной эпохе. Чтобы откатить sampler для A/B, задайте
+`length_bucketing.enabled=false`.
+
 Параметры финального Transformer-инференса вынесены в секцию `inference`:
 `inference.transformer.batch_size` задаёт размер батча, а
 `inference.transformer.dtype` — точность вычислений (`float32`, `float16` или

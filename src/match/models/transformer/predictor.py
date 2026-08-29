@@ -29,7 +29,12 @@ from .batching import (
     restore_original_order,
 )
 from .executor import TransformerExecutor, TransformerExecutorOutOfMemoryError
-from .head import PoolingSequenceClassifier, PoolingSequenceClassifierConfig
+from .head import (
+    HybridSequenceClassifier,
+    HybridSequenceClassifierConfig,
+    PoolingSequenceClassifier,
+    PoolingSequenceClassifierConfig,
+)
 from .pytorch_executor import (
     CompiledForward,
     PyTorchTransformerExecutor,
@@ -72,7 +77,9 @@ def load_trained_classifier(
     tokenizer = AutoTokenizer.from_pretrained(model_dir, use_fast=True)
     config_path = Path(model_dir) / "config.json"
     config_values = json.loads(config_path.read_text(encoding="utf-8"))
-    if config_values.get("model_type") == PoolingSequenceClassifierConfig.model_type:
+    if config_values.get("model_type") == HybridSequenceClassifierConfig.model_type:
+        model = HybridSequenceClassifier.from_pretrained(model_dir)
+    elif config_values.get("model_type") == PoolingSequenceClassifierConfig.model_type:
         model = PoolingSequenceClassifier.from_pretrained(model_dir)
     else:
         model = AutoModelForSequenceClassification.from_pretrained(model_dir)

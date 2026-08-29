@@ -28,10 +28,16 @@ from ...pair_encoding import (
 from ...prepare_data import PreparedPair
 from ..artifacts import TrainingArtifacts
 from .config import ResolvedTrainingConfig, SequenceClassifierConfig, TrainingResult
+from .batching import estimated_pair_lengths
 from .head import PoolingHeadConfig
 from .metrics import compute_class_weights, compute_macro_pr_auc
 from .model import WeightedSequenceTrainer, model_factory
 from .optimizer import LearningRateMultipliers
+from .train_runtime import (
+    EpochPerformanceCallback,
+    EpochPerformanceTracker,
+    stratified_sample_indices,
+)
 
 
 def _training_arguments(
@@ -69,8 +75,23 @@ def _training_arguments(
         "data_seed": config.seed,
         "fp16": torch.cuda.is_available() and not torch.cuda.is_bf16_supported(),
         "bf16": torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
+        "dataloader_num_workers": config.dataloader_num_workers,
+        "dataloader_pin_memory": config.dataloader_pin_memory,
     }
     parameters = inspect.signature(TrainingArguments).parameters
+    if config.dataloader_num_workers > 0:
+        if "dataloader_prefetch_factor" in parameters:
+            kwargs["dataloader_prefetch_factor"] = (
+                config.dataloader_prefetch_factor
+            )
+        if "dataloader_persistent_workers" in parameters:
+            kwargs["dataloader_persistent_workers"] = (
+                config.dataloader_persistent_workers
+            )
+    if "torch_compile" in parameters:
+        kwargs["torch_compile"] = config.torch_compile
+    if config.torch_compile and "torch_compile_mode" in parameters:
+        kwargs["torch_compile_mode"] = config.torch_compile_mode
     if "warmup_ratio" in parameters:
         kwargs["warmup_ratio"] = config.warmup_ratio
     else:
@@ -171,6 +192,28 @@ def train_sequence_classifier(
             max_attribute_value_tokens=config.max_attribute_value_tokens,
         )
     logger.info("Max input length: {}", max_length)
+    train_pair_lengths = None
+    if config.train_length_bucketing:
+        train_pair_lengths = estimated_pair_lengths(
+            train_pairs,
+            max_attribute_value_tokens=config.max_attribute_value_tokens,
+            max_attribute_value_chars=config.max_attribute_value_chars,
+        )
+    logger.info(
+        "Train runtime: length_bucketing={}, mega_batch_multiplier={}, "
+        "padding_length_buckets={}, workers={}, prefetch_factor={}, "
+        "persistent_workers={}, pin_memory={}, non_blocking_transfer={}, "
+        "torch_compile={}",
+        config.train_length_bucketing,
+        config.train_mega_batch_multiplier,
+        config.train_padding_length_buckets,
+        config.dataloader_num_workers,
+        config.dataloader_prefetch_factor,
+        config.dataloader_persistent_workers,
+        config.dataloader_pin_memory,
+        config.non_blocking_transfer,
+        config.torch_compile,
+    )
 
     train_dataset = PreparedPairDataset(
         train_pairs,
@@ -185,11 +228,17 @@ def train_sequence_classifier(
         max_attribute_value_tokens=config.max_attribute_value_tokens,
         batch_fields=config.batch_fields,
         field_chunk_size=config.field_chunk_size,
+        padding_length_buckets=config.train_padding_length_buckets,
     )
     initialize_model = model_factory(
         config.model_path,
         tokenizer,
         use_field_tokens=config.use_field_tokens,
+        special_token_initialization_enabled=(
+            config.special_token_initialization_enabled
+        ),
+        special_token_key_seed_texts=config.special_token_key_seed_texts,
+        special_token_value_seed_texts=config.special_token_value_seed_texts,
         train_new_token_embeddings_only=config.train_new_token_embeddings_only,
         train_last_n_layers=config.train_last_n_layers,
         head_type=config.head_type,
@@ -209,6 +258,26 @@ def train_sequence_classifier(
         compute_macro_pr_auc,
         categories=validation_categories,
     )
+    fast_dev_dataset = None
+    fast_dev_metric = None
+    if config.fast_dev_validation_enabled:
+        fast_dev_indices = stratified_sample_indices(
+            validation_labels,
+            max_rows=config.fast_dev_validation_max_rows,
+            seed=config.seed,
+        )
+        fast_dev_pairs = [validation_pairs[index] for index in fast_dev_indices]
+        fast_dev_dataset = PreparedPairDataset(fast_dev_pairs)
+        fast_dev_metric = partial(
+            compute_macro_pr_auc,
+            categories=[pair.category for pair in fast_dev_pairs],
+        )
+        logger.info(
+            "Fast-dev validation: rows={}, requested_rows={}, every_steps={}",
+            len(fast_dev_pairs),
+            config.fast_dev_validation_max_rows,
+            config.fast_dev_validation_every_n_optimizer_steps,
+        )
     if config.hpo_trials > 1:
         hpo_trainer = WeightedSequenceTrainer(
             args=_training_arguments(
@@ -223,6 +292,10 @@ def train_sequence_classifier(
             compute_metrics=validation_metric,
             class_weights=class_weights,
             learning_rate_multipliers=learning_rate_multipliers,
+            train_pair_lengths=train_pair_lengths,
+            length_bucketing=config.train_length_bucketing,
+            mega_batch_multiplier=config.train_mega_batch_multiplier,
+            non_blocking_transfer=config.non_blocking_transfer,
         )
         best_run = hpo_trainer.hyperparameter_search(
             backend="optuna",
@@ -244,6 +317,16 @@ def train_sequence_classifier(
         config,
         **best_hyperparameters,
     )
+    performance_tracker = EpochPerformanceTracker(
+        enabled=config.performance_logging
+    )
+    callbacks = [
+        EarlyStoppingCallback(
+            early_stopping_patience=config.early_stopping_patience
+        )
+    ]
+    if config.performance_logging:
+        callbacks.append(EpochPerformanceCallback(performance_tracker))
     trainer = WeightedSequenceTrainer(
         args=training_arguments,
         model_init=initialize_model,
@@ -251,13 +334,21 @@ def train_sequence_classifier(
         eval_dataset=validation_dataset,
         data_collator=collator,
         compute_metrics=validation_metric,
-        callbacks=[
-            EarlyStoppingCallback(
-                early_stopping_patience=config.early_stopping_patience
-            )
-        ],
+        callbacks=callbacks,
         class_weights=class_weights,
         learning_rate_multipliers=learning_rate_multipliers,
+        train_pair_lengths=train_pair_lengths,
+        length_bucketing=config.train_length_bucketing,
+        mega_batch_multiplier=config.train_mega_batch_multiplier,
+        non_blocking_transfer=config.non_blocking_transfer,
+        performance_tracker=performance_tracker,
+        fast_dev_dataset=fast_dev_dataset,
+        fast_dev_compute_metrics=fast_dev_metric,
+        fast_dev_every_n_optimizer_steps=(
+            config.fast_dev_validation_every_n_optimizer_steps
+            if fast_dev_dataset is not None
+            else None
+        ),
     )
     trainer.train()
     metrics = trainer.evaluate()
@@ -310,6 +401,16 @@ def train_sequence_classifier(
         layerwise_lr_decay=learning_rate_multipliers.layerwise_decay,
         weight_decay=best_hyperparameters["weight_decay"],
         use_field_tokens=config.use_field_tokens,
+        special_token_initialization_enabled=(
+            config.special_token_initialization_enabled
+        ),
+        special_token_key_seed_texts=config.special_token_key_seed_texts,
+        special_token_value_seed_texts=config.special_token_value_seed_texts,
+        fast_dev_validation_enabled=config.fast_dev_validation_enabled,
+        fast_dev_validation_max_rows=config.fast_dev_validation_max_rows,
+        fast_dev_validation_every_n_optimizer_steps=(
+            config.fast_dev_validation_every_n_optimizer_steps
+        ),
         batch_fields=config.batch_fields,
         field_chunk_size=config.field_chunk_size,
         max_attribute_value_chars=config.max_attribute_value_chars,
@@ -319,11 +420,23 @@ def train_sequence_classifier(
         gradient_clip_norm=config.max_grad_norm,
         early_stopping_patience=config.early_stopping_patience,
         auto_find_batch_size=config.auto_find_batch_size,
+        train_length_bucketing=config.train_length_bucketing,
+        train_mega_batch_multiplier=config.train_mega_batch_multiplier,
+        train_padding_length_buckets=config.train_padding_length_buckets,
+        dataloader_num_workers=config.dataloader_num_workers,
+        dataloader_prefetch_factor=config.dataloader_prefetch_factor,
+        dataloader_persistent_workers=config.dataloader_persistent_workers,
+        dataloader_pin_memory=config.dataloader_pin_memory,
+        non_blocking_transfer=config.non_blocking_transfer,
+        performance_logging=config.performance_logging,
+        torch_compile=config.torch_compile,
+        torch_compile_mode=config.torch_compile_mode,
     )
     metadata = {
         "validation_macro_pr_auc": float(metrics["eval_macro_pr_auc"]),
         "best_hyperparameters": best_hyperparameters,
         "resolved_config": asdict(resolved_config),
+        "performance_history": performance_tracker.history,
     }
     (output_path / "training_metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2),
@@ -343,6 +456,7 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
     encoding = parameters.pair_encoding
     batch_fields = parameters.tokenizer.batch_fields
     onnx_export = parameters.export.onnx
+    runtime = parameters.training_runtime
     return SequenceClassifierConfig(
         model_path=parameters.pretrained_model_path,
         max_epochs=parameters.max_epochs,
@@ -351,6 +465,20 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
         embeddings_learning_rate=parameters.embeddings_learning_rate,
         train_new_token_embeddings_only=parameters.train_new_token_embeddings_only,
         train_last_n_layers=parameters.train_last_n_layers,
+        special_token_initialization_enabled=(
+            parameters.special_token_initialization.enabled
+        ),
+        special_token_key_seed_texts=(
+            parameters.special_token_initialization.key_seed_texts
+        ),
+        special_token_value_seed_texts=(
+            parameters.special_token_initialization.value_seed_texts
+        ),
+        fast_dev_validation_enabled=parameters.validation.fast_dev.enabled,
+        fast_dev_validation_max_rows=parameters.validation.fast_dev.max_rows,
+        fast_dev_validation_every_n_optimizer_steps=(
+            parameters.validation.fast_dev.every_n_optimizer_steps
+        ),
         lr_scheduler_type=parameters.lr_scheduler_type,
         head_learning_rate=parameters.head_learning_rate,
         layerwise_lr_decay=parameters.layerwise_lr_decay,
@@ -366,6 +494,21 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
         max_grad_norm=parameters.max_grad_norm,
         early_stopping_patience=parameters.early_stopping_patience,
         auto_find_batch_size=parameters.auto_find_batch_size,
+        train_length_bucketing=runtime.length_bucketing.enabled,
+        train_mega_batch_multiplier=(
+            runtime.length_bucketing.mega_batch_multiplier
+        ),
+        train_padding_length_buckets=(
+            runtime.length_bucketing.padding_length_buckets
+        ),
+        dataloader_num_workers=runtime.dataloader.num_workers,
+        dataloader_prefetch_factor=runtime.dataloader.prefetch_factor,
+        dataloader_persistent_workers=runtime.dataloader.persistent_workers,
+        dataloader_pin_memory=runtime.dataloader.pin_memory,
+        non_blocking_transfer=runtime.dataloader.non_blocking_transfer,
+        performance_logging=runtime.performance_logging.enabled,
+        torch_compile=runtime.torch_compile.enabled,
+        torch_compile_mode=runtime.torch_compile.mode,
         seed=config.runtime.seed,
         use_field_tokens=encoding.use_field_tokens,
         batch_fields=batch_fields.enabled,
@@ -383,6 +526,8 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
             dropout=parameters.head.dropout,
             attention_hidden_dim=parameters.head.attention_hidden_dim,
             attention_num_heads=parameters.head.attention_num_heads,
+            native_logit_weight=parameters.head.native_logit_weight,
+            attention_logit_weight=parameters.head.attention_logit_weight,
         ),
         onnx_export_enabled=onnx_export.enabled,
         onnx_opset=onnx_export.opset,

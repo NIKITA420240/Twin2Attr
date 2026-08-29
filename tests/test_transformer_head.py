@@ -5,7 +5,12 @@ from pathlib import Path
 import torch
 from transformers import BertConfig, BertModel, BertTokenizerFast
 
-from match.models.transformer.head import PoolingHeadConfig, TransformerPoolingHead
+from match.models.transformer.head import (
+    HybridSequenceClassifier,
+    HybridSequenceClassifierConfig,
+    PoolingHeadConfig,
+    TransformerPoolingHead,
+)
 from match.models.transformer.model import model_factory
 from match.models.transformer.predictor import load_trained_classifier
 
@@ -100,6 +105,30 @@ class TransformerPoolingHeadTests(unittest.TestCase):
         )
 
         torch.testing.assert_close(pooled, torch.zeros(1, 8))
+
+    def test_hybrid_rejects_multi_logit_native_head(self) -> None:
+        backbone = BertConfig(
+            vocab_size=16,
+            hidden_size=8,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            intermediate_size=16,
+            max_position_embeddings=32,
+            num_labels=2,
+        )
+        model = HybridSequenceClassifier(
+            HybridSequenceClassifierConfig(
+                backbone_config=backbone.to_dict(),
+                head_config=PoolingHeadConfig(poolings=("attention",)).to_dict(),
+                num_labels=2,
+            )
+        )
+
+        with self.assertRaisesRegex(ValueError, "scalar reranker head"):
+            model(
+                input_ids=torch.tensor([[1, 2, 3]]),
+                attention_mask=torch.ones(1, 3, dtype=torch.long),
+            )
 
     def test_factory_model_survives_save_and_load(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

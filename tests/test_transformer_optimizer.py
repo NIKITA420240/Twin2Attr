@@ -181,6 +181,19 @@ class TransformerOptimizerTests(unittest.TestCase):
         self.assertFalse(model.backbone.pooler.weight.requires_grad)
         self.assertTrue(model.head.weight.requires_grad)
 
+    def test_freezes_embeddings_by_default_when_training_top_layers(self) -> None:
+        model = FakeModel()
+
+        trainable_layer_ids = freeze_backbone_except_last_layers(model, 2)
+
+        self.assertEqual(trainable_layer_ids, (1, 2))
+        self.assertFalse(model.get_input_embeddings().weight.requires_grad)
+        self.assertFalse(model.backbone.embeddings.LayerNorm.weight.requires_grad)
+        self.assertFalse(model.backbone.encoder.layer[0].weight.requires_grad)
+        self.assertTrue(model.backbone.encoder.layer[1].weight.requires_grad)
+        self.assertTrue(model.backbone.encoder.layer[2].weight.requires_grad)
+        self.assertTrue(model.head.weight.requires_grad)
+
 
 if __name__ == "__main__":
     unittest.main()
