@@ -207,7 +207,17 @@ class MixedDatasetModel:
                 candidate_splits=self.settings.candidate_splits,
             ),
         )
-        train_parts = [split.train_matches, *prepared.values()]
+        training_columns = [
+            "id1",
+            "id2",
+            "target",
+            "sample_weight",
+            "data_source",
+        ]
+        train_parts = [
+            part.select(training_columns)
+            for part in [split.train_matches, *prepared.values()]
+        ]
         train_matches = pl.concat(train_parts, how="vertical_relaxed")
         validation_matches = split.validation_matches.with_columns(
             pl.lit(1.0).cast(pl.Float32).alias("sample_weight")
