@@ -1,8 +1,8 @@
 # transformer | maxpooling | fusion | boosting | stacking
 training:
-  model: stacking
-  data_model: base_dataset
-  augmentation_model: attribute_word_dropout
+  model: transformer
+  data_model: mix_dataset
+  augmentation_model: null
   data_postprocessing_model: null
   resolved_config_path: models/twin2attr/pipeline_config.yaml
   solution_path: solution.json
@@ -199,8 +199,8 @@ analysis_models:
 
 model_description:
   transformer:
-    pretrained_model_path: models/rubert-base-cased
-    artifact_dir: models/twin2attr/stacking/transformer
+    pretrained_model_path: models/bge-reranker-v2-m3
+    artifact_dir: models/twin2attr/bge-reranker-v2-m3
     tokenizer:
       batch_fields:
         enabled: true
@@ -225,7 +225,7 @@ model_description:
       quantile: 0.95
       sample_size: 10000
       hard_cap: 512
-    max_epochs: 15
+    max_epochs: 2
     hpo_trials: 1
     # Used directly when hpo_trials=1; otherwise these are initial values.
     # Base LR for Transformer encoder layers and the value tuned by HPO.
@@ -250,10 +250,10 @@ model_description:
     hpo_learning_rate_max: 0.00005
     hpo_weight_decay_min: 0.0
     hpo_weight_decay_max: 0.1
-    train_batch_size: 64
+    train_batch_size: 256
     # Eval has no backward pass; use a larger batch independently of train.
     eval_batch_size: 256
-    gradient_accumulation_steps: 4
+    gradient_accumulation_steps: 1
     warmup_ratio: 0.06
     # Supported values: linear, cosine.
     lr_scheduler_type: cosine
@@ -307,6 +307,7 @@ model_description:
       attention_num_heads: 1
       native_logit_weight: 1.0
       attention_logit_weight: 0.0
+      train_logit_weights: false
 
   maxpooling:
     artifact_path: models/twin2attr/maxpooling.joblib

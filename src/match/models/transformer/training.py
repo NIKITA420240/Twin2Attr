@@ -528,6 +528,7 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
             attention_num_heads=parameters.head.attention_num_heads,
             native_logit_weight=parameters.head.native_logit_weight,
             attention_logit_weight=parameters.head.attention_logit_weight,
+            train_logit_weights=parameters.head.train_logit_weights,
         ),
         onnx_export_enabled=onnx_export.enabled,
         onnx_opset=onnx_export.opset,

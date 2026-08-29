@@ -32,8 +32,8 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(llm_weight_model.min_weight_multiplier, 0.25)
         self.assertEqual(llm_weight_model.min_comparable_neighbors, 2)
         self.assertTrue(llm_weight_model.confidence_weighted_violations)
-        self.assertEqual(self.config.training.model, "stacking")
-        self.assertEqual(self.config.training.data_model, "base_dataset")
+        self.assertEqual(self.config.training.model, "transformer")
+        self.assertEqual(self.config.training.data_model, "mix_dataset")
         self.assertEqual(
             self.config.training.augmentation_model,
             "attribute_word_dropout",
@@ -138,7 +138,7 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(labeling.seed, self.config.runtime.seed)
         self.assertEqual(labeling.llm.max_concurrency, 64)
         self.assertEqual(labeling.llm.min_concurrency, 32)
-        self.assertEqual(labeling.llm.max_rounds, 3)
+        self.assertEqual(labeling.llm.max_rounds, 1000)
         self.assertEqual(labeling.llm.token_env, "LLM_PROXY_TOKEN")
         augmentation = self.config.augmentation_models.attribute_shuffle
         self.assertEqual(augmentation.shuffled_copies, 1)
@@ -180,7 +180,7 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             self.config.model_description.transformer.artifact_dir,
-            PROJECT_ROOT / "models" / "twin2attr" / "stacking" / "transformer",
+            PROJECT_ROOT / "models" / "twin2attr" / "bge-reranker-v2-m3",
         )
         self.assertEqual(
             self.config.model_description.stacking.artifact_dir,
@@ -188,7 +188,7 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             self.config.model_description.transformer.pretrained_model_path,
-            "models/rubert-base-cased",
+            "models/bge-reranker-v2-m3",
         )
         encoding = self.config.model_description.transformer.pair_encoding
         batch_fields = (
@@ -206,8 +206,18 @@ class AppConfigTests(unittest.TestCase):
         self.assertFalse(
             self.config.model_description.transformer.train_new_token_embeddings_only
         )
-        self.assertIsNone(
-            self.config.model_description.transformer.train_last_n_layers
+        self.assertEqual(
+            self.config.model_description.transformer.train_last_n_layers,
+            3,
+        )
+        self.assertEqual(self.config.model_description.transformer.max_epochs, 2)
+        self.assertEqual(
+            self.config.model_description.transformer.train_batch_size,
+            256,
+        )
+        self.assertEqual(
+            self.config.model_description.transformer.gradient_accumulation_steps,
+            1,
         )
         self.assertEqual(
             self.config.model_description.transformer.lr_scheduler_type,
@@ -303,6 +313,9 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(head.mlp_hidden_dims, (384,))
         self.assertEqual(head.attention_hidden_dim, 192)
         self.assertEqual(head.attention_num_heads, 1)
+        self.assertEqual(head.native_logit_weight, 1.0)
+        self.assertEqual(head.attention_logit_weight, 0.0)
+        self.assertFalse(head.train_logit_weights)
 
     def test_can_select_original_transformer_head(self) -> None:
         config = load_app_config_file(

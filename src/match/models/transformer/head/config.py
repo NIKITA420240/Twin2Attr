@@ -19,6 +19,7 @@ class PoolingHeadConfig:
     attention_num_heads: int = 1
     native_logit_weight: float = 1.0
     attention_logit_weight: float = 0.0
+    train_logit_weights: bool = True
 
     def __post_init__(self) -> None:
         normalized = tuple(pooling.strip().lower() for pooling in self.poolings)
@@ -55,6 +56,7 @@ class PoolingHeadConfig:
             "attention_num_heads": self.attention_num_heads,
             "native_logit_weight": self.native_logit_weight,
             "attention_logit_weight": self.attention_logit_weight,
+            "train_logit_weights": self.train_logit_weights,
         }
 
     @classmethod
@@ -73,6 +75,7 @@ class PoolingHeadConfig:
             attention_num_heads=int(values.get("attention_num_heads", 1)),
             native_logit_weight=float(values.get("native_logit_weight", 1.0)),
             attention_logit_weight=float(values.get("attention_logit_weight", 0.0)),
+            train_logit_weights=bool(values.get("train_logit_weights", True)),
         )
 
 

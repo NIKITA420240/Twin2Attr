@@ -199,12 +199,20 @@ class HybridSequenceClassifier(PreTrainedModel):
             config=PoolingHeadConfig.from_dict(config.head_config),
         )
         head_config = PoolingHeadConfig.from_dict(config.head_config)
-        self.logit_weights = nn.Parameter(
-            torch.tensor(
-                [head_config.native_logit_weight, head_config.attention_logit_weight],
-                dtype=torch.float32,
-            )
+        logit_weights = torch.tensor(
+            [head_config.native_logit_weight, head_config.attention_logit_weight],
+            dtype=torch.float32,
         )
+        if head_config.train_logit_weights:
+            self.logit_weights = nn.Parameter(logit_weights)
+        else:
+            self.register_buffer("logit_weights", logit_weights)
+        self.native_only = (
+            not head_config.train_logit_weights
+            and head_config.attention_logit_weight == 0.0
+        )
+        if self.native_only:
+            self.attention_head.requires_grad_(False)
         self.post_init()
 
     @classmethod
@@ -287,9 +295,14 @@ class HybridSequenceClassifier(PreTrainedModel):
                 "logits shaped (batch_size, 1); use head.type='default' or "
                 "head.type='pooling' for a multi-class classifier"
             )
-        attention_logits = self.attention_head(outputs.last_hidden_state, attention_mask)
         weights = self.logit_weights.to(dtype=native_logits.dtype)
-        scalar = weights[0] * native_logits + weights[1] * attention_logits
+        scalar = weights[0] * native_logits
+        if not self.native_only:
+            attention_logits = self.attention_head(
+                outputs.last_hidden_state,
+                attention_mask,
+            )
+            scalar = scalar + weights[1] * attention_logits
         # ``[0, score]`` is exactly sigmoid(score) under softmax, preserving
         # the calibration of BGE's original one-logit reranker head.
         logits = torch.cat((torch.zeros_like(scalar), scalar), dim=-1)

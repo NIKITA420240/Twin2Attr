@@ -21,11 +21,15 @@ class ModelTrainingStrategyTests(unittest.TestCase):
         )
 
     def test_factory_selects_one_training_strategy(self) -> None:
-        stacking = build_trainer(self.config)
-        transformer = build_trainer(
+        transformer = build_trainer(self.config)
+        stacking = build_trainer(
             replace(
                 self.config,
-                training=replace(self.config.training, model="transformer"),
+                training=replace(
+                    self.config.training,
+                    model="stacking",
+                    data_model="base_dataset",
+                ),
             )
         )
         maxpooling = build_trainer(

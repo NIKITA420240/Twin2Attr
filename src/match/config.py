@@ -782,6 +782,7 @@ class TransformerHeadParameters:
     attention_num_heads: int = 1
     native_logit_weight: float = 1.0
     attention_logit_weight: float = 0.0
+    train_logit_weights: bool = True
 
     def __post_init__(self) -> None:
         normalized_type = self.type.strip().lower()
@@ -2225,6 +2226,10 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                      ),
                      attention_logit_weight=float(
                          transformer_head.get("attention_logit_weight", 0.0)
+                     ),
+                     train_logit_weights=_bool(
+                         transformer_head.get("train_logit_weights", True),
+                         "model_description.transformer.head.train_logit_weights",
                      ),
                 ),
             ),
