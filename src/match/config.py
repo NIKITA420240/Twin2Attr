@@ -120,6 +120,7 @@ class DatasetSourceSettings:
     max_rows: int | None
     sampling_strategy: str
     splitter: DatasetSplitterSettings
+    items: Path | None = None
     weight_model: SampleWeightModelSettings = SampleWeightModelSettings()
     confidence_weighting: ConfidenceWeightingSettings = (
         ConfidenceWeightingSettings()
@@ -190,6 +191,29 @@ class BaseDatasetSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class MixedDatasetSamplingSettings:
+    target_total: int
+    target_positive: int
+    target_negative: int
+    fill_order: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.target_total < 1:
+            raise ValueError("mixed dataset sampling.target_total must be positive")
+        if self.target_positive < 0 or self.target_negative < 0:
+            raise ValueError("mixed dataset class targets must not be negative")
+        if self.target_positive + self.target_negative != self.target_total:
+            raise ValueError(
+                "sampling.target_positive + sampling.target_negative must equal "
+                "sampling.target_total"
+            )
+        if not self.fill_order:
+            raise ValueError("mixed dataset sampling.fill_order must not be empty")
+        if len(set(self.fill_order)) != len(self.fill_order):
+            raise ValueError("mixed dataset sampling.fill_order must be unique")
+
+
+@dataclass(frozen=True, slots=True)
 class MixedDatasetSettings:
     items: Path
     sources: tuple[DatasetSourceSettings, ...]
@@ -201,6 +225,7 @@ class MixedDatasetSettings:
     overlap_resolution: DatasetOverlapResolutionSettings = (
         DatasetOverlapResolutionSettings()
     )
+    sampling: MixedDatasetSamplingSettings | None = None
 
     def __post_init__(self) -> None:
         _validate_data_split_settings(
@@ -222,6 +247,12 @@ class MixedDatasetSettings:
                     "enabled mix_dataset.overlap_resolution.source_priority "
                     "must contain every configured source exactly once"
                 )
+        if self.sampling is not None:
+            if set(self.sampling.fill_order) != set(names):
+                raise ValueError(
+                    "mixed dataset sampling.fill_order must contain every "
+                    "configured source exactly once"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +260,7 @@ class DataModelDescriptionSettings:
     base_dataset: BaseDatasetSettings
     mix_dataset: MixedDatasetSettings
     mix_dataset_codex: MixedDatasetSettings
+    mix_dataset_hard_negative: MixedDatasetSettings | None = None
 
 
 def _validate_data_split_settings(
@@ -283,10 +315,11 @@ class TrainingSettings:
             "base_dataset",
             "mix_dataset",
             "mix_dataset_codex",
+            "mix_dataset_hard_negative",
         }:
             raise ValueError(
                 "training.data_model must be one of: base_dataset, mix_dataset, "
-                "mix_dataset_codex"
+                "mix_dataset_codex, mix_dataset_hard_negative"
             )
         if self.model == "stacking" and self.data_model != "base_dataset":
             raise ValueError("stacking training currently requires base_dataset")
@@ -589,10 +622,11 @@ class AnalysisSettings:
             "base_dataset",
             "mix_dataset",
             "mix_dataset_codex",
+            "mix_dataset_hard_negative",
         }:
             raise ValueError(
                 "analysis.data_model must be one of: base_dataset, mix_dataset, "
-                "mix_dataset_codex"
+                "mix_dataset_codex, mix_dataset_hard_negative"
             )
 
 
@@ -1441,6 +1475,11 @@ def _dataset_source(
         max_rows=_optional_int(values.get("max_rows")),
         sampling_strategy=str(values.get("sampling_strategy", "random")),
         splitter=_dataset_splitter(splitter),
+        items=(
+            None
+            if values.get("items") is None
+            else _path(values["items"], f"{prefix}.items")
+        ),
         weight_model=SampleWeightModelSettings(
             type=str(weight_model.get("type", "constant")),
             enabled=_bool(
@@ -1522,6 +1561,32 @@ def _mixed_dataset_settings(
         raise ValueError(
             f"config section '{prefix}.overlap_resolution' must be a mapping"
         )
+    sampling_value = values.get("sampling")
+    if sampling_value is not None and not isinstance(sampling_value, Mapping):
+        raise ValueError(f"config section '{prefix}.sampling' must be a mapping")
+    sampling = None
+    if isinstance(sampling_value, Mapping):
+        sampling = MixedDatasetSamplingSettings(
+            target_total=_int(
+                _required(sampling_value, "target_total"),
+                f"{prefix}.sampling.target_total",
+            ),
+            target_positive=_int(
+                _required(sampling_value, "target_positive"),
+                f"{prefix}.sampling.target_positive",
+            ),
+            target_negative=_int(
+                _required(sampling_value, "target_negative"),
+                f"{prefix}.sampling.target_negative",
+            ),
+            fill_order=tuple(
+                str(name)
+                for name in _sequence(
+                    _required(sampling_value, "fill_order"),
+                    f"{prefix}.sampling.fill_order",
+                )
+            ),
+        )
     return MixedDatasetSettings(
         items=_path(_required(values, "items"), f"{prefix}.items"),
         sources=_dataset_sources(
@@ -1546,6 +1611,7 @@ def _mixed_dataset_settings(
                 )
             ),
         ),
+        sampling=sampling,
     )
 
 
@@ -1614,6 +1680,17 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     base_dataset = _section(data_model_description, "base_dataset")
     mix_dataset = _section(data_model_description, "mix_dataset")
     mix_dataset_codex = _section(data_model_description, "mix_dataset_codex")
+    mix_dataset_hard_negative_value = data_model_description.get(
+        "mix_dataset_hard_negative"
+    )
+    if (
+        mix_dataset_hard_negative_value is not None
+        and not isinstance(mix_dataset_hard_negative_value, Mapping)
+    ):
+        raise ValueError(
+            "config section 'data_model_description.mix_dataset_hard_negative' "
+            "must be a mapping"
+        )
     inference_value = resolved.get("inference", training)
     if not isinstance(inference_value, Mapping):
         raise ValueError("config section 'inference' must be a mapping")
@@ -1799,6 +1876,15 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 mix_dataset_codex,
                 dataset_name="mix_dataset_codex",
                 runtime_seed=int(_required(runtime, "seed")),
+            ),
+            mix_dataset_hard_negative=(
+                None
+                if mix_dataset_hard_negative_value is None
+                else _mixed_dataset_settings(
+                    mix_dataset_hard_negative_value,
+                    dataset_name="mix_dataset_hard_negative",
+                    runtime_seed=int(_required(runtime, "seed")),
+                )
             ),
         ),
         inference=InferenceSettings(
