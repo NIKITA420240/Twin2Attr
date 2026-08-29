@@ -497,6 +497,80 @@ class AnalysisSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class LlmLabelingSettings:
+    base_url: str
+    model: str
+    token_env: str
+    temperature: float
+    verify_ssl: bool
+    request_batch_size: int
+    max_concurrency: int
+    min_concurrency: int
+    max_attempts: int
+    max_rounds: int
+    retry_base_seconds: float
+    max_prompt_chars: int
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("base_url", self.base_url),
+            ("model", self.model),
+            ("token_env", self.token_env),
+        ):
+            if not value.strip():
+                raise ValueError(f"labeling.llm.{name} must not be empty")
+        if self.temperature < 0.0:
+            raise ValueError("labeling.llm.temperature must not be negative")
+        if self.request_batch_size < 1:
+            raise ValueError("labeling.llm.request_batch_size must be positive")
+        if self.max_concurrency < 1:
+            raise ValueError("labeling.llm.max_concurrency must be positive")
+        if not 1 <= self.min_concurrency <= self.max_concurrency:
+            raise ValueError(
+                "labeling.llm.min_concurrency must be between 1 and "
+                "max_concurrency"
+            )
+        if self.max_attempts < 1:
+            raise ValueError("labeling.llm.max_attempts must be positive")
+        if self.max_rounds < 1:
+            raise ValueError("labeling.llm.max_rounds must be positive")
+        if self.retry_base_seconds < 0.0:
+            raise ValueError(
+                "labeling.llm.retry_base_seconds must not be negative"
+            )
+        if self.max_prompt_chars < 1:
+            raise ValueError("labeling.llm.max_prompt_chars must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetLabelingSettings:
+    source_matches_path: Path
+    items_path: Path
+    output_path: Path
+    score_column: str
+    lower_p: float
+    upper_p: float
+    sample_size: int
+    seed: int
+    checkpoint_every_batches: int
+    llm: LlmLabelingSettings
+
+    def __post_init__(self) -> None:
+        if not self.score_column.strip():
+            raise ValueError("labeling.score_column must not be empty")
+        if not 0.0 <= self.lower_p <= self.upper_p <= 1.0:
+            raise ValueError(
+                "labeling thresholds must satisfy 0 <= lower_p <= upper_p <= 1"
+            )
+        if self.sample_size < 1:
+            raise ValueError("labeling.sample_size must be positive")
+        if self.checkpoint_every_batches < 1:
+            raise ValueError(
+                "labeling.checkpoint_every_batches must be positive"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class NormalizationSettings:
     enabled: bool
     output_column: str
@@ -1000,6 +1074,7 @@ class AppConfig:
     data_model_description: DataModelDescriptionSettings
     inference: InferenceSettings
     analysis: AnalysisSettings
+    labeling: DatasetLabelingSettings
     analysis_models: AnalysisModelsSettings
     augmentation_models: AugmentationModelsSettings
     data_postprocessing_models: DataPostprocessingModelsSettings
@@ -1346,6 +1421,8 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             "config section 'inference.transformer.tensorrt' must be a mapping"
         )
     analysis = _section(resolved, "analysis")
+    labeling = _section(resolved, "labeling")
+    labeling_llm = _section(labeling, "llm")
     analysis_models = _section(resolved, "analysis_models")
     attribute_importance = _section(
         analysis_models,
@@ -1557,6 +1634,55 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 None
                 if analysis.get("data_postprocessing_model") is None
                 else str(analysis["data_postprocessing_model"])
+            ),
+        ),
+        labeling=DatasetLabelingSettings(
+            source_matches_path=_path(
+                _required(labeling, "source_matches_path"),
+                "labeling.source_matches_path",
+            ),
+            items_path=_path(
+                _required(labeling, "items_path"),
+                "labeling.items_path",
+            ),
+            output_path=_path(
+                _required(labeling, "output_path"),
+                "labeling.output_path",
+            ),
+            score_column=str(_required(labeling, "score_column")),
+            lower_p=float(_required(labeling, "lower_p")),
+            upper_p=float(_required(labeling, "upper_p")),
+            sample_size=int(_required(labeling, "sample_size")),
+            seed=int(labeling.get("seed", _required(runtime, "seed"))),
+            checkpoint_every_batches=int(
+                _required(labeling, "checkpoint_every_batches")
+            ),
+            llm=LlmLabelingSettings(
+                base_url=str(_required(labeling_llm, "base_url")),
+                model=str(_required(labeling_llm, "model")),
+                token_env=str(_required(labeling_llm, "token_env")),
+                temperature=float(labeling_llm.get("temperature", 0.0)),
+                verify_ssl=_bool(
+                    labeling_llm.get("verify_ssl", True),
+                    "labeling.llm.verify_ssl",
+                ),
+                request_batch_size=int(
+                    _required(labeling_llm, "request_batch_size")
+                ),
+                max_concurrency=int(
+                    _required(labeling_llm, "max_concurrency")
+                ),
+                min_concurrency=int(
+                    _required(labeling_llm, "min_concurrency")
+                ),
+                max_attempts=int(_required(labeling_llm, "max_attempts")),
+                max_rounds=int(_required(labeling_llm, "max_rounds")),
+                retry_base_seconds=float(
+                    _required(labeling_llm, "retry_base_seconds")
+                ),
+                max_prompt_chars=int(
+                    _required(labeling_llm, "max_prompt_chars")
+                ),
             ),
         ),
         analysis_models=AnalysisModelsSettings(
@@ -2017,6 +2143,7 @@ __all__ = [
     "CascadeParameters",
     "ConfigSource",
     "DataModelDescriptionSettings",
+    "DatasetLabelingSettings",
     "DatasetSourceSettings",
     "DatasetSplitterSettings",
     "DataPostprocessingModelsSettings",
@@ -2025,6 +2152,7 @@ __all__ = [
     "InferenceSettings",
     "LoggingSettings",
     "LengthBucketingSettings",
+    "LlmLabelingSettings",
     "MaxPoolingParameters",
     "MixedDatasetSettings",
     "ModelDescriptionSettings",

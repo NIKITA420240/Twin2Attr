@@ -139,6 +139,32 @@ analysis:
   augmentation_model: attribute_shuffle
   data_postprocessing_model: null
 
+labeling:
+  source_matches_path: data/matches_llm.parquet
+  items_path: data/items.parquet
+  # A single cumulative file; successful rows are atomically merged into it.
+  output_path: data/llm_annotations/annotations.parquet
+  score_column: target
+  lower_p: 0.54
+  upper_p: 0.56
+  sample_size: 100000
+  seed: ${runtime.seed}
+  checkpoint_every_batches: 10
+  llm:
+    base_url: https://llm-proxy.t-tech.team
+    model: tgpt/deepseek-v4-flash-fp8
+    token_env: LLM_PROXY_TOKEN
+    temperature: 0.0
+    verify_ssl: false
+    request_batch_size: 64
+    max_concurrency: 64
+    # Every next round halves concurrency until this lower bound is reached.
+    min_concurrency: 32
+    max_attempts: 3
+    max_rounds: 3
+    retry_base_seconds: 2.0
+    max_prompt_chars: 6000
+
 augmentation_models:
   attribute_shuffle:
     shuffled_copies: 1

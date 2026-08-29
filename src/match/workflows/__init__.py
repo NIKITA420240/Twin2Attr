@@ -8,6 +8,7 @@ _EXPORTS = {
     "analyze": (".analyze", "analyze"),
     "initialize": (".initialize", "initialize"),
     "inspect_max_length": (".inspect", "inspect_max_length"),
+    "label_dataset": (".label", "label_dataset"),
     "train": (".train", "train"),
 }
 

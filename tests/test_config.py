@@ -111,6 +111,15 @@ class AppConfigTests(unittest.TestCase):
             "attribute_shuffle",
         )
         self.assertIsNone(self.config.analysis.data_postprocessing_model)
+        labeling = self.config.labeling
+        self.assertEqual(labeling.lower_p, 0.54)
+        self.assertEqual(labeling.upper_p, 0.56)
+        self.assertEqual(labeling.sample_size, 100000)
+        self.assertEqual(labeling.seed, self.config.runtime.seed)
+        self.assertEqual(labeling.llm.max_concurrency, 64)
+        self.assertEqual(labeling.llm.min_concurrency, 32)
+        self.assertEqual(labeling.llm.max_rounds, 3)
+        self.assertEqual(labeling.llm.token_env, "LLM_PROXY_TOKEN")
         augmentation = self.config.augmentation_models.attribute_shuffle
         self.assertEqual(augmentation.shuffled_copies, 1)
         self.assertFalse(augmentation.keep_original)

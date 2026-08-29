@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Iterator
+from typing import TYPE_CHECKING, Iterator
 
 from loguru import logger
-from transformers import AutoTokenizer
 
 from ..config import AppConfig
-from ..pair_encoding import add_pair_special_tokens, infer_pair_max_length
-from ..prepare_data import PreparedPair
+
+if TYPE_CHECKING:
+    from ..prepare_data import PreparedPair
 
 
 def normalization_enabled(config: AppConfig) -> bool:
@@ -21,6 +21,10 @@ def resolve_max_length(
     config: AppConfig,
     pairs: list[PreparedPair],
 ) -> int:
+    from transformers import AutoTokenizer
+
+    from ..pair_encoding import add_pair_special_tokens, infer_pair_max_length
+
     encoding = config.model_description.transformer.pair_encoding
     if encoding.max_length is not None:
         return encoding.max_length

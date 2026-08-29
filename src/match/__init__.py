@@ -55,6 +55,7 @@ _EXPORTS = {
     ),
     "load_app_config": (".config", "load_app_config"),
     "load_app_config_file": (".config", "load_app_config_file"),
+    "label_dataset": (".workflows.label", "label_dataset"),
     "load_trained_classifier": (
         ".models.transformer.predictor",
         "load_trained_classifier",

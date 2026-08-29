@@ -139,6 +139,26 @@ class UnifiedCliTests(unittest.TestCase):
             ],
         )
 
+    def test_parses_labeling_overrides(self) -> None:
+        args = parse_args(
+            [
+                "label",
+                "labeling.lower_p=0.54",
+                "labeling.upper_p=0.56",
+                "labeling.sample_size=100000",
+            ]
+        )
+
+        self.assertEqual(args.command, "label")
+        self.assertEqual(
+            args.overrides,
+            [
+                "labeling.lower_p=0.54",
+                "labeling.upper_p=0.56",
+                "labeling.sample_size=100000",
+            ],
+        )
+
     def test_bootstraps_bundled_polars_when_image_does_not_have_it(self) -> None:
         missing = ModuleNotFoundError("No module named 'polars'", name="polars")
         with (

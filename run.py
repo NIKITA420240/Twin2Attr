@@ -32,7 +32,7 @@ SOURCE_ROOT = Path(__file__).resolve().parent / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-COMMANDS = {"train", "predict", "inspect", "initialize", "analyze"}
+COMMANDS = {"train", "predict", "inspect", "initialize", "analyze", "label"}
 DEFAULT_CONFIG = "configs/pipeline.yaml"
 POLARS_VERSION = "1.43.2"
 CATBOOST_VERSION = "1.2.10"
@@ -433,6 +433,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_config_arguments(analyze)
 
+    label = commands.add_parser(
+        "label",
+        help="Label a configured uncertain sample with an LLM",
+    )
+    _add_config_arguments(label)
+
     predict = commands.add_parser("predict", help="Create evaluator-compatible CSV")
     predict.add_argument(
         "--items_path",
@@ -578,6 +584,20 @@ def run_analyze(args: argparse.Namespace) -> None:
     )
 
 
+def run_label(args: argparse.Namespace) -> None:
+    """Select, label and persist the configured uncertain product pairs."""
+    from match.workflows.label import label_dataset
+
+    config = _load_workflow_config(args.config, args.overrides)
+    result = label_dataset(config)
+    print(
+        f"LLM annotations saved to {result.output_path}; "
+        f"selected={result.selected_rows}, successful={result.successful_rows}, "
+        f"failed={result.failed_rows}, total={result.output_rows}, "
+        f"fingerprint={result.labeling_fingerprint}"
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
 
@@ -599,6 +619,10 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if args.command == "analyze":
         run_analyze(args)
+        return
+
+    if args.command == "label":
+        run_label(args)
         return
 
     raise ValueError(f"Unsupported command: {args.command!r}")
