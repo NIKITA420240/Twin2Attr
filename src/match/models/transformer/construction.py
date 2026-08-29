@@ -20,7 +20,8 @@ from .optimizer import (
 from .profile import (
     SEQUENCE_CLASSIFIER_PROFILE,
     TransformerArtifactContract,
-    is_prompted_profile,
+    is_nemotron_profile,
+    is_qwen3_reranker_profile,
     validate_profile_head,
 )
 
@@ -32,7 +33,11 @@ def _build_classifier(
     head_type: str,
     head_config: PoolingHeadConfig | None,
 ) -> PreTrainedModel:
-    if is_prompted_profile(profile) and head_type == "native":
+    if is_qwen3_reranker_profile(profile):
+        raise ValueError(
+            "qwen3_reranker model construction requires the yes/no scoring wrapper"
+        )
+    if is_nemotron_profile(profile) and head_type == "native":
         model = AutoModelForSequenceClassification.from_pretrained(
             model_path,
             trust_remote_code=True,
@@ -42,7 +47,7 @@ def _build_classifier(
                 "prompted_binary_reranker native model must expose one logit"
             )
         return model
-    if is_prompted_profile(profile) and head_type == "attention_pooling":
+    if is_nemotron_profile(profile) and head_type == "attention_pooling":
         return NemotronAttentionSequenceClassifier.from_backbone_pretrained(
             model_path,
             head_config=head_config

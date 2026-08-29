@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import inspect
 import json
 import shutil
@@ -14,9 +15,15 @@ from typing import Any
 import torch
 from loguru import logger
 from torch import nn
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
+from .fp8 import Fp8QuantizationResult, quantize_module_weights_to_fp8
 from .loading import load_trained_classifier
-from .profile import TransformerRuntimeContract
+from .profile import (
+    TransformerRuntimeContract,
+    is_qwen3_reranker_profile,
+)
+from .qwen3 import Qwen3YesNoReranker, qwen3_score_token_ids
 
 ONNX_DIRECTORY_NAME = "onnx"
 CLASSIFIER_ONNX_NAME = "classifier.onnx"
@@ -169,6 +176,33 @@ def _convert_to_float16(source: Path, destination: Path) -> None:
         raise
 
 
+def _copy_onnx_bundle(source: Path, destination: Path) -> None:
+    """Copy a graph and every relative external-data payload it references."""
+    onnx = _require_onnx()
+    graph = onnx.load(str(source), load_external_data=False)
+    locations = {
+        item.value
+        for initializer in graph.graph.initializer
+        for item in initializer.external_data
+        if item.key == "location"
+    }
+    destination.unlink(missing_ok=True)
+    for location in locations:
+        relative = Path(location)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"unsafe ONNX external-data location: {location!r}")
+        source_payload = source.parent / relative
+        destination_payload = destination.parent / relative
+        if not source_payload.is_file():
+            raise FileNotFoundError(
+                f"ONNX external-data payload is missing: {source_payload}"
+            )
+        destination_payload.parent.mkdir(parents=True, exist_ok=True)
+        destination_payload.unlink(missing_ok=True)
+        shutil.copy2(source_payload, destination_payload)
+    shutil.copy2(source, destination)
+
+
 def _export_graph(
     graph: nn.Module,
     destination: Path,
@@ -180,8 +214,10 @@ def _export_graph(
     dynamic_batch: bool,
     dynamic_sequence_length: bool,
     output_name: str,
+    convert_float16: bool = True,
+    sample_batch_size: int = 2,
 ) -> None:
-    input_ids = torch.ones((2, max_length), dtype=torch.long)
+    input_ids = torch.ones((sample_batch_size, max_length), dtype=torch.long)
     attention_mask = torch.ones_like(input_ids)
     args: tuple[torch.Tensor, ...]
     input_names = ["input_ids", "attention_mask"]
@@ -209,6 +245,7 @@ def _export_graph(
             "dynamic_axes": dynamic_axes or None,
             "opset_version": opset,
             "do_constant_folding": True,
+            "external_data": True,
         }
         # PyTorch 2.9 changed torch.onnx.export to default to the dynamo
         # exporter, which adds an onnxscript dependency. The mature legacy
@@ -222,10 +259,56 @@ def _export_graph(
             str(fp32_path),
             **export_kwargs,
         )
-        if precision == "float16":
+        if precision == "float16" and convert_float16:
             _convert_to_float16(fp32_path, destination)
         else:
-            shutil.copy2(fp32_path, destination)
+            _copy_onnx_bundle(fp32_path, destination)
+
+
+def _load_qwen3_export_model(
+    model_dir: Path,
+    *,
+    precision: str,
+) -> tuple[Any, nn.Module, Fp8QuantizationResult | None]:
+    artifact_config = AutoConfig.from_pretrained(model_dir, local_files_only=True)
+    source_value = getattr(artifact_config, "match_source_model_path", None)
+    if not source_value:
+        raise ValueError("Qwen3 artifact does not record match_source_model_path")
+    source = Path(str(source_value)).expanduser()
+    if not source.is_absolute():
+        source = source.resolve()
+    if not source.is_dir():
+        raise FileNotFoundError(f"Qwen3 source model directory is missing: {source}")
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_dir,
+        local_files_only=True,
+        fix_mistral_regex=True,
+    )
+    tokenizer.padding_side = "left"
+    no_token_id, yes_token_id = qwen3_score_token_ids(tokenizer)
+    model_dtype = torch.float32 if precision == "float32" else torch.float16
+    causal_lm = AutoModelForCausalLM.from_pretrained(
+        source,
+        dtype=model_dtype,
+        low_cpu_mem_usage=True,
+        local_files_only=True,
+        attn_implementation="eager",
+    )
+    model = Qwen3YesNoReranker(
+        causal_lm,
+        no_token_id=no_token_id,
+        yes_token_id=yes_token_id,
+        prepare_4d_attention_mask=True,
+    )
+    del causal_lm
+    gc.collect()
+    model.config = artifact_config
+    quantization = None
+    if precision == "float8":
+        quantization = quantize_module_weights_to_fp8(model.backbone)
+        gc.collect()
+    return tokenizer, model, quantization
 
 
 def export_transformer_to_onnx(
@@ -239,20 +322,36 @@ def export_transformer_to_onnx(
     export_encoder: bool = True,
 ) -> OnnxExportResult:
     """Export classifier logits and/or pooled embeddings next to a trained model."""
-    if precision not in {"float32", "float16"}:
-        raise ValueError("ONNX precision must be float32 or float16")
+    if precision not in {"float32", "float16", "float8"}:
+        raise ValueError("ONNX precision must be float32, float16, or float8")
     if opset < 14:
         raise ValueError("ONNX opset must be at least 14")
+    if precision == "float8" and opset < 19:
+        raise ValueError("float8 ONNX export requires opset 19 or newer")
     if not (export_classifier or export_encoder):
         raise ValueError("at least one ONNX graph must be selected")
     _require_onnx()
 
     model_dir = Path(model_directory)
-    tokenizer, model = load_trained_classifier(
-        model_dir,
-        device="cpu",
-        dtype="float32",
+    config_values = json.loads(
+        (model_dir / "config.json").read_text(encoding="utf-8")
     )
+    configured_contract = TransformerRuntimeContract.from_config(config_values)
+    qwen3 = is_qwen3_reranker_profile(configured_contract.profile)
+    quantization: Fp8QuantizationResult | None = None
+    if qwen3:
+        tokenizer, model, quantization = _load_qwen3_export_model(
+            model_dir,
+            precision=precision,
+        )
+    else:
+        if precision == "float8":
+            raise ValueError("float8 export is currently supported only for Qwen3")
+        tokenizer, model = load_trained_classifier(
+            model_dir,
+            device="cpu",
+            dtype="float32",
+        )
     model.eval()
     output_dir = model_dir / ONNX_DIRECTORY_NAME
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -273,6 +372,8 @@ def export_transformer_to_onnx(
         "precision": precision,
         "dynamic_batch": dynamic_batch,
         "dynamic_sequence_length": dynamic_sequence_length,
+        "convert_float16": not qwen3,
+        "sample_batch_size": 1 if qwen3 else 2,
     }
     classifier_path = output_dir / CLASSIFIER_ONNX_NAME if export_classifier else None
     encoder_path = output_dir / ENCODER_ONNX_NAME if export_encoder else None
@@ -320,6 +421,9 @@ def export_transformer_to_onnx(
         "num_logits": contract.num_logits,
         "probability_transform": contract.probability_transform,
         "encoder_pooling": contract.encoder_pooling,
+        "fp8_quantization": (
+            None if quantization is None else asdict(quantization)
+        ),
     }
     (output_dir / ONNX_METADATA_NAME).write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
@@ -334,7 +438,9 @@ def main() -> None:
     parser.add_argument("model_directory", type=Path)
     parser.add_argument("--opset", type=int, default=18)
     parser.add_argument(
-        "--precision", choices=("float32", "float16"), default="float16"
+        "--precision",
+        choices=("float32", "float16", "float8"),
+        default="float16",
     )
     parser.add_argument("--classifier-only", action="store_true")
     args = parser.parse_args()

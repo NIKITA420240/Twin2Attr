@@ -14,8 +14,16 @@ from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from .models.transformer.profile import (
     PROMPTED_BINARY_RERANKER_PROFILE,
+    QWEN3_RERANKER_PROFILE,
     SEQUENCE_CLASSIFIER_PROFILE,
     normalize_profile,
+)
+from .qwen3_pair_encoding import (
+    QWEN3_RERANKER_PREFIX,
+    QWEN3_RERANKER_SUFFIX,
+    encode_qwen3_pairs as _encode_qwen3_pairs,
+    serialize_qwen3_pair,
+    serialize_qwen3_pair_for_tokenizer as _serialize_qwen3_pair_for_tokenizer,
 )
 from .pair_serialization import (
     DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
@@ -47,6 +55,7 @@ __all__ = [
     "serialize_card",
     "serialize_pair",
     "serialize_prompted_pair",
+    "serialize_qwen3_pair",
 ]
 
 
@@ -628,6 +637,29 @@ class _PromptedPairBatchEncoder:
 
 
 @dataclass(frozen=True, slots=True)
+class _Qwen3PairBatchEncoder:
+    tokenizer: PreTrainedTokenizerBase
+    max_length: int
+    use_field_tokens: bool
+    max_attribute_value_chars: int | None
+    max_attribute_value_tokens: int | None
+    special_token_count: int
+
+    def encode(
+        self,
+        pairs: Sequence[PreparedPair],
+    ) -> list[dict[str, list[int]]]:
+        return _encode_qwen3_pairs(
+            self.tokenizer,
+            pairs,
+            max_length=self.max_length,
+            use_field_tokens=self.use_field_tokens,
+            max_attribute_value_chars=self.max_attribute_value_chars,
+            max_attribute_value_tokens=self.max_attribute_value_tokens,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class _LegacyPairBatchEncoder:
     tokenizer: PreTrainedTokenizerBase
     max_length: int
@@ -677,7 +709,7 @@ def _pair_batch_encoder(
     max_attribute_value_tokens: int | None,
     batch_fields: bool,
     field_chunk_size: int,
-) -> _PromptedPairBatchEncoder | _LegacyPairBatchEncoder:
+) -> _PromptedPairBatchEncoder | _Qwen3PairBatchEncoder | _LegacyPairBatchEncoder:
     if profile == PROMPTED_BINARY_RERANKER_PROFILE:
         return _PromptedPairBatchEncoder(
             tokenizer=tokenizer,
@@ -686,6 +718,21 @@ def _pair_batch_encoder(
             max_attribute_value_chars=max_attribute_value_chars,
             max_attribute_value_tokens=max_attribute_value_tokens,
             special_token_count=int(tokenizer.num_special_tokens_to_add(pair=False)),
+        )
+    if profile == QWEN3_RERANKER_PROFILE:
+        # The official Qwen reranker reads the next-token score after the
+        # assistant suffix, so padding must stay to the left of that suffix.
+        tokenizer.padding_side = "left"
+        prompt_overhead = len(
+            tokenizer.encode(QWEN3_RERANKER_PREFIX, add_special_tokens=False)
+        ) + len(tokenizer.encode(QWEN3_RERANKER_SUFFIX, add_special_tokens=False))
+        return _Qwen3PairBatchEncoder(
+            tokenizer=tokenizer,
+            max_length=max_length,
+            use_field_tokens=use_field_tokens,
+            max_attribute_value_chars=max_attribute_value_chars,
+            max_attribute_value_tokens=max_attribute_value_tokens,
+            special_token_count=prompt_overhead,
         )
     return _LegacyPairBatchEncoder(
         tokenizer=tokenizer,
@@ -838,12 +885,17 @@ def infer_pair_max_length(
         sample = pairs
 
     profile = normalize_profile(profile)
-    if profile == PROMPTED_BINARY_RERANKER_PROFILE:
+    if profile in {PROMPTED_BINARY_RERANKER_PROFILE, QWEN3_RERANKER_PROFILE}:
+        serialize = (
+            _serialize_qwen3_pair_for_tokenizer
+            if profile == QWEN3_RERANKER_PROFILE
+            else _serialize_prompted_pair_for_tokenizer
+        )
         lengths = np.fromiter(
             (
                 len(
                     tokenizer.encode(
-                        _serialize_prompted_pair_for_tokenizer(
+                        serialize(
                             tokenizer,
                             pair,
                             use_field_tokens=use_field_tokens,

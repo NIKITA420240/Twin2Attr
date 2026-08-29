@@ -35,7 +35,7 @@ from .model import WeightedSequenceTrainer
 from .profile import (
     TransformerArtifactContract,
     TransformerRuntimeContract,
-    is_prompted_profile,
+    requires_trust_remote_code,
 )
 from .optimizer import LearningRateMultipliers
 
@@ -158,7 +158,7 @@ def train_sequence_classifier(
     output_path.mkdir(parents=True, exist_ok=True)
     tokenizer = AutoTokenizer.from_pretrained(
         config.model_path,
-        trust_remote_code=is_prompted_profile(config.profile),
+        trust_remote_code=requires_trust_remote_code(config.profile),
     )
     if config.use_field_tokens:
         add_pair_special_tokens(tokenizer)

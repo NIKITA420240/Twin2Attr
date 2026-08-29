@@ -323,6 +323,7 @@ class OnnxRuntimeSettings:
     device_id: int = 0
     io_binding: bool = True
     graph_optimization: str = "all"
+    disabled_optimizers: tuple[str, ...] = ()
     fallback_to_pytorch: bool = True
     tensorrt: OrtTensorRTProviderSettings = OrtTensorRTProviderSettings()
 
@@ -346,6 +347,11 @@ class OnnxRuntimeSettings:
             raise ValueError(
                 "inference.transformer.onnxruntime.graph_optimization must be "
                 "one of: disabled, basic, extended, all"
+            )
+        if any(not value.strip() for value in self.disabled_optimizers):
+            raise ValueError(
+                "inference.transformer.onnxruntime.disabled_optimizers "
+                "must contain non-empty names"
             )
 
 
@@ -568,11 +574,13 @@ class OnnxExportSettings:
                 "model_description.transformer.export.onnx.opset must be at "
                 "least 14"
             )
-        if self.precision not in {"float32", "float16"}:
+        if self.precision not in {"float32", "float16", "float8"}:
             raise ValueError(
                 "model_description.transformer.export.onnx.precision must be "
-                "float32 or float16"
+                "float32, float16, or float8"
             )
+        if self.precision == "float8" and self.opset < 19:
+            raise ValueError("float8 ONNX export requires opset 19 or newer")
         if self.enabled and not (self.export_classifier or self.export_encoder):
             raise ValueError(
                 "enabled ONNX export requires classifier or encoder output"
@@ -675,7 +683,7 @@ class TransformerParameters:
                 )
             if self.pair_encoding.use_field_tokens:
                 raise ValueError(
-                    f"{PROMPTED_BINARY_RERANKER_PROFILE} requires pair_encoding."
+                    f"{normalized_profile} requires pair_encoding."
                     "use_field_tokens=false to preserve pretrained token semantics"
                 )
         object.__setattr__(self, "profile", normalized_profile)
@@ -1564,6 +1572,12 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     graph_optimization=str(
                         onnxruntime_value.get("graph_optimization", "all")
                     ).lower(),
+                    disabled_optimizers=tuple(
+                        str(value)
+                        for value in onnxruntime_value.get(
+                            "disabled_optimizers", ()
+                        )
+                    ),
                     fallback_to_pytorch=_bool(
                         onnxruntime_value.get("fallback_to_pytorch", True),
                         "inference.transformer.onnxruntime.fallback_to_pytorch",

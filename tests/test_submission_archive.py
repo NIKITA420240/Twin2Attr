@@ -21,6 +21,10 @@ class SubmissionArchiveTests(unittest.TestCase):
                 config.inference,
                 model="transformer",
                 data_postprocessing_model=None,
+                transformer=replace(
+                    config.inference.transformer,
+                    backend="pytorch",
+                ),
             ),
             features=replace(
                 config.features,
@@ -131,6 +135,16 @@ class SubmissionArchiveTests(unittest.TestCase):
             wheels
             / "tensorrt_cu12_bindings-10.9.0.34-cp312-none-manylinux_2_28_x86_64.whl"
         ).write_bytes(b"tensorrt-bindings")
+        (
+            wheels
+            / "zstandard-0.25.0-cp312-cp312-manylinux_2_17_x86_64.whl"
+        ).write_bytes(b"zstandard")
+        runtime = root / "build_submission" / "tensorrt_runtime"
+        runtime.mkdir()
+        (runtime / "tensorrt-runtime-10.9.0.34-linux-x86_64.tar.zst").write_bytes(
+            b"tensorrt-runtime"
+        )
+        (runtime / "LICENSE.txt").write_text("NVIDIA license", encoding="utf-8")
 
     @staticmethod
     def _trained_transformer(root: Path) -> Path:
@@ -445,6 +459,56 @@ class SubmissionArchiveTests(unittest.TestCase):
             any(name.startswith("vendor_wheels/onnxruntime_gpu-") for name in names)
         )
 
+    def test_qwen3_zero_shot_onnx_artifact_is_accepted_without_weights(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._project(root)
+            transformer = self._trained_transformer(root)
+            config_path = transformer / "config.json"
+            model_config = json.loads(config_path.read_text(encoding="utf-8"))
+            model_config.update(
+                {
+                    "architectures": ["Qwen3ForCausalLM"],
+                    "match_profile": "qwen3_reranker",
+                    "match_head_type": "native",
+                    "match_initialized_only": True,
+                    "match_num_logits": 1,
+                    "match_no_token_id": 2152,
+                    "match_yes_token_id": 9693,
+                }
+            )
+            config_path.write_text(json.dumps(model_config), encoding="utf-8")
+            (transformer / "model.safetensors").unlink()
+            onnx_directory = transformer / "onnx"
+            onnx_directory.mkdir()
+            (onnx_directory / "classifier.onnx").write_bytes(b"onnx")
+            (onnx_directory / "external-weight").write_bytes(b"fp8")
+            config = replace(
+                self._with_model_artifacts(self.config, transformer=transformer),
+                inference=replace(
+                    self.config.inference,
+                    transformer=replace(
+                        self.config.inference.transformer,
+                        backend="onnxruntime",
+                        onnxruntime=replace(
+                            self.config.inference.transformer.onnxruntime,
+                            fallback_to_pytorch=False,
+                        ),
+                    ),
+                ),
+                submission=replace(
+                    self.config.submission,
+                    output_path=root / "submission.zip",
+                ),
+            )
+
+            result = build_submission_archive(config, project_root=root)
+
+            with ZipFile(result.path) as archive:
+                names = set(archive.namelist())
+            self.assertIn("models/transformer/onnx/classifier.onnx", names)
+            self.assertIn("models/transformer/onnx/external-weight", names)
+
     def test_native_tensorrt_packages_bindings_and_onnx_without_weights(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -485,6 +549,14 @@ class SubmissionArchiveTests(unittest.TestCase):
                 for name in names
             )
         )
+        self.assertTrue(
+            any(name.startswith("vendor_wheels/zstandard-") for name in names)
+        )
+        self.assertIn(
+            "tensorrt_runtime/tensorrt-runtime-10.9.0.34-linux-x86_64.tar.zst",
+            names,
+        )
+        self.assertIn("tensorrt_runtime/LICENSE.txt", names)
         self.assertFalse(
             any(name.startswith("vendor_wheels/onnxruntime_gpu-") for name in names)
         )

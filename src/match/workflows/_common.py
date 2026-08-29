@@ -9,7 +9,7 @@ from loguru import logger
 from transformers import AutoTokenizer
 
 from ..config import AppConfig
-from ..models.transformer.profile import is_prompted_profile
+from ..models.transformer.profile import requires_trust_remote_code
 from ..pair_encoding import add_pair_special_tokens, infer_pair_max_length
 from ..prepare_data import PreparedPair
 
@@ -28,7 +28,7 @@ def resolve_max_length(
 
     tokenizer = AutoTokenizer.from_pretrained(
         config.model_description.transformer.pretrained_model_path,
-        trust_remote_code=is_prompted_profile(
+        trust_remote_code=requires_trust_remote_code(
             config.model_description.transformer.profile
         ),
     )

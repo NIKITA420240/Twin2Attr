@@ -6,7 +6,6 @@ from pathlib import Path
 from ...pair_encoding import DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS
 from .head import PoolingHeadConfig
 from .profile import (
-    PROMPTED_BINARY_RERANKER_PROFILE,
     SEQUENCE_CLASSIFIER_PROFILE,
     is_prompted_profile,
     validate_profile_head,
@@ -125,7 +124,7 @@ class SequenceClassifierConfig:
             raise ValueError("Nemotron attention pooling cannot use cls")
         if is_prompted_profile(self.profile) and self.use_field_tokens:
             raise ValueError(
-                f"{PROMPTED_BINARY_RERANKER_PROFILE} requires use_field_tokens=False"
+                f"{self.profile} requires use_field_tokens=False"
             )
         if self.train_new_token_embeddings_only and not self.use_field_tokens:
             raise ValueError(
@@ -137,8 +136,10 @@ class SequenceClassifierConfig:
             raise ValueError("lr_scheduler_type must be 'linear' or 'cosine'")
         if self.onnx_opset < 14:
             raise ValueError("onnx_opset must be at least 14")
-        if self.onnx_precision not in {"float32", "float16"}:
-            raise ValueError("onnx_precision must be float32 or float16")
+        if self.onnx_precision not in {"float32", "float16", "float8"}:
+            raise ValueError("onnx_precision must be float32, float16, or float8")
+        if self.onnx_precision == "float8" and self.onnx_opset < 19:
+            raise ValueError("float8 ONNX export requires opset 19 or newer")
         if self.onnx_export_enabled and not (
             self.onnx_export_classifier or self.onnx_export_encoder
         ):

@@ -2,13 +2,13 @@
   "predictor": "transformer",
   "augmentation_model": null,
   "data_postprocessing_model": null,
-  "model_directory": "models\\twin2attr\\nemotron-native",
-  "transformer_profile": "prompted_binary_reranker",
+  "model_directory": "models\\twin2attr\\qwen3-reranker-4b",
+  "transformer_profile": "qwen3_reranker",
   "transformer_head": {
     "type": "native"
   },
-  "backend": "pytorch",
-  "batch_size": 1,
+  "backend": "tensorrt",
+  "batch_size": 128,
   "dtype": "bfloat16",
   "num_workers": 8,
   "prefetch_factor": 2,
@@ -21,15 +21,12 @@
     }
   },
   "length_bucketing": {
-    "enabled": false,
+    "enabled": true,
     "padding_length_buckets": [
+      32,
       64,
       96,
-      128,
-      160,
-      192,
-      224,
-      256
+      128
     ]
   },
   "torch_compile": {
@@ -42,7 +39,10 @@
     "device_id": 0,
     "io_binding": true,
     "graph_optimization": "all",
-    "fallback_to_pytorch": true,
+    "disabled_optimizers": [
+      "Level1_RuleBasedTransformer"
+    ],
+    "fallback_to_pytorch": false,
     "tensorrt": {
       "engine_cache": {
         "enabled": true,
@@ -54,10 +54,10 @@
       },
       "profiles": {
         "min_batch_size": 1,
-        "opt_batch_size": 2048,
-        "max_batch_size": 2048,
+        "opt_batch_size": 128,
+        "max_batch_size": 128,
         "sequence_lengths": [
-          64,
+          32,
           96,
           128
         ]
@@ -67,8 +67,8 @@
   "tensorrt": {
     "device_id": 0,
     "workspace_size_gb": 8.0,
-    "builder_optimization_level": 3,
-    "fallback_to_onnxruntime": true,
+    "builder_optimization_level": 5,
+    "fallback_to_onnxruntime": false,
     "engine_cache": {
       "enabled": true,
       "path": "onnx/native_trt_cache"
@@ -79,21 +79,21 @@
     },
     "profiles": {
       "min_batch_size": 1,
-      "opt_batch_size": 512,
-      "max_batch_size": 512,
+      "opt_batch_size": 128,
+      "max_batch_size": 128,
       "sequence_lengths": [
-        1,
-        256,
-        472
+        32,
+        96,
+        128
       ]
     }
   },
   "onnx_artifacts": {
-    "enabled": false,
-    "precision": "float16",
-    "opset": 18,
+    "enabled": true,
+    "precision": "float8",
+    "opset": 19,
     "classifier_path": "onnx/classifier.onnx",
-    "encoder_path": "onnx/encoder.onnx",
+    "encoder_path": null,
     "dynamic_batch": true,
     "dynamic_sequence_length": true
   },

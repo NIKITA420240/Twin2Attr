@@ -19,10 +19,18 @@ class _FakeSessionOptions:
 
 
 class _FakeSession:
-    def __init__(self, path, *, sess_options, providers):
+    def __init__(
+        self,
+        path,
+        *,
+        sess_options,
+        providers,
+        disabled_optimizers=None,
+    ):
         self.path = path
         self.options = sess_options
         self.providers = providers
+        self.disabled_optimizers = disabled_optimizers
 
     def get_inputs(self):
         return [
@@ -83,6 +91,7 @@ class OnnxRuntimePredictorTests(unittest.TestCase):
                 model_config={"hidden_size": 16, "match_max_length": 32},
                 provider="cpu",
                 io_binding=False,
+                disabled_optimizers=("Level1_RuleBasedTransformer",),
             )
             executor.prepare(classifier=True, encoder=False)
             executor.warmup(classifier=True, encoder=False)
@@ -101,6 +110,10 @@ class OnnxRuntimePredictorTests(unittest.TestCase):
         np.testing.assert_array_equal(logits, np.zeros((3, 2), dtype=np.float32))
         self.assertEqual(session.providers, ["CPUExecutionProvider"])
         self.assertEqual(session.options.graph_optimization_level, 3)
+        self.assertEqual(
+            session.disabled_optimizers,
+            {"Level1_RuleBasedTransformer"},
+        )
 
     def test_rejects_unavailable_gpu_provider(self) -> None:
         with (

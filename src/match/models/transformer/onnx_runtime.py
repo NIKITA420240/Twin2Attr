@@ -79,6 +79,7 @@ class OnnxRuntimeTransformerExecutor:
     device_id: int = 0
     io_binding: bool = True
     graph_optimization: str = "all"
+    disabled_optimizers: tuple[str, ...] = ()
     classifier_path: Path | None = None
     encoder_path: Path | None = None
     tensorrt: OrtTensorRTProviderOptions = OrtTensorRTProviderOptions()
@@ -255,10 +256,16 @@ class OnnxRuntimeTransformerExecutor:
             self.graph_optimization,
         )
         try:
+            session_kwargs: dict[str, Any] = {}
+            if self.disabled_optimizers:
+                session_kwargs["disabled_optimizers"] = set(
+                    self.disabled_optimizers
+                )
             return self._ort.InferenceSession(
                 str(path),
                 sess_options=options,
                 providers=self._providers,
+                **session_kwargs,
             )
         except Exception as error:
             raise OnnxRuntimeInitializationError(

@@ -144,6 +144,7 @@ def build_solution_manifest(
             "device_id": onnxruntime.device_id,
             "io_binding": onnxruntime.io_binding,
             "graph_optimization": onnxruntime.graph_optimization,
+            "disabled_optimizers": list(onnxruntime.disabled_optimizers),
             "fallback_to_pytorch": onnxruntime.fallback_to_pytorch,
             "tensorrt": {
                 "engine_cache": {

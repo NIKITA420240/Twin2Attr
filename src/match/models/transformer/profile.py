@@ -13,13 +13,19 @@ from ...pair_serialization import DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS
 
 SEQUENCE_CLASSIFIER_PROFILE = "sequence_classifier"
 PROMPTED_BINARY_RERANKER_PROFILE = "prompted_binary_reranker"
+QWEN3_RERANKER_PROFILE = "qwen3_reranker"
 TRANSFORMER_PROFILES = frozenset(
-    {SEQUENCE_CLASSIFIER_PROFILE, PROMPTED_BINARY_RERANKER_PROFILE}
+    {
+        SEQUENCE_CLASSIFIER_PROFILE,
+        PROMPTED_BINARY_RERANKER_PROFILE,
+        QWEN3_RERANKER_PROFILE,
+    }
 )
 
 PROFILE_HEAD_TYPES = {
     SEQUENCE_CLASSIFIER_PROFILE: frozenset({"default", "pooling"}),
     PROMPTED_BINARY_RERANKER_PROFILE: frozenset({"native", "attention_pooling"}),
+    QWEN3_RERANKER_PROFILE: frozenset({"native"}),
 }
 
 
@@ -43,7 +49,23 @@ def validate_profile_head(profile: str, head_type: str) -> tuple[str, str]:
 
 
 def is_prompted_profile(profile: str) -> bool:
+    return normalize_profile(profile) in {
+        PROMPTED_BINARY_RERANKER_PROFILE,
+        QWEN3_RERANKER_PROFILE,
+    }
+
+
+def is_nemotron_profile(profile: str) -> bool:
     return normalize_profile(profile) == PROMPTED_BINARY_RERANKER_PROFILE
+
+
+def is_qwen3_reranker_profile(profile: str) -> bool:
+    return normalize_profile(profile) == QWEN3_RERANKER_PROFILE
+
+
+def requires_trust_remote_code(profile: str) -> bool:
+    """Return whether the pretrained tokenizer/model uses bundled Python code."""
+    return is_nemotron_profile(profile)
 
 
 def _read(config: Mapping[str, Any] | Any, name: str, default: Any) -> Any:
@@ -117,6 +139,10 @@ class TransformerArtifactContract:
     @property
     def uses_prompted_pairs(self) -> bool:
         return is_prompted_profile(self.profile)
+
+    @property
+    def requires_trust_remote_code(self) -> bool:
+        return requires_trust_remote_code(self.profile)
 
     @property
     def encoder_pooling(self) -> str:
@@ -256,12 +282,16 @@ def positive_probabilities(logits: np.ndarray) -> np.ndarray:
 __all__ = [
     "PROFILE_HEAD_TYPES",
     "PROMPTED_BINARY_RERANKER_PROFILE",
+    "QWEN3_RERANKER_PROFILE",
     "SEQUENCE_CLASSIFIER_PROFILE",
     "TRANSFORMER_PROFILES",
     "TransformerArtifactContract",
     "TransformerRuntimeContract",
+    "is_nemotron_profile",
     "is_prompted_profile",
+    "is_qwen3_reranker_profile",
     "normalize_profile",
     "positive_probabilities",
+    "requires_trust_remote_code",
     "validate_profile_head",
 ]

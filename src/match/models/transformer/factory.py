@@ -19,7 +19,7 @@ from .onnx_runtime import (
     OrtTensorRTProviderOptions,
 )
 from .predictor import TransformerPredictor
-from .profile import TransformerRuntimeContract
+from .profile import TransformerRuntimeContract, is_qwen3_reranker_profile
 from .tensorrt_common import (
     TensorRTInitializationError,
     TensorRTProfile,
@@ -132,7 +132,8 @@ def _ort_tensorrt_options(
     value = runtime.get("tensorrt")
     if value is None:
         return OrtTensorRTProviderOptions(
-            fp16_enabled=str(artifacts.get("precision", "float32")) == "float16"
+            fp16_enabled=str(artifacts.get("precision", "float32"))
+            in {"float16", "float8"}
         )
     tensorrt = _mapping(value, "onnxruntime.tensorrt")
     engine_cache = _mapping(
@@ -159,7 +160,8 @@ def _ort_tensorrt_options(
             input_names=_model_input_names(tokenizer),
             name="onnxruntime.tensorrt.profiles",
         ),
-        fp16_enabled=str(artifacts.get("precision", "float32")) == "float16",
+        fp16_enabled=str(artifacts.get("precision", "float32"))
+        in {"float16", "float8"},
     )
 
 
@@ -255,11 +257,13 @@ def _load_components(model_directory: Path) -> tuple[Any, dict[str, Any]]:
         (model_directory / "config.json").read_text(encoding="utf-8")
     )
     runtime_contract = TransformerRuntimeContract.from_config(model_config)
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_directory,
-        use_fast=True,
-        trust_remote_code=runtime_contract.output.uses_prompted_pairs,
-    )
+    tokenizer_kwargs = {
+        "use_fast": True,
+        "trust_remote_code": runtime_contract.output.requires_trust_remote_code,
+    }
+    if is_qwen3_reranker_profile(runtime_contract.profile):
+        tokenizer_kwargs["fix_mistral_regex"] = True
+    tokenizer = AutoTokenizer.from_pretrained(model_directory, **tokenizer_kwargs)
     return tokenizer, model_config
 
 
@@ -297,6 +301,7 @@ def _build_onnx_predictor(
             device_id=int(runtime.get("device_id", 0)),
             io_binding=bool(runtime.get("io_binding", True)),
             graph_optimization=str(runtime.get("graph_optimization", "all")).lower(),
+            disabled_optimizers=tuple(runtime.get("disabled_optimizers", ())),
             classifier_path=_artifact_path(
                 model_directory, artifacts.get("classifier_path")
             ),
@@ -345,7 +350,8 @@ def _native_tensorrt_options(
             input_names=_model_input_names(tokenizer),
             name="tensorrt.profiles",
         ),
-        fp16_enabled=str(artifacts.get("precision", "float32")) == "float16",
+        fp16_enabled=str(artifacts.get("precision", "float32"))
+        in {"float16", "float8"},
     )
 
 

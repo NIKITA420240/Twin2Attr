@@ -6,16 +6,20 @@ import json
 from dataclasses import replace
 
 from loguru import logger
-from transformers import AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
 
 from ..config import AppConfig, save_app_config
 from ..models.artifacts import TrainingArtifacts, save_solution_manifest
 from ..models.transformer.construction import model_factory
 from ..models.transformer.head import PoolingHeadConfig
 from ..models.transformer.profile import (
+    TransformerArtifactContract,
     TransformerRuntimeContract,
+    is_qwen3_reranker_profile,
     is_prompted_profile,
+    requires_trust_remote_code,
 )
+from ..models.transformer.qwen3 import qwen3_score_token_ids
 from ._common import workflow_logging
 
 
@@ -58,6 +62,71 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
     )
 
     with workflow_logging(config, workflow_name="initialize"):
+        if is_qwen3_reranker_profile(parameters.profile):
+            logger.info("Creating lightweight Qwen3 zero-shot reranker artifact")
+            tokenizer = AutoTokenizer.from_pretrained(
+                parameters.pretrained_model_path,
+                trust_remote_code=False,
+                fix_mistral_regex=True,
+            )
+            tokenizer.padding_side = "left"
+            no_token_id, yes_token_id = qwen3_score_token_ids(tokenizer)
+            model_config = AutoConfig.from_pretrained(
+                parameters.pretrained_model_path,
+                trust_remote_code=False,
+            )
+            output_contract = TransformerArtifactContract.for_training(
+                profile=parameters.profile,
+                head_type=parameters.head.type,
+                num_logits=1,
+            )
+            output_contract.apply_to(model_config)
+            TransformerRuntimeContract(
+                output=output_contract,
+                hidden_size=int(model_config.hidden_size),
+                max_length=max_length,
+                use_field_tokens=encoding.use_field_tokens,
+                max_attribute_value_chars=encoding.max_attribute_value_chars,
+                max_attribute_value_tokens=encoding.max_attribute_value_tokens,
+            ).apply_encoding_to(model_config)
+            model_config.use_cache = False
+            model_config.match_initialized_only = True
+            model_config.match_source_model_path = parameters.pretrained_model_path
+            model_config.match_no_token_id = no_token_id
+            model_config.match_yes_token_id = yes_token_id
+
+            output_path.mkdir(parents=True, exist_ok=True)
+            model_config.save_pretrained(output_path)
+            tokenizer.save_pretrained(output_path)
+            metadata = {
+                "trained": False,
+                "warning": "Pretrained Qwen3 yes/no scoring preserved.",
+                "source_model": parameters.pretrained_model_path,
+                "profile": parameters.profile,
+                "head_type": parameters.head.type,
+                "max_length": max_length,
+                "use_field_tokens": encoding.use_field_tokens,
+                "max_attribute_value_chars": encoding.max_attribute_value_chars,
+                "max_attribute_value_tokens": encoding.max_attribute_value_tokens,
+                "no_token_id": no_token_id,
+                "yes_token_id": yes_token_id,
+            }
+            (output_path / "initialization_metadata.json").write_text(
+                json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            artifacts = TrainingArtifacts(
+                predictor="transformer",
+                transformer_dir=output_path,
+            )
+            save_app_config(config, config.training.resolved_config_path)
+            solution_path = save_solution_manifest(config, artifacts)
+            logger.info("Initialized Qwen3 artifact saved to {!s}", output_path)
+            return replace(
+                artifacts,
+                resolved_config_path=config.training.resolved_config_path,
+                solution_path=solution_path,
+            )
         if (
             is_prompted_profile(parameters.profile)
             and parameters.head.type == "attention_pooling"
@@ -75,7 +144,7 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
             )
         tokenizer = AutoTokenizer.from_pretrained(
             parameters.pretrained_model_path,
-            trust_remote_code=is_prompted_profile(parameters.profile),
+            trust_remote_code=requires_trust_remote_code(parameters.profile),
         )
         model = model_factory(
             parameters.pretrained_model_path,

@@ -55,7 +55,7 @@ def load_trained_classifier(
     tokenizer = AutoTokenizer.from_pretrained(
         directory,
         use_fast=True,
-        trust_remote_code=contract.uses_prompted_pairs,
+        trust_remote_code=contract.requires_trust_remote_code,
     )
     model_type = config_values.get("model_type")
     if model_type == NemotronAttentionConfig.model_type:
@@ -65,7 +65,7 @@ def load_trained_classifier(
     else:
         model = AutoModelForSequenceClassification.from_pretrained(
             directory,
-            trust_remote_code=contract.uses_prompted_pairs,
+            trust_remote_code=contract.requires_trust_remote_code,
         )
     restored_contract = TransformerArtifactContract.from_config(model.config)
     if restored_contract != contract:

@@ -42,7 +42,11 @@ _ONNX_RUNTIME_WHEEL_PATTERNS = (
 )
 _TENSORRT_WHEEL_PATTERNS = (
     "tensorrt_cu12_bindings-*.whl",
+    "zstandard-*.whl",
 )
+_TENSORRT_RUNTIME_SOURCE = PurePosixPath("build_submission/tensorrt_runtime")
+_TENSORRT_RUNTIME_TARGET = PurePosixPath("tensorrt_runtime")
+_TENSORRT_RUNTIME_PATTERN = "tensorrt-runtime-*.tar.zst"
 _SKIPPED_DIRECTORY_NAMES = {".cache", "__pycache__"}
 _STORED_SUFFIXES = {
     ".bin",
@@ -202,11 +206,25 @@ def _validate_transformer_artifact(
         config.get("model_type") == "match_pooling_sequence_classifier"
         or config.get("match_head_type") == "pooling"
     )
+    is_qwen3_zero_shot_reranker = (
+        not require_pytorch_weights
+        and config.get("match_profile") == "qwen3_reranker"
+        and config.get("match_head_type") == "native"
+        and config.get("match_initialized_only") is True
+        and config.get("match_num_logits") == 1
+        and isinstance(config.get("match_no_token_id"), int)
+        and isinstance(config.get("match_yes_token_id"), int)
+        and config.get("match_no_token_id") != config.get("match_yes_token_id")
+    )
     if (
         not isinstance(use_field_tokens, bool)
         or not isinstance(max_length, int)
         or max_length < 1
-        or not (is_sequence_classifier or is_pooling_classifier)
+        or not (
+            is_sequence_classifier
+            or is_pooling_classifier
+            or is_qwen3_zero_shot_reranker
+        )
     ):
         raise ValueError(
             "submission Transformer is not a trained Twin2Attr classifier: "
@@ -356,6 +374,16 @@ def _collect_inputs(
         for wheel in sorted(wheels_source.glob(pattern)):
             entry = _ArchiveInput(wheel, _VENDOR_WHEELS_TARGET / wheel.name)
             entries[entry.archive_path] = entry
+    if include_tensorrt:
+        runtime_source = project_root / Path(_TENSORRT_RUNTIME_SOURCE)
+        for payload in sorted(runtime_source.iterdir()):
+            if not payload.is_file():
+                continue
+            entry = _ArchiveInput(
+                payload,
+                _TENSORRT_RUNTIME_TARGET / payload.name,
+            )
+            entries[entry.archive_path] = entry
     return tuple(entries[name] for name in sorted(entries, key=str))
 
 
@@ -405,6 +433,12 @@ def _validate_onnxruntime_wheels(directory: Path) -> None:
         raise FileNotFoundError(
             f"bundled ONNX Runtime wheels are missing in {directory}: {missing}"
         )
+    runtime_wheels = sorted(directory.glob("onnxruntime_gpu-*.whl"))
+    if len(runtime_wheels) != 1:
+        raise ValueError(
+            "expected exactly one bundled ONNX Runtime GPU wheel in "
+            f"{directory}, found {len(runtime_wheels)}"
+        )
 
 
 def _validate_tensorrt_wheels(directory: Path) -> None:
@@ -415,10 +449,25 @@ def _validate_tensorrt_wheels(directory: Path) -> None:
         raise FileNotFoundError(
             f"bundled TensorRT wheels are missing in {directory}: {missing}"
         )
+    runtime_directory = directory.parent / "tensorrt_runtime"
+    payloads = sorted(runtime_directory.glob(_TENSORRT_RUNTIME_PATTERN))
+    if len(payloads) != 1:
+        raise FileNotFoundError(
+            "expected exactly one compressed TensorRT runtime payload in "
+            f"{runtime_directory}, found {len(payloads)}"
+        )
+    if not (runtime_directory / "LICENSE.txt").is_file():
+        raise FileNotFoundError(
+            f"TensorRT runtime license is missing: {runtime_directory / 'LICENSE.txt'}"
+        )
 
 
 def _compression(path: Path) -> int:
-    return ZIP_STORED if path.suffix.lower() in _STORED_SUFFIXES else ZIP_DEFLATED
+    return (
+        ZIP_STORED
+        if path.suffix.lower() in _STORED_SUFFIXES | {".zst"}
+        else ZIP_DEFLATED
+    )
 
 
 def build_submission_archive(

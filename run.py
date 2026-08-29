@@ -1,10 +1,13 @@
 """Unified entry point for training, inspection and competition inference."""
 
 import argparse
+import ctypes
 import importlib
 import os
+import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
@@ -54,8 +57,14 @@ JOBLIB_VERSION = "1.5.3"
 LOGURU_VERSION = "0.7.3"
 PINT_VERSION = "0.25.3"
 ORJSON_VERSION = "3.11.9"
-ONNXRUNTIME_GPU_VERSION = "1.23.2"
 TENSORRT_VERSION = "10.9.0.34"
+ZSTANDARD_VERSION = "0.25.0"
+TENSORRT_RUNTIME_LIBRARIES = (
+    "libnvinfer.so.10",
+    "libnvinfer_plugin.so.10",
+    "libnvonnxparser.so.10",
+    "libnvinfer_builder_resource.so.10.9.0",
+)
 
 
 def ensure_polars_available() -> None:
@@ -293,14 +302,16 @@ def ensure_onnxruntime_available(
     runtime_wheels = sorted(
         wheels_dir.glob(f"onnxruntime_gpu-*-{tag}-{tag}-*.whl")
     )
-    if not runtime_wheels:
+    if len(runtime_wheels) != 1:
         raise RuntimeError(
-            "ONNX Runtime GPU is not bundled for the evaluator's Python "
-            f"version ({tag})"
+            "expected exactly one bundled ONNX Runtime GPU wheel for the "
+            f"evaluator's Python version ({tag}), found {len(runtime_wheels)}"
         )
+    runtime_wheel = runtime_wheels[0]
+    runtime_cache_key = runtime_wheel.name.split(f"-{tag}-{tag}-", 1)[0]
     install_dir = (
         Path(tempfile.gettempdir())
-        / f"twin2attr_onnxruntime_gpu_{ONNXRUNTIME_GPU_VERSION}_{tag}"
+        / f"twin2attr_{runtime_cache_key}_{tag}"
     )
     install_dir.mkdir(parents=True, exist_ok=True)
     if not (install_dir / "onnxruntime").is_dir():
@@ -327,7 +338,7 @@ def ensure_onnxruntime_available(
                 "--upgrade",
                 "--target",
                 str(install_dir),
-                str(runtime_wheels[-1]),
+                str(runtime_wheel),
                 *(str(wheel) for wheel in dependencies),
             ],
             check=True,
@@ -370,11 +381,31 @@ def ensure_tensorrt_available(solution_path: str | Path | None = None) -> None:
         raise RuntimeError(
             f"TensorRT is not bundled for the evaluator's Python version ({tag})"
         )
+    zstandard_wheels = sorted(
+        wheels_dir.glob(f"zstandard-*-{tag}-{tag}-manylinux*.whl")
+    )
+    if len(zstandard_wheels) != 1:
+        raise RuntimeError(
+            "expected exactly one bundled zstandard wheel for the evaluator's "
+            f"Python version ({tag}), found {len(zstandard_wheels)}"
+        )
+    runtime_payloads = sorted(
+        (Path(__file__).resolve().parent / "tensorrt_runtime").glob(
+            "tensorrt-runtime-*.tar.zst"
+        )
+    )
+    if len(runtime_payloads) != 1:
+        raise RuntimeError(
+            "expected exactly one bundled TensorRT runtime payload, found "
+            f"{len(runtime_payloads)}"
+        )
     install_dir = (
         Path(tempfile.gettempdir()) / f"twin2attr_tensorrt_{TENSORRT_VERSION}_{tag}"
     )
     install_dir.mkdir(parents=True, exist_ok=True)
-    if not (install_dir / "tensorrt").is_dir():
+    if not (install_dir / "tensorrt_bindings").is_dir() or not (
+        install_dir / "zstandard"
+    ).is_dir():
         print(f"Installing bundled TensorRT into {install_dir}")
         subprocess.run(
             [
@@ -389,12 +420,60 @@ def ensure_tensorrt_available(solution_path: str | Path | None = None) -> None:
                 "--target",
                 str(install_dir),
                 str(bindings[-1]),
+                str(zstandard_wheels[0]),
             ],
             check=True,
         )
     sys.path.insert(0, str(install_dir))
     importlib.invalidate_caches()
-    importlib.import_module("tensorrt")
+    zstandard = importlib.import_module("zstandard")
+
+    libraries_dir = install_dir / "lib"
+    marker = libraries_dir / ".complete"
+    if not marker.is_file() or any(
+        not (libraries_dir / name).is_file()
+        for name in TENSORRT_RUNTIME_LIBRARIES
+    ):
+        staging = install_dir / "lib.staging"
+        shutil.rmtree(staging, ignore_errors=True)
+        staging.mkdir(parents=True)
+        print(f"Extracting bundled TensorRT runtime into {libraries_dir}")
+        with runtime_payloads[0].open("rb") as compressed:
+            with zstandard.ZstdDecompressor().stream_reader(compressed) as reader:
+                with tarfile.open(fileobj=reader, mode="r|") as archive:
+                    for member in archive:
+                        if not member.isfile():
+                            continue
+                        name = Path(member.name).name
+                        if name not in TENSORRT_RUNTIME_LIBRARIES:
+                            raise RuntimeError(
+                                f"unexpected file in TensorRT runtime: {member.name}"
+                            )
+                        source = archive.extractfile(member)
+                        if source is None:
+                            raise RuntimeError(
+                                f"cannot extract TensorRT runtime file: {member.name}"
+                            )
+                        with (staging / name).open("wb") as target:
+                            shutil.copyfileobj(source, target, length=8 * 1024**2)
+        missing_libraries = [
+            name
+            for name in TENSORRT_RUNTIME_LIBRARIES
+            if not (staging / name).is_file()
+        ]
+        if missing_libraries:
+            raise RuntimeError(
+                f"TensorRT runtime payload is incomplete: {missing_libraries}"
+            )
+        shutil.rmtree(libraries_dir, ignore_errors=True)
+        staging.replace(libraries_dir)
+        marker.write_text(TENSORRT_VERSION, encoding="utf-8")
+
+    load_mode = getattr(ctypes, "RTLD_GLOBAL", 0)
+    for name in TENSORRT_RUNTIME_LIBRARIES:
+        ctypes.CDLL(str(libraries_dir / name), mode=load_mode)
+    bindings_module = importlib.import_module("tensorrt_bindings")
+    sys.modules.setdefault("tensorrt", bindings_module)
 
 
 def _with_default_command(arguments: Sequence[str]) -> list[str]:

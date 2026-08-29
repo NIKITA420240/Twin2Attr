@@ -42,7 +42,10 @@ class TensorRTEngineBuilder:
             explicit_batch = 1 << int(flag)
         network = builder.create_network(explicit_batch)
         parser = self.trt.OnnxParser(network, self.logger)
-        if not parser.parse(onnx_path.read_bytes()):
+        # The exported Qwen graph stores its large initializers in external
+        # files next to classifier.onnx. Parsing an in-memory byte string loses
+        # that base directory, so TensorRT cannot resolve those weight files.
+        if not parser.parse_from_file(str(onnx_path)):
             errors = "; ".join(
                 str(parser.get_error(index)) for index in range(parser.num_errors)
             )
@@ -67,15 +70,14 @@ class TensorRTEngineBuilder:
             if -1 not in shape:
                 continue
             has_dynamic_inputs = True
-            if not optimization_profile.set_shape(
+            # TensorRT 10.9 returns None on success and raises when the shape
+            # is inconsistent, so this call must not be treated as boolean.
+            optimization_profile.set_shape(
                 tensor.name,
                 self.profile.resolve_shape(shape, "min"),
                 self.profile.resolve_shape(shape, "opt"),
                 self.profile.resolve_shape(shape, "max"),
-            ):
-                raise TensorRTInitializationError(
-                    f"invalid optimization profile for input {tensor.name!r}"
-                )
+            )
         if has_dynamic_inputs:
             config.add_optimization_profile(optimization_profile)
 
