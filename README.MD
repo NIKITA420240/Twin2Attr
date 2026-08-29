@@ -219,7 +219,24 @@ configs/benchmark_tests/codex_annotation_quality.yaml # ценность Codex-�
 configs/benchmark_tests/neural_relabel_quality.yaml # старая и новая разметка 5/9-пар
 configs/benchmark_tests/llm_vote_sampling_quality.yaml # выбор по уверенности LLM
 configs/benchmark_tests/soft_label_confidence_quality.yaml # target × loss weight
+configs/benchmark_tests/typed_attribute_quality.yaml # typed pair metrics for CatBoost
 ```
+
+### Типизированное сравнение атрибутов
+
+`pair_features.typed_attributes` включает детерминированные pair-level признаки
+для CatBoost и stacking. После нормализации одинаковые ключи двух карточек
+сравниваются как `CODE`, `PHYSICAL`, `NUMERIC`, `SET` или `TEXT`. Семантический
+тип сохраняется и при отсутствии значения с одной стороны, а итоговые признаки
+инвариантны к перестановке `id1`/`id2`. Настройки feature builder сохраняются в
+manifest обученного CatBoost-артефакта, поэтому training и inference используют
+одинаковую схему.
+
+Подготовленная screening-абляция находится в
+`configs/benchmark_tests/typed_attribute_quality.yaml`. Она по умолчанию не
+запускается. Перед первым запуском нужно включить только job
+`typed_attribute_quality` в `configs/benchmark.yaml`; после screening на seed 42
+лучший вариант следует подтвердить на seed `42`, `43` и `44`.
 
 Inference benchmark использует один и тот же checkpoint
 `weights/cross-encoder-ms-marco-l12-v3`. Fallback между backend-ами отключается,

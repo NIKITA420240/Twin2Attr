@@ -32,6 +32,14 @@ benchmark:
       tests_path: configs/benchmark_tests/transitivity_quality.yaml
       selected_tests: null
 
+    # CatBoost screening: baseline, CODE, CODE+PHYSICAL, +SET and all types.
+    # Intentionally disabled until the typed-feature implementation is reviewed.
+    typed_attribute_quality:
+      type: training_quality
+      enabled: false
+      tests_path: configs/benchmark_tests/typed_attribute_quality.yaml
+      selected_tests: null
+
     # Retrains two paired Transformers with the same 750,000-row
     # pseudo-labeled-data budget.
     codex_annotation_quality:

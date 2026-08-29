@@ -94,7 +94,9 @@ class StackingTrainer:
             data.attributes_column,
             data.validation_pairs,
         )
-        builder = BoostingFeatureBuilder()
+        builder = BoostingFeatureBuilder(
+            self.config.pair_features.typed_attributes
+        )
         train_features = build_stacking_features(
             stacking_batch,
             transformer.predict_logit_margin(stacking_batch),
@@ -151,6 +153,7 @@ class StackingTrainer:
             model,
             self.config.model_description.stacking.artifact_dir,
             list(train_features.columns),
+            feature_options=builder.feature_options,
         )
         logger.info(
             "Stacking training finished: validation_macro_pr_auc={:.6f}, "

@@ -1,9 +1,13 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 import polars as pl
 
 from match.models.boosting.features import BoostingFeatureBuilder
+from match.models.boosting.serialization import save_boosting_model
 from match.models.cascade.predictor import CascadePredictor
 from match.models.contracts import MatchPredictor, PredictionBatch
 from match.models.stacking.features import (
@@ -11,6 +15,7 @@ from match.models.stacking.features import (
     build_stacking_features,
 )
 from match.models.stacking.predictor import StackingPredictor
+from match.pair_features import TypedAttributeOptions
 
 
 def _batch() -> PredictionBatch:
@@ -54,6 +59,11 @@ class _FixedCatBoost:
         return np.column_stack((1.0 - probabilities, probabilities))
 
 
+class _SavingCatBoost:
+    def save_model(self, path: str) -> None:
+        Path(path).write_text("model", encoding="utf-8")
+
+
 class BoostingAndCascadeTests(unittest.TestCase):
     def test_boosting_features_are_symmetric_and_schema_is_stable(self) -> None:
         batch = _batch().take_indices([1])
@@ -70,6 +80,46 @@ class BoostingAndCascadeTests(unittest.TestCase):
         self.assertEqual(list(features.columns), list(reverse_features.columns))
         self.assertTrue(features.equals(reverse_features))
         self.assertEqual(features.columns[0], "category")
+
+    def test_typed_boosting_features_extend_schema_and_remain_symmetric(self) -> None:
+        batch = _batch().take_indices([1])
+        reverse_matches = batch.matches.select(
+            pl.col("id2").alias("id1"),
+            pl.col("id1").alias("id2"),
+        )
+        reverse = PredictionBatch(batch.items, reverse_matches, "attributes")
+        builder = BoostingFeatureBuilder(TypedAttributeOptions(enabled=True))
+
+        features = builder.transform(batch)
+        reverse_features = builder.transform(reverse)
+
+        self.assertEqual(features.shape, (1, 137))
+        self.assertEqual(list(features.columns), list(reverse_features.columns))
+        self.assertTrue(features.equals(reverse_features))
+        self.assertIn("typed_code_exact_matches", features.columns)
+        self.assertIn("typed_attribute_one_missing", features.columns)
+
+        restored = BoostingFeatureBuilder.from_feature_options(
+            builder.feature_options
+        )
+        self.assertEqual(restored.feature_options, builder.feature_options)
+        self.assertTrue(restored.transform(batch).equals(features))
+
+    def test_boosting_manifest_persists_typed_feature_options(self) -> None:
+        builder = BoostingFeatureBuilder(TypedAttributeOptions(enabled=True))
+        with tempfile.TemporaryDirectory() as directory:
+            output = save_boosting_model(
+                _SavingCatBoost(),
+                directory,
+                ["category", "typed_attribute_comparisons"],
+                feature_options=builder.feature_options,
+            )
+            manifest = json.loads(
+                (output / "manifest.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(manifest["feature_schema_version"], 2)
+        self.assertEqual(manifest["feature_options"], builder.feature_options)
 
     def test_cascade_routes_only_uncertain_rows_and_restores_order(self) -> None:
         fast = _FixedPredictor([0.001, 0.5, 0.999])

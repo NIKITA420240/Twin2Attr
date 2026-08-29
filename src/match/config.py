@@ -14,6 +14,7 @@ from .models.transformer.profile import (
     normalize_profile,
     validate_profile_head,
 )
+from .pair_features import TypedAttributeOptions
 from .paths import resolve_project_path
 
 FEATURE_PROVIDER_NAMES = ("normalization", "ner", "physical")
@@ -1421,6 +1422,13 @@ class FeatureSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class PairFeatureSettings:
+    """Features that can only be computed after two cards are paired."""
+
+    typed_attributes: TypedAttributeOptions = TypedAttributeOptions()
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeSettings:
     device: str | None
     seed: int
@@ -1450,6 +1458,7 @@ class AppConfig:
     data_postprocessing_models: DataPostprocessingModelsSettings
     model_description: ModelDescriptionSettings
     features: FeatureSettings
+    pair_features: PairFeatureSettings
     runtime: RuntimeSettings
     logging: LoggingSettings
     submission: SubmissionSettings
@@ -2060,6 +2069,19 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     )
     ner = _section(features, "ner")
     physical = _section(features, "physical")
+    pair_features_value = resolved.get("pair_features", {})
+    if not isinstance(pair_features_value, Mapping):
+        raise ValueError("config section 'pair_features' must be a mapping")
+    typed_attributes_value = pair_features_value.get("typed_attributes", {})
+    if not isinstance(typed_attributes_value, Mapping):
+        raise ValueError(
+            "config section 'pair_features.typed_attributes' must be a mapping"
+        )
+    typed_attribute_types = typed_attributes_value.get("types", {})
+    if not isinstance(typed_attribute_types, Mapping):
+        raise ValueError(
+            "config section 'pair_features.typed_attributes.types' must be a mapping"
+        )
     runtime = _section(resolved, "runtime")
     logging = _section(resolved, "logging")
     submission_value = resolved.get("submission", {})
@@ -2799,6 +2821,46 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 chunk_size=int(physical.get("chunk_size", 10_000)),
             ),
         ),
+        pair_features=PairFeatureSettings(
+            typed_attributes=TypedAttributeOptions(
+                enabled=_bool(
+                    typed_attributes_value.get("enabled", False),
+                    "pair_features.typed_attributes.enabled",
+                ),
+                detector=str(typed_attributes_value.get("detector", "rules")),
+                preserve_semantic_type_when_missing=_bool(
+                    typed_attributes_value.get(
+                        "preserve_semantic_type_when_missing", True
+                    ),
+                    "pair_features.typed_attributes."
+                    "preserve_semantic_type_when_missing",
+                ),
+                symmetric=_bool(
+                    typed_attributes_value.get("symmetric", True),
+                    "pair_features.typed_attributes.symmetric",
+                ),
+                code=_bool(
+                    typed_attribute_types.get("code", True),
+                    "pair_features.typed_attributes.types.code",
+                ),
+                physical=_bool(
+                    typed_attribute_types.get("physical", True),
+                    "pair_features.typed_attributes.types.physical",
+                ),
+                numeric=_bool(
+                    typed_attribute_types.get("numeric", True),
+                    "pair_features.typed_attributes.types.numeric",
+                ),
+                set=_bool(
+                    typed_attribute_types.get("set", True),
+                    "pair_features.typed_attributes.types.set",
+                ),
+                text=_bool(
+                    typed_attribute_types.get("text", True),
+                    "pair_features.typed_attributes.types.text",
+                ),
+            )
+        ),
         runtime=RuntimeSettings(
             device=None if runtime.get("device") is None else str(runtime["device"]),
             seed=int(_required(runtime, "seed")),
@@ -2897,6 +2959,8 @@ def load_benchmark_config_file(
 def _serializable(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
+    if isinstance(value, TypedAttributeOptions):
+        return value.to_dict()
     if isinstance(value, TensorRTProfileSettings):
         return {
             "min_batch_size": value.min_batch_size,
@@ -3000,6 +3064,7 @@ __all__ = [
     "OnnxExportSettings",
     "OnnxRuntimeSettings",
     "PairEncodingSettings",
+    "PairFeatureSettings",
     "PhysicalFeatureSettings",
     "RuntimeSettings",
     "SampleWeightModelSettings",

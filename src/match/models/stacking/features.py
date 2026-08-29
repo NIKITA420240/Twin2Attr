@@ -17,7 +17,7 @@ def build_stacking_features(
     *,
     structured_builder: BoostingFeatureBuilder | None = None,
 ) -> pd.DataFrame:
-    """Append one out-of-sample Transformer margin to the 85 base features."""
+    """Append one out-of-sample Transformer margin to structured features."""
     margins = np.asarray(logit_margins, dtype=np.float32)
     if margins.shape != (batch.matches.height,):
         raise ValueError("Transformer margins must contain one value per pair")

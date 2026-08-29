@@ -13,7 +13,11 @@ MANIFEST_FILENAME = "manifest.json"
 
 
 def save_boosting_model(
-    model: Any, directory: str | Path, feature_names: list[str]
+    model: Any,
+    directory: str | Path,
+    feature_names: list[str],
+    *,
+    feature_options: dict[str, object] | None = None,
 ) -> Path:
     output = Path(directory).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -22,6 +26,7 @@ def save_boosting_model(
         "format_version": 1,
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
         "feature_names": feature_names,
+        "feature_options": feature_options or {},
         "categorical_features": list(CATEGORICAL_FEATURES),
         "positive_class": "match",
         "postprocessing": "none",
@@ -48,6 +53,8 @@ def load_boosting_model(directory: str | Path) -> tuple[Any, dict[str, Any]]:
         raise ValueError("boosting feature schema version does not match the code")
     if manifest.get("positive_class") != "match":
         raise ValueError("boosting artifact positive class must be 'match'")
+    if not isinstance(manifest.get("feature_options", {}), dict):
+        raise ValueError("boosting artifact feature_options must be an object")
 
     from catboost import CatBoostClassifier
 

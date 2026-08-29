@@ -503,6 +503,19 @@ features:
     n_jobs: 1
     chunk_size: 10000
 
+pair_features:
+  typed_attributes:
+    enabled: true
+    detector: rules
+    preserve_semantic_type_when_missing: true
+    symmetric: true
+    types:
+      code: true
+      physical: true
+      numeric: true
+      set: true
+      text: true
+
 runtime:
   device: null
   seed: 42

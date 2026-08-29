@@ -185,6 +185,14 @@ class AppConfigTests(unittest.TestCase):
             self.config.features.execution_order,
             ("normalization", "ner", "physical"),
         )
+        typed = self.config.pair_features.typed_attributes
+        self.assertTrue(typed.enabled)
+        self.assertTrue(typed.symmetric)
+        self.assertTrue(typed.preserve_semantic_type_when_missing)
+        self.assertEqual(
+            typed.enabled_types,
+            ("CODE", "PHYSICAL", "NUMERIC", "SET", "TEXT"),
+        )
         self.assertEqual(
             self.config.features.normalization.output_column,
             "normalized_attributes",

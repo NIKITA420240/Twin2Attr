@@ -18,6 +18,8 @@ def save_stacking_model(
     model: Any,
     directory: str | Path,
     feature_names: list[str],
+    *,
+    feature_options: dict[str, object] | None = None,
 ) -> Path:
     output = Path(directory).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -31,6 +33,7 @@ def save_stacking_model(
         "structured_feature_count": len(feature_names) - 1,
         "total_feature_count": len(feature_names),
         "feature_names": feature_names,
+        "feature_options": feature_options or {},
         "categorical_features": list(CATEGORICAL_FEATURES),
         "transformer_feature": TRANSFORMER_LOGIT_MARGIN,
         "positive_class": "match",
@@ -69,6 +72,8 @@ def load_stacking_model(directory: str | Path) -> tuple[Any, dict[str, Any]]:
         raise ValueError("stacking manifest feature_names must be a non-empty list")
     if manifest.get("total_feature_count") != len(feature_names):
         raise ValueError("stacking manifest feature count does not match feature_names")
+    if not isinstance(manifest.get("feature_options", {}), dict):
+        raise ValueError("stacking manifest feature_options must be an object")
 
     from catboost import CatBoostClassifier
 

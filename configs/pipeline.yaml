@@ -545,6 +545,21 @@ features:
     n_jobs: 1
     chunk_size: 10000
 
+# Pair-level features are computed only after both cards are available. They do
+# not modify the serialized Transformer input; CatBoost/stacking consume them.
+pair_features:
+  typed_attributes:
+    enabled: true
+    detector: rules
+    preserve_semantic_type_when_missing: true
+    symmetric: true
+    types:
+      code: true
+      physical: true
+      numeric: true
+      set: true
+      text: true
+
 runtime:
   device: null
   seed: 42

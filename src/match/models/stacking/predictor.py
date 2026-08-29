@@ -38,11 +38,15 @@ class StackingPredictor:
         thread_count: int = -1,
     ) -> "StackingPredictor":
         model, manifest = load_stacking_model(directory)
+        builder = BoostingFeatureBuilder.from_feature_options(
+            manifest.get("feature_options")
+        )
         return cls(
             model,
             [str(name) for name in manifest["feature_names"]],
             transformer=transformer,
             thread_count=thread_count,
+            feature_builder=builder,
         )
 
     def predict_proba(self, batch: PredictionBatch) -> np.ndarray:

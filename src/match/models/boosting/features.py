@@ -9,9 +9,14 @@ import numpy as np
 import pandas as pd
 
 from ...prepare_data import PreparedPair
+from ...pair_features import (
+    TypedAttributeComparator,
+    TypedAttributeOptions,
+    aggregate_typed_attribute_features,
+)
 from ..contracts import PredictionBatch
 
-FEATURE_SCHEMA_VERSION = 1
+FEATURE_SCHEMA_VERSION = 2
 CATEGORICAL_FEATURES = ("category",)
 _DIGIT_RE = re.compile(r"\d")
 _ALPHA_RE = re.compile(r"[^\W\d_]", re.UNICODE)
@@ -180,7 +185,28 @@ def _structured_features(
         output[name] = values[:, index]
 
 
-def build_pair_features(pairs: Sequence[PreparedPair]) -> pd.DataFrame:
+def _typed_features(
+    pairs: Sequence[PreparedPair],
+    options: TypedAttributeOptions,
+) -> pd.DataFrame | None:
+    if not options.enabled:
+        return None
+    comparator = TypedAttributeComparator(options)
+    rows = [
+        aggregate_typed_attribute_features(
+            comparator.compare_pair(pair),
+            enabled_types=options.enabled_types,
+        )
+        for pair in pairs
+    ]
+    return pd.DataFrame(rows, dtype=np.float32)
+
+
+def build_pair_features(
+    pairs: Sequence[PreparedPair],
+    *,
+    typed_attribute_options: TypedAttributeOptions | None = None,
+) -> pd.DataFrame:
     """Build an order-stable feature frame from structured product pairs."""
     if not pairs:
         raise ValueError("boosting feature input must not be empty")
@@ -271,6 +297,12 @@ def build_pair_features(pairs: Sequence[PreparedPair]) -> pd.DataFrame:
     for index, suffix in enumerate(("common", "jaccard", "dice", "containment")):
         output[f"name_char_trigrams_{suffix}"] = char_metrics[:, index]
     _structured_features(output, pairs)
+    typed = _typed_features(
+        pairs,
+        typed_attribute_options or TypedAttributeOptions(),
+    )
+    if typed is not None:
+        output = pd.concat((output, typed), axis=1)
     return output
 
 
@@ -280,8 +312,36 @@ class BoostingFeatureBuilder:
     schema_version = FEATURE_SCHEMA_VERSION
     categorical_features = CATEGORICAL_FEATURES
 
+    def __init__(
+        self,
+        typed_attribute_options: TypedAttributeOptions | None = None,
+    ) -> None:
+        self.typed_attribute_options = (
+            typed_attribute_options or TypedAttributeOptions()
+        )
+
+    @property
+    def feature_options(self) -> dict[str, object]:
+        return {
+            "typed_attributes": self.typed_attribute_options.to_dict(),
+        }
+
+    @classmethod
+    def from_feature_options(
+        cls,
+        values: dict[str, object] | None,
+    ) -> "BoostingFeatureBuilder":
+        source = values or {}
+        typed = source.get("typed_attributes")
+        if typed is not None and not isinstance(typed, dict):
+            raise ValueError("boosting typed attribute options must be an object")
+        return cls(TypedAttributeOptions.from_dict(typed))
+
     def transform(self, batch: PredictionBatch) -> pd.DataFrame:
-        return build_pair_features(batch.prepared_pairs())
+        return build_pair_features(
+            batch.prepared_pairs(),
+            typed_attribute_options=self.typed_attribute_options,
+        )
 
 
 __all__ = [

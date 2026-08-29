@@ -1,0 +1,101 @@
+# CatBoost screening ablation for deterministic pair-level attribute metrics.
+# No case is run merely by defining this file; enable the corresponding job in
+# configs/benchmark.yaml when the implementation review is complete.
+test_type: training_quality
+reference_test: typed_attributes_off
+
+# Use one seed for screening. Replace with [42, 43, 44] before accepting a
+# quality gain for the final solution.
+seeds:
+  - 42
+
+tests:
+  typed_attributes_off:
+    name: catboost_without_typed_attributes
+    overrides:
+      - path: training.model
+        value: boosting
+      - path: training.data_model
+        value: mix_dataset
+      - path: pair_features.typed_attributes.enabled
+        value: false
+
+  code_only:
+    name: catboost_code_metrics
+    overrides:
+      - path: training.model
+        value: boosting
+      - path: training.data_model
+        value: mix_dataset
+      - path: pair_features.typed_attributes.enabled
+        value: true
+      - path: pair_features.typed_attributes.types.code
+        value: true
+      - path: pair_features.typed_attributes.types.physical
+        value: false
+      - path: pair_features.typed_attributes.types.numeric
+        value: false
+      - path: pair_features.typed_attributes.types.set
+        value: false
+      - path: pair_features.typed_attributes.types.text
+        value: false
+
+  code_physical:
+    name: catboost_code_and_physical_metrics
+    overrides:
+      - path: training.model
+        value: boosting
+      - path: training.data_model
+        value: mix_dataset
+      - path: pair_features.typed_attributes.enabled
+        value: true
+      - path: pair_features.typed_attributes.types.code
+        value: true
+      - path: pair_features.typed_attributes.types.physical
+        value: true
+      - path: pair_features.typed_attributes.types.numeric
+        value: false
+      - path: pair_features.typed_attributes.types.set
+        value: false
+      - path: pair_features.typed_attributes.types.text
+        value: false
+
+  code_physical_set:
+    name: catboost_code_physical_and_set_metrics
+    overrides:
+      - path: training.model
+        value: boosting
+      - path: training.data_model
+        value: mix_dataset
+      - path: pair_features.typed_attributes.enabled
+        value: true
+      - path: pair_features.typed_attributes.types.code
+        value: true
+      - path: pair_features.typed_attributes.types.physical
+        value: true
+      - path: pair_features.typed_attributes.types.numeric
+        value: false
+      - path: pair_features.typed_attributes.types.set
+        value: true
+      - path: pair_features.typed_attributes.types.text
+        value: false
+
+  all_typed_attributes:
+    name: catboost_all_typed_attribute_metrics
+    overrides:
+      - path: training.model
+        value: boosting
+      - path: training.data_model
+        value: mix_dataset
+      - path: pair_features.typed_attributes.enabled
+        value: true
+      - path: pair_features.typed_attributes.types.code
+        value: true
+      - path: pair_features.typed_attributes.types.physical
+        value: true
+      - path: pair_features.typed_attributes.types.numeric
+        value: true
+      - path: pair_features.typed_attributes.types.set
+        value: true
+      - path: pair_features.typed_attributes.types.text
+        value: true

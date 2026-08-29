@@ -53,7 +53,9 @@ class BoostingTrainer:
         from catboost import CatBoostClassifier
 
         parameters = self.config.model_description.boosting
-        builder = BoostingFeatureBuilder()
+        builder = BoostingFeatureBuilder(
+            self.config.pair_features.typed_attributes
+        )
         train_batch = PredictionBatch(
             data.items,
             data.train_matches,
@@ -115,6 +117,7 @@ class BoostingTrainer:
             model,
             self.config.model_description.boosting.artifact_dir,
             list(train_features.columns),
+            feature_options=builder.feature_options,
         )
         logger.info(
             "Boosting training finished: validation_macro_pr_auc={:.6f}, artifact={!s}",

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from match.benchmarks.runner import run_configured_benchmarks
+from match.benchmarks.suite import apply_benchmark_test, load_benchmark_suite
 from match.config import load_benchmark_config_file
 from match.paths import PROJECT_ROOT
 
@@ -31,6 +32,7 @@ class ConfiguredBenchmarkRunnerTests(unittest.TestCase):
                 "speed_optimizations",
                 "inference_quality",
                 "transitivity_quality",
+                "typed_attribute_quality",
                 "codex_annotation_quality",
                 "neural_relabel_quality",
                 "llm_vote_sampling_quality",
@@ -83,6 +85,35 @@ class ConfiguredBenchmarkRunnerTests(unittest.TestCase):
             "completed",
             "completed",
         ])
+
+    def test_typed_attribute_ablation_cases_produce_valid_configs(self) -> None:
+        suite = load_benchmark_suite(
+            PROJECT_ROOT
+            / "configs"
+            / "benchmark_tests"
+            / "typed_attribute_quality.yaml",
+            allowed_test_types={"training_quality"},
+        )
+        expected = {
+            "typed_attributes_off": (),
+            "code_only": ("CODE",),
+            "code_physical": ("CODE", "PHYSICAL"),
+            "code_physical_set": ("CODE", "PHYSICAL", "SET"),
+            "all_typed_attributes": (
+                "CODE",
+                "PHYSICAL",
+                "NUMERIC",
+                "SET",
+                "TEXT",
+            ),
+        }
+
+        for key, enabled_types in expected.items():
+            configured = apply_benchmark_test(self.config, suite.tests[key])
+            options = configured.pair_features.typed_attributes
+            actual = options.enabled_types if options.enabled else ()
+            self.assertEqual(actual, enabled_types)
+            self.assertEqual(configured.training.model, "boosting")
 
 
 if __name__ == "__main__":
