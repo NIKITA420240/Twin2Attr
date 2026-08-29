@@ -52,12 +52,6 @@ data_model_description:
         max_rows: 750000
         sampling_strategy: category_target_balanced
         confidence_power: 2.0
-        # Loss multiplier is separate from confidence-aware row sampling.
-        confidence_weighting:
-          enabled: true
-          method: distance_from_midpoint
-          min_weight_multiplier: 0.2
-          power: 1.0
         # Penalize graph-local contradictions such as A=B, B=C, A!=C.
         weight_model:
           type: transitivity
@@ -69,7 +63,6 @@ data_model_description:
         splitter:
           splitter_type: binary
           score_type: votes
-          target_mode: soft
           total_votes: 9
           negative_threshold: 2
           positive_threshold: 7
@@ -121,11 +114,6 @@ data_model_description:
         max_rows: 750000
         sampling_strategy: category_target_balanced
         confidence_power: 2.0
-        confidence_weighting:
-          enabled: true
-          method: distance_from_midpoint
-          min_weight_multiplier: 0.2
-          power: 1.0
         weight_model:
           type: transitivity
           enabled: true
@@ -136,7 +124,6 @@ data_model_description:
         splitter:
           splitter_type: binary
           score_type: votes
-          target_mode: soft
           total_votes: 9
           negative_threshold: 2
           positive_threshold: 7

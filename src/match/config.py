@@ -30,12 +30,17 @@ class DatasetSplitterSettings:
     negative_threshold: float
     positive_threshold: float
     uncertain_action: str
+    target_mode: str = "hard"
 
     def __post_init__(self) -> None:
         if self.splitter_type != "binary":
             raise ValueError("splitter_type currently must be 'binary'")
         if self.score_type not in {"label", "votes"}:
             raise ValueError("score_type must be one of: label, votes")
+        if self.target_mode not in {"hard", "soft"}:
+            raise ValueError("target_mode must be one of: hard, soft")
+        if self.score_type == "label" and self.target_mode != "hard":
+            raise ValueError("label splitter currently requires target_mode='hard'")
         if self.score_type == "votes":
             if self.total_votes is None or self.total_votes < 1:
                 raise ValueError("votes splitter requires positive total_votes")
@@ -56,8 +61,29 @@ class DatasetSplitterSettings:
                 )
         elif self.total_votes is not None:
             raise ValueError("label splitter must not define total_votes")
-        if self.uncertain_action != "drop":
-            raise ValueError("uncertain_action currently must be 'drop'")
+        if self.uncertain_action not in {"drop", "keep"}:
+            raise ValueError("uncertain_action must be one of: drop, keep")
+
+
+@dataclass(frozen=True, slots=True)
+class ConfidenceWeightingSettings:
+    enabled: bool = False
+    method: str = "distance_from_midpoint"
+    min_weight_multiplier: float = 0.2
+    power: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.method != "distance_from_midpoint":
+            raise ValueError(
+                "confidence_weighting.method currently must be "
+                "'distance_from_midpoint'"
+            )
+        if not 0.0 < self.min_weight_multiplier <= 1.0:
+            raise ValueError(
+                "confidence_weighting.min_weight_multiplier must be in (0, 1]"
+            )
+        if self.power <= 0.0:
+            raise ValueError("confidence_weighting.power must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +121,9 @@ class DatasetSourceSettings:
     sampling_strategy: str
     splitter: DatasetSplitterSettings
     weight_model: SampleWeightModelSettings = SampleWeightModelSettings()
+    confidence_weighting: ConfidenceWeightingSettings = (
+        ConfidenceWeightingSettings()
+    )
     confidence_power: float = 2.0
 
     def __post_init__(self) -> None:
@@ -1385,6 +1414,7 @@ def _dataset_splitter(
         negative_threshold=float(values.get("negative_threshold", 0)),
         positive_threshold=float(values.get("positive_threshold", 1)),
         uncertain_action=str(values.get("uncertain_action", "drop")),
+        target_mode=str(values.get("target_mode", "hard")),
     )
 
 
@@ -1401,6 +1431,9 @@ def _dataset_source(
     weight_model = values.get("weight_model", {})
     if not isinstance(weight_model, Mapping):
         raise ValueError(f"{prefix}.weight_model must be a mapping")
+    confidence_weighting = values.get("confidence_weighting", {})
+    if not isinstance(confidence_weighting, Mapping):
+        raise ValueError(f"{prefix}.confidence_weighting must be a mapping")
     return DatasetSourceSettings(
         name=name,
         matches=_path(_required(values, "matches"), f"{prefix}.matches"),
@@ -1426,6 +1459,22 @@ def _dataset_source(
                 weight_model.get("confidence_weighted_violations", True),
                 f"{prefix}.weight_model.confidence_weighted_violations",
             ),
+        ),
+        confidence_weighting=ConfidenceWeightingSettings(
+            enabled=_bool(
+                confidence_weighting.get("enabled", False),
+                f"{prefix}.confidence_weighting.enabled",
+            ),
+            method=str(
+                confidence_weighting.get(
+                    "method",
+                    "distance_from_midpoint",
+                )
+            ),
+            min_weight_multiplier=float(
+                confidence_weighting.get("min_weight_multiplier", 0.2)
+            ),
+            power=float(confidence_weighting.get("power", 1.0)),
         ),
         confidence_power=float(values.get("confidence_power", 2.0)),
     )

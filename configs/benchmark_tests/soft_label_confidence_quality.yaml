@@ -1,0 +1,74 @@
+# Full 2x2 factorial ablation of LLM target type and loss confidence weighting.
+# Transitivity, sampling, data budget, validation split and model settings stay
+# identical in every case, so paired deltas isolate the two new training knobs.
+test_type: training_quality
+reference_test: hard_no_confidence
+
+# One seed is useful as a smoke test. Use [42, 43, 44] for a final decision.
+seeds:
+  - 42
+
+tests:
+  hard_no_confidence:
+    name: hard_target_without_confidence_weighting
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.data_model
+        value: mix_dataset
+      - path: data_model_description.mix_dataset.sources.llm.splitter.target_mode
+        value: hard
+      - path: data_model_description.mix_dataset.sources.llm.confidence_weighting.enabled
+        value: false
+      - path: model_description.transformer.hpo_trials
+        value: 1
+      - path: model_description.transformer.export.onnx.enabled
+        value: false
+
+  soft_no_confidence:
+    name: soft_target_without_confidence_weighting
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.data_model
+        value: mix_dataset
+      - path: data_model_description.mix_dataset.sources.llm.splitter.target_mode
+        value: soft
+      - path: data_model_description.mix_dataset.sources.llm.confidence_weighting.enabled
+        value: false
+      - path: model_description.transformer.hpo_trials
+        value: 1
+      - path: model_description.transformer.export.onnx.enabled
+        value: false
+
+  hard_with_confidence:
+    name: hard_target_with_confidence_weighting
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.data_model
+        value: mix_dataset
+      - path: data_model_description.mix_dataset.sources.llm.splitter.target_mode
+        value: hard
+      - path: data_model_description.mix_dataset.sources.llm.confidence_weighting.enabled
+        value: true
+      - path: model_description.transformer.hpo_trials
+        value: 1
+      - path: model_description.transformer.export.onnx.enabled
+        value: false
+
+  soft_with_confidence:
+    name: soft_target_with_confidence_weighting
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.data_model
+        value: mix_dataset
+      - path: data_model_description.mix_dataset.sources.llm.splitter.target_mode
+        value: soft
+      - path: data_model_description.mix_dataset.sources.llm.confidence_weighting.enabled
+        value: true
+      - path: model_description.transformer.hpo_trials
+        value: 1
+      - path: model_description.transformer.export.onnx.enabled
+        value: false

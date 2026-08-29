@@ -194,6 +194,12 @@ benchmark:
       enabled: true
       tests_path: configs/benchmark_tests/llm_vote_sampling_quality.yaml
       selected_tests: null
+
+    soft_label_confidence_quality:
+      type: training_quality
+      enabled: true
+      tests_path: configs/benchmark_tests/soft_label_confidence_quality.yaml
+      selected_tests: null
 ```
 
 Каждый запуск создаёт общий timestamp-каталог, сохраняет разрешённый конфиг,
@@ -211,6 +217,7 @@ configs/benchmark_tests/quality_optimizations.yaml # сокращение вхо
 configs/benchmark_tests/transitivity_quality.yaml  # влияние весов на обучение
 configs/benchmark_tests/codex_annotation_quality.yaml # ценность Codex-разметки
 configs/benchmark_tests/llm_vote_sampling_quality.yaml # выбор по уверенности LLM
+configs/benchmark_tests/soft_label_confidence_quality.yaml # target × loss weight
 ```
 
 Inference benchmark использует один и тот же checkpoint
@@ -239,6 +246,19 @@ split, моделью и гиперпараметрами; затем сравн
 `results.parquet` содержит `training_seconds` каждого запуска,
 `aggregates.parquet` — `total_training_seconds` по каждому варианту, а
 `report.json` — `total_elapsed_seconds` всего теста транзитивности.
+
+Вклад soft labels и confidence weighting проверяется полным факторным тестом
+`2×2`: hard/soft target и выключенный/включённый confidence-множитель loss.
+Контрольный вариант `hard_no_confidence` нужен для расчёта парных дельт, поэтому
+три новых варианта требуют четыре обучения на каждый seed. Транзитивность,
+выбор строк, бюджет данных и validation split одинаковы во всех случаях.
+
+Запустить только эту абляцию, не выполняя остальные benchmark-задачи:
+
+```bash
+uv run python run.py benchmark \
+  --config configs/benchmark_soft_label_confidence.yaml
+```
 
 Полезность Codex-разметки проверяет `codex_annotation_quality`. Он сравнивает
 `human + 750000 LLM` с таким же бюджетом псевдоразметки:
@@ -422,6 +442,40 @@ uv run python run.py train \
 ```bash
 uv run python run.py train training.data_model=mix_dataset
 ```
+
+LLM-источник может сохранять дробную долю голосов как Transformer target:
+
+```yaml
+splitter:
+  splitter_type: binary
+  score_type: votes
+  target_mode: soft
+  total_votes: 9
+  negative_threshold: 2
+  positive_threshold: 7
+  uncertain_action: drop
+
+confidence_weighting:
+  enabled: true
+  method: distance_from_midpoint
+  min_weight_multiplier: 0.2
+  power: 1.0
+```
+
+При `target_mode: soft` колонка `training_target` равна исходной доле голосов,
+а бинарная `target` сохраняется для split, транзитивности, CatBoost и метрик.
+`uncertain_action: drop` оставляет только голоса `0..2` и `7..9`; значение
+`keep` сохраняет также `3..6` и определяет их hard target относительно середины
+шкалы голосов. Human validation всегда остаётся бинарной.
+
+`confidence_weighting` влияет именно на loss, в отличие от
+`confidence_power`, который используется только confidence-aware sampling.
+Для `distance_from_midpoint` множитель равен
+`max(min_weight_multiplier, abs(2 * training_target - 1) ** power)`. Итоговый
+вес равен `source.weight * confidence_multiplier * weight_multiplier`, где
+последний множитель поставляет, например, модель транзитивности. Transformer
+использует weighted BCE/soft cross-entropy; остальные модели продолжают
+обучаться по hard `target`.
 
 `mix_dataset_codex` дополнительно добавляет все 25 228 бинарно переразмеченных
 пар из `data/matches_llm_ambiguous_reviewed.parquet`. Для них используется новая

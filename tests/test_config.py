@@ -37,6 +37,15 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(llm_weight_model.min_weight_multiplier, 0.25)
         self.assertEqual(llm_weight_model.min_comparable_neighbors, 2)
         self.assertTrue(llm_weight_model.confidence_weighted_violations)
+        self.assertEqual(sources["llm"].splitter.target_mode, "soft")
+        confidence_weighting = sources["llm"].confidence_weighting
+        self.assertTrue(confidence_weighting.enabled)
+        self.assertEqual(
+            confidence_weighting.method,
+            "distance_from_midpoint",
+        )
+        self.assertEqual(confidence_weighting.min_weight_multiplier, 0.2)
+        self.assertEqual(confidence_weighting.power, 1.0)
         self.assertEqual(self.config.training.model, "stacking")
         self.assertEqual(self.config.training.data_model, "base_dataset")
         self.assertEqual(

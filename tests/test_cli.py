@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import run as run_module
@@ -162,6 +163,30 @@ class UnifiedCliTests(unittest.TestCase):
         self.assertEqual(args.command, "benchmark")
         self.assertEqual(args.config, "configs/benchmark.yaml")
         self.assertEqual(args.overrides, [])
+
+    def test_benchmark_exits_nonzero_when_any_job_failed(self) -> None:
+        args = parse_args(["benchmark"])
+        result = SimpleNamespace(
+            failed_jobs=1,
+            summary=lambda: "completed=0, failed=1, skipped=0",
+        )
+
+        with (
+            patch.object(run_module, "ensure_polars_available"),
+            patch(
+                "match.config.load_benchmark_config_file",
+                return_value=object(),
+            ),
+            patch(
+                "match.benchmarks.runner.run_configured_benchmarks",
+                return_value=result,
+            ),
+            patch("builtins.print") as output,
+            self.assertRaisesRegex(SystemExit, "1"),
+        ):
+            run_module.run_benchmark(args)
+
+        output.assert_called_once_with(result.summary())
 
     def test_bootstraps_bundled_polars_when_image_does_not_have_it(self) -> None:
         missing = ModuleNotFoundError("No module named 'polars'", name="polars")

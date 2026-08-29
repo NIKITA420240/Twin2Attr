@@ -35,7 +35,9 @@ class PreparedPair:
     """A structured product pair in the original matches-row order.
 
     ``category`` is taken from the left card and is intended for category-level
-    evaluation such as macro PR-AUC. ``label`` is ``None`` for inference pairs.
+    evaluation such as macro PR-AUC. ``label`` is the hard class used by splits,
+    metrics and non-Transformer models. ``training_target`` optionally keeps a
+    soft target for Transformer training. Both are ``None`` for inference pairs.
     """
 
     left: PreparedCard
@@ -45,6 +47,7 @@ class PreparedPair:
     sample_weight: float = 1.0
     preserve_attribute_order: bool = False
     skip_oversized_attributes: bool = False
+    training_target: float | None = None
 
 
 def _parse_attributes(raw: Any, *, item_id: Any) -> tuple[AttributePair, ...]:
@@ -152,6 +155,9 @@ def prepare_pairs(
     selected_columns = [left_id_column, right_id_column]
     if has_labels:
         selected_columns.append(label_column)
+    has_training_targets = "training_target" in matches.columns
+    if has_training_targets:
+        selected_columns.append("training_target")
     has_weights = weight_column in matches.columns
     if has_weights:
         selected_columns.append(weight_column)
@@ -172,6 +178,12 @@ def prepare_pairs(
             if raw_label is None or raw_label not in (0, 1, False, True):
                 raise ValueError("target labels must contain only 0 and 1")
             label = int(raw_label)
+        training_target: float | None = None
+        if has_labels:
+            raw_training_target = row[3] if has_training_targets else label
+            training_target = float(raw_training_target)
+            if not 0.0 <= training_target <= 1.0:
+                raise ValueError("training targets must be in [0, 1]")
         raw_weight = row[-1] if has_weights else 1.0
         sample_weight = float(raw_weight)
         if not sample_weight > 0.0:
@@ -183,6 +195,7 @@ def prepare_pairs(
                 label=label,
                 category=left.category,
                 sample_weight=sample_weight,
+                training_target=training_target,
             )
         )
     return pairs

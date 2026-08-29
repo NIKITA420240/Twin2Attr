@@ -52,6 +52,12 @@ data_model_description:
         max_rows: 750000
         sampling_strategy: category_target_balanced
         confidence_power: 2.0
+        # Factorial benchmarks override only `enabled`; keep the formula fixed.
+        confidence_weighting:
+          enabled: false
+          method: distance_from_midpoint
+          min_weight_multiplier: 0.2
+          power: 1.0
         # Penalize graph-local contradictions such as A=B, B=C, A!=C.
         weight_model:
           type: transitivity
@@ -63,6 +69,7 @@ data_model_description:
         splitter:
           splitter_type: binary
           score_type: votes
+          target_mode: hard
           total_votes: 9
           negative_threshold: 2
           positive_threshold: 7
@@ -257,8 +264,8 @@ analysis_models:
 
 model_description:
   transformer:
-    pretrained_model_path: weights/cross-encoder-ms-marco-l12-v3
-    artifact_dir: weights/cross-encoder-ms-marco-l12-v3
+    pretrained_model_path: weights/rubert-tiny2
+    artifact_dir: weights/rubert-tiny2
     tokenizer:
       batch_fields:
         enabled: true
@@ -283,7 +290,7 @@ model_description:
       quantile: 0.95
       sample_size: 10000
       hard_cap: 512
-    max_epochs: 15
+    max_epochs: 2
     hpo_trials: 1
     # Used directly when hpo_trials=1; otherwise these are initial values.
     # Base LR for Transformer encoder layers and the value tuned by HPO.

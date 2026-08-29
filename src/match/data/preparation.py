@@ -62,7 +62,17 @@ def prepare_training_data(
             frame = frame.with_columns(
                 pl.lit(1.0).cast(pl.Float32).alias("sample_weight")
             )
-        return frame.select("id1", "id2", "target", "sample_weight")
+        if "training_target" not in frame.columns:
+            frame = frame.with_columns(
+                pl.col("target").cast(pl.Float32).alias("training_target")
+            )
+        return frame.select(
+            "id1",
+            "id2",
+            "target",
+            "training_target",
+            "sample_weight",
+        )
 
     frames = [selected(train_matches)]
     if stacking_matches is not None:

@@ -155,9 +155,12 @@ class BackendBenchmarkTests(unittest.TestCase):
             rows = pl.read_parquet(result.output_path).sort("test")
             report = json.loads(result.report_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(result.completed_tests, 2)
-        self.assertEqual(result.failed_tests, 0)
-        self.assertEqual(rows.get_column("status").to_list(), ["completed"] * 2)
+        self.assertEqual(result.completed_tests, 1)
+        self.assertEqual(result.failed_tests, 1)
+        self.assertEqual(
+            rows.get_column("status").to_list(),
+            ["completed", "failed"],
+        )
         self.assertAlmostEqual(
             rows.filter(pl.col("test") == "test_2")
             .get_column("mean_probability_difference")
@@ -173,6 +176,12 @@ class BackendBenchmarkTests(unittest.TestCase):
             rows.filter(pl.col("test") == "test_2")
             .get_column("quality_gate_passed")
             .item()
+        )
+        self.assertIn(
+            "prediction quality gate failed",
+            rows.filter(pl.col("test") == "test_2")
+            .get_column("error")
+            .item(),
         )
         self.assertTrue(rows.get_column("pr_auc").is_not_null().all())
         self.assertEqual(report["test_type"], "speed")

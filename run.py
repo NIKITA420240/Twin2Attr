@@ -602,6 +602,8 @@ def run_benchmark(args: argparse.Namespace) -> None:
     config = load_benchmark_config_file(args.config, args.overrides)
     result = run_configured_benchmarks(config)
     print(result.summary())
+    if result.failed_jobs:
+        raise SystemExit(1)
 
 
 def main(argv: Sequence[str] | None = None) -> None:

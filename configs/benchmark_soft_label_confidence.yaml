@@ -1,0 +1,14 @@
+# Run only the hard/soft target x confidence-weighting training ablation:
+#   uv run python run.py benchmark \
+#     --config configs/benchmark_soft_label_confidence.yaml
+benchmark:
+  base_config_path: configs/benchmark_pipeline.yaml
+  output_dir: analysis/benchmark
+  fail_fast: false
+
+  jobs:
+    soft_label_confidence_quality:
+      type: training_quality
+      enabled: true
+      tests_path: configs/benchmark_tests/soft_label_confidence_quality.yaml
+      selected_tests: null

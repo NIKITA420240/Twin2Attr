@@ -12,7 +12,7 @@ def weighted_classification_loss(
     sample_weights: torch.Tensor,
     class_weights: torch.Tensor,
 ) -> torch.Tensor:
-    """Compute weighted BCE for one logit or cross-entropy for two logits."""
+    """Compute weighted binary loss for hard or soft targets in ``[0, 1]``."""
     if logits.ndim != 2 or logits.shape[1] not in {1, 2}:
         raise ValueError("classifier must return shape [batch, 1 or 2]")
     batch_size = logits.shape[0]
@@ -24,27 +24,32 @@ def weighted_classification_loss(
         raise ValueError("class_weights must have shape [2]")
 
     device = logits.device
-    labels = labels.to(device=device, dtype=torch.long)
+    labels = labels.to(device=device, dtype=logits.dtype)
     sample_weights = sample_weights.to(device=device, dtype=logits.dtype)
     class_weights = class_weights.to(device=device, dtype=logits.dtype)
-    if torch.any((labels < 0) | (labels > 1)):
-        raise ValueError("labels must contain only 0 and 1")
+    if not torch.isfinite(labels).all() or torch.any((labels < 0) | (labels > 1)):
+        raise ValueError("labels must contain finite values in [0, 1]")
     if torch.any(sample_weights <= 0) or torch.any(class_weights <= 0):
         raise ValueError("sample and class weights must be positive")
 
     if logits.shape[1] == 1:
-        losses = F.binary_cross_entropy_with_logits(
-            logits[:, 0],
-            labels.to(dtype=logits.dtype),
-            reduction="none",
+        scores = logits[:, 0]
+        losses = -(
+            (1.0 - labels) * class_weights[0] * F.logsigmoid(-scores)
+            + labels * class_weights[1] * F.logsigmoid(scores)
         )
-        losses = losses * class_weights[labels]
     else:
-        losses = F.cross_entropy(
-            logits,
-            labels,
-            weight=class_weights,
-            reduction="none",
+        log_probabilities = F.log_softmax(logits, dim=-1)
+        weighted_classes = torch.stack(
+            (
+                (1.0 - labels) * class_weights[0],
+                labels * class_weights[1],
+            ),
+            dim=-1,
+        )
+        losses = -torch.sum(
+            weighted_classes * log_probabilities,
+            dim=-1,
         )
     return torch.sum(losses * sample_weights) / torch.sum(sample_weights)
 

@@ -25,6 +25,7 @@ class TrainingDataTests(unittest.TestCase):
                 "id1": [1, 2],
                 "id2": [2, 1],
                 "target": [1, 1],
+                "training_target": [0.8, 0.9],
                 "sample_weight": [3.0, 1.0],
             }
         )
@@ -45,10 +46,15 @@ class TrainingDataTests(unittest.TestCase):
         self.assertEqual(data.attributes_column, "normalized_attributes")
         self.assertEqual([pair.label for pair in data.train_pairs], [1, 1])
         self.assertEqual(
+            [pair.training_target for pair in data.train_pairs],
+            [0.8, 0.9],
+        )
+        self.assertEqual(
             [pair.sample_weight for pair in data.train_pairs],
             [3.0, 1.0],
         )
         self.assertEqual([pair.label for pair in data.validation_pairs], [0])
+        self.assertEqual(data.validation_pairs[0].training_target, 0.0)
         self.assertEqual(data.validation_pairs[0].sample_weight, 1.0)
         self.assertEqual(data.train_pairs[0].left.item_id, 1)
         self.assertEqual(data.validation_pairs[0].right.item_id, 3)

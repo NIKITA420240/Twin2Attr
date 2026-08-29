@@ -427,6 +427,15 @@ def run_backend_benchmark(config: AppConfig) -> BackendBenchmarkResult:
                     row["max_probability_difference"] <= 1.0e-3
                     and row["class_disagreement_rate"] == 0.0
                 )
+                if not row["quality_gate_passed"]:
+                    row["status"] = "failed"
+                    row["error"] = (
+                        "prediction quality gate failed: "
+                        f"max_probability_difference="
+                        f"{row['max_probability_difference']:.6g}, "
+                        f"class_disagreement_rate="
+                        f"{row['class_disagreement_rate']:.6g}"
+                    )
     elif settings.compare_predictions:
         logger.warning(
             "Reference benchmark test {} failed; prediction deltas are unavailable",

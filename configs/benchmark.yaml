@@ -9,26 +9,26 @@ benchmark:
   jobs:
     backends:
       type: inference
-      enabled: true
+      enabled: false
       tests_path: configs/benchmark_tests/backends.yaml
       selected_tests: null
 
     speed_optimizations:
       type: inference
-      enabled: true
+      enabled: false
       tests_path: configs/benchmark_tests/speed_optimizations.yaml
       selected_tests: null
 
     inference_quality:
       type: inference
-      enabled: true
+      enabled: false
       tests_path: configs/benchmark_tests/quality_optimizations.yaml
       selected_tests: null
 
     # Retrains two Transformer models even with one seed.
     transitivity_quality:
       type: training_quality
-      enabled: true
+      enabled: false
       tests_path: configs/benchmark_tests/transitivity_quality.yaml
       selected_tests: null
 
@@ -36,13 +36,21 @@ benchmark:
     # pseudo-labeled-data budget.
     codex_annotation_quality:
       type: training_quality
-      enabled: true
+      enabled: false
       tests_path: configs/benchmark_tests/codex_annotation_quality.yaml
       selected_tests: null
 
     # Three paired fits over the same 2/7 LLM pool and 750,000-row budget.
     llm_vote_sampling_quality:
       type: training_quality
-      enabled: true
+      enabled: false
       tests_path: configs/benchmark_tests/llm_vote_sampling_quality.yaml
+      selected_tests: null
+
+    # Four paired fits: one hard-label control plus the three requested
+    # soft-label/confidence-weighting variants.
+    soft_label_confidence_quality:
+      type: training_quality
+      enabled: true
+      tests_path: configs/benchmark_tests/soft_label_confidence_quality.yaml
       selected_tests: null

@@ -42,6 +42,7 @@ def _binary_targets(
             )
         return matches.with_columns(
             pl.col("target").cast(pl.Int8),
+            pl.col("target").cast(pl.Float32).alias("training_target"),
             pl.lit(1.0).cast(pl.Float32).alias("_annotation_confidence"),
         )
 
@@ -63,19 +64,32 @@ def _binary_targets(
         )
     with_votes = matches.with_columns(
         pl.Series("annotation_votes", rounded.astype(np.int16, copy=False)),
+        numeric_targets.cast(pl.Float32).alias("training_target"),
         pl.Series(
             "_annotation_confidence",
             np.abs(2.0 * values - 1.0).astype(np.float32, copy=False),
         ),
     )
-    selected = with_votes.filter(
-        (pl.col("annotation_votes") <= splitter.negative_threshold)
-        | (pl.col("annotation_votes") >= splitter.positive_threshold)
-    ).with_columns(
-        (pl.col("annotation_votes") >= splitter.positive_threshold)
-        .cast(pl.Int8)
-        .alias("target")
+    if splitter.uncertain_action == "drop":
+        selected = with_votes.filter(
+            (pl.col("annotation_votes") <= splitter.negative_threshold)
+            | (pl.col("annotation_votes") >= splitter.positive_threshold)
+        )
+        hard_target = (
+            pl.col("annotation_votes") >= splitter.positive_threshold
+        )
+    else:
+        selected = with_votes
+        hard_target = (
+            pl.col("annotation_votes") * 2 >= total_votes
+        )
+    selected = selected.with_columns(
+        hard_target.cast(pl.Int8).alias("target")
     )
+    if splitter.target_mode == "hard":
+        selected = selected.with_columns(
+            pl.col("target").cast(pl.Float32).alias("training_target")
+        )
     dropped = matches.height - selected.height
     logger.info(
         "Prepared vote labels: source={}, input_rows={}, selected_rows={}, "
@@ -257,6 +271,22 @@ def finalize_source_matches(
     """Apply source weighting and sampling after overlap resolution."""
     weight_model = build_sample_weight_model(source.weight_model)
     prepared = weight_model.apply(prepared, source_name=source.name)
+    confidence = source.confidence_weighting
+    if confidence.enabled:
+        prepared = prepared.with_columns(
+            pl.max_horizontal(
+                pl.lit(confidence.min_weight_multiplier),
+                pl.col("_annotation_confidence")
+                .cast(pl.Float64)
+                .pow(confidence.power),
+            )
+            .cast(pl.Float32)
+            .alias("confidence_multiplier")
+        )
+    else:
+        prepared = prepared.with_columns(
+            pl.lit(1.0).cast(pl.Float32).alias("confidence_multiplier")
+        )
     if source.max_rows is not None and prepared.height > source.max_rows:
         if source.sampling_strategy == "random":
             prepared = prepared.sample(
@@ -282,7 +312,12 @@ def finalize_source_matches(
     diagnostics = [
         name
         for name in prepared.columns
-        if name in {"annotation_votes", "weight_multiplier"}
+        if name in {
+            "annotation_votes",
+            "training_target",
+            "confidence_multiplier",
+            "weight_multiplier",
+        }
         or name.startswith("transitivity_")
     ]
     return (
@@ -290,6 +325,7 @@ def finalize_source_matches(
         .with_columns(
             (
                 pl.lit(source.weight).cast(pl.Float32)
+                * pl.col("confidence_multiplier")
                 * pl.col("weight_multiplier")
             )
             .cast(pl.Float32)

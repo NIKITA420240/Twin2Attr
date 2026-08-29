@@ -33,6 +33,53 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
             / "benchmark_tests"
             / "llm_vote_sampling_quality.yaml"
         )
+        self.soft_label_confidence_tests_path = (
+            PROJECT_ROOT
+            / "configs"
+            / "benchmark_tests"
+            / "soft_label_confidence_quality.yaml"
+        )
+
+    def test_soft_label_confidence_suite_is_full_factorial(self) -> None:
+        suite = load_benchmark_suite(
+            self.soft_label_confidence_tests_path,
+            allowed_test_types={"training_quality"},
+        )
+        combinations = {}
+        transitivity_settings = set()
+        for key, test in suite.tests.items():
+            configured = apply_benchmark_test(self.config, test)
+            llm = next(
+                source
+                for source in configured.data_model_description.mix_dataset.sources
+                if source.name == "llm"
+            )
+            combinations[key] = (
+                llm.splitter.target_mode,
+                llm.confidence_weighting.enabled,
+            )
+            transitivity_settings.add(
+                (
+                    llm.weight_model.enabled,
+                    llm.weight_model.penalty_strength,
+                    llm.weight_model.min_weight_multiplier,
+                    llm.weight_model.min_comparable_neighbors,
+                    llm.weight_model.confidence_weighted_violations,
+                )
+            )
+
+        self.assertEqual(suite.reference_test, "hard_no_confidence")
+        self.assertEqual(
+            combinations,
+            {
+                "hard_no_confidence": ("hard", False),
+                "soft_no_confidence": ("soft", False),
+                "hard_with_confidence": ("hard", True),
+                "soft_with_confidence": ("soft", True),
+            },
+        )
+        self.assertEqual(len(transitivity_settings), 1)
+        self.assertEqual(suite.seeds, (42,))
 
     def test_vote_sampling_suite_keeps_pool_and_budget_paired(self) -> None:
         suite = load_benchmark_suite(

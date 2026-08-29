@@ -149,7 +149,12 @@ def train_sequence_classifier(
         int(train_counts[1]),
     )
     class_weights = compute_class_weights(
-        train_labels,
+        [
+            pair.training_target
+            if pair.training_target is not None
+            else float(pair.label)
+            for pair in train_pairs
+        ],
         [pair.sample_weight for pair in train_pairs],
     )
     logger.info("Class weights [different, match]: {}", class_weights.tolist())

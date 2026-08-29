@@ -33,6 +33,7 @@ class ConfiguredBenchmarkRunnerTests(unittest.TestCase):
                 "transitivity_quality",
                 "codex_annotation_quality",
                 "llm_vote_sampling_quality",
+                "soft_label_confidence_quality",
             ],
         )
         self.assertEqual(settings.jobs[-1].type, "training_quality")

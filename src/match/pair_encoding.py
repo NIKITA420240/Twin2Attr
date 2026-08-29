@@ -797,7 +797,16 @@ class PairEncodingCollator:
                 if not all(label is None for label in labels):
                     raise ValueError("a batch cannot mix labeled and unlabeled pairs")
             else:
-                batch["labels"] = torch.tensor(labels, dtype=torch.long)
+                training_targets = [
+                    pair.training_target
+                    if pair.training_target is not None
+                    else float(pair.label)
+                    for pair in pairs
+                ]
+                batch["labels"] = torch.tensor(
+                    training_targets,
+                    dtype=torch.float32,
+                )
                 batch["sample_weights"] = torch.tensor(
                     [pair.sample_weight for pair in pairs],
                     dtype=torch.float32,

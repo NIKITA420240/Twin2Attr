@@ -94,6 +94,7 @@ def serialize_prompted_pair_for_tokenizer(
             pair.sample_weight,
             pair.preserve_attribute_order,
             pair.skip_oversized_attributes,
+            pair.training_target,
         ),
         use_field_tokens=use_field_tokens,
     )

@@ -14,14 +14,16 @@ from .profile import positive_probabilities
 
 
 def compute_class_weights(
-    labels: Sequence[int],
+    labels: Sequence[float],
     sample_weights: Sequence[float] | None = None,
 ) -> torch.Tensor:
-    label_array = np.asarray(labels, dtype=np.int64)
+    label_array = np.asarray(labels, dtype=np.float64)
     if label_array.ndim != 1 or label_array.size == 0:
         raise ValueError("labels must be a non-empty one-dimensional sequence")
-    if not set(np.unique(label_array)).issubset({0, 1}):
-        raise ValueError("labels must contain only 0 and 1")
+    if not np.isfinite(label_array).all() or np.any(
+        (label_array < 0.0) | (label_array > 1.0)
+    ):
+        raise ValueError("labels must contain finite values in [0, 1]")
     weights_array = (
         np.ones(label_array.size, dtype=np.float64)
         if sample_weights is None
@@ -29,7 +31,13 @@ def compute_class_weights(
     )
     if weights_array.shape != label_array.shape or np.any(weights_array <= 0.0):
         raise ValueError("sample_weights must be positive and aligned with labels")
-    counts = np.bincount(label_array, weights=weights_array, minlength=2)
+    counts = np.asarray(
+        [
+            np.sum(weights_array * (1.0 - label_array)),
+            np.sum(weights_array * label_array),
+        ],
+        dtype=np.float64,
+    )
     if np.any(counts == 0):
         raise ValueError("both classes must be present in training labels")
     weights = weights_array.sum() / (2.0 * counts.astype(np.float64))

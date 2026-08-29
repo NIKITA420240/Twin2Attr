@@ -365,6 +365,11 @@ class SequenceClassifierModelTests(unittest.TestCase):
 
         torch.testing.assert_close(weights, torch.tensor([2 / 3, 2.0]))
 
+    def test_class_weights_use_soft_class_mass(self) -> None:
+        weights = compute_class_weights([0.25, 0.75])
+
+        torch.testing.assert_close(weights, torch.tensor([1.0, 1.0]))
+
     def test_pr_auc_uses_continuous_positive_class_scores(self) -> None:
         logits = np.array(
             [

@@ -6,6 +6,7 @@ from pathlib import Path
 import polars as pl
 
 from match.config import (
+    ConfidenceWeightingSettings,
     DatasetOverlapResolutionSettings,
     DatasetSourceSettings,
     DatasetSplitterSettings,
@@ -33,6 +34,84 @@ def _splitter(score_type: str, *, votes: bool = False) -> DatasetSplitterSetting
 
 
 class DataModelTests(unittest.TestCase):
+    def test_soft_vote_targets_and_confidence_weights_are_preserved(self) -> None:
+        items = pl.DataFrame(
+            {"id": list(range(1, 9)), "category": ["a"] * 8}
+        )
+        matches = pl.DataFrame(
+            {
+                "id1": [1, 2, 3, 4],
+                "id2": [5, 6, 7, 8],
+                "target": [0.0, 2 / 9, 7 / 9, 1.0],
+            }
+        )
+        source = DatasetSourceSettings(
+            name="llm",
+            matches=Path("matches.parquet"),
+            weight=2.0,
+            max_rows=None,
+            sampling_strategy="random",
+            splitter=replace(
+                _splitter("votes", votes=True),
+                target_mode="soft",
+            ),
+            confidence_weighting=ConfidenceWeightingSettings(
+                enabled=True,
+                min_weight_multiplier=0.2,
+                power=1.0,
+            ),
+        )
+
+        prepared = prepare_source_matches(items, matches, source, seed=42)
+
+        self.assertEqual(prepared.get_column("target").to_list(), [0, 0, 1, 1])
+        for actual, wanted in zip(
+            prepared.get_column("training_target"),
+            [0.0, 2 / 9, 7 / 9, 1.0],
+            strict=True,
+        ):
+            self.assertAlmostEqual(actual, wanted, places=6)
+        expected = [2.0, 2.0 * 5 / 9, 2.0 * 5 / 9, 2.0]
+        for actual, wanted in zip(
+            prepared.get_column("sample_weight"), expected, strict=True
+        ):
+            self.assertAlmostEqual(actual, wanted, places=6)
+
+    def test_soft_vote_targets_can_keep_uncertain_rows(self) -> None:
+        items = pl.DataFrame(
+            {"id": list(range(1, 9)), "category": ["a"] * 8}
+        )
+        matches = pl.DataFrame(
+            {
+                "id1": [1, 2, 3, 4],
+                "id2": [5, 6, 7, 8],
+                "target": [3 / 9, 4 / 9, 5 / 9, 6 / 9],
+            }
+        )
+        source = DatasetSourceSettings(
+            name="llm",
+            matches=Path("matches.parquet"),
+            weight=1.0,
+            max_rows=None,
+            sampling_strategy="random",
+            splitter=replace(
+                _splitter("votes", votes=True),
+                target_mode="soft",
+                uncertain_action="keep",
+            ),
+        )
+
+        prepared = prepare_source_matches(items, matches, source, seed=42)
+
+        self.assertEqual(prepared.height, 4)
+        self.assertEqual(prepared.get_column("target").to_list(), [0, 0, 1, 1])
+        for actual, wanted in zip(
+            prepared.get_column("training_target"),
+            [3 / 9, 4 / 9, 5 / 9, 6 / 9],
+            strict=True,
+        ):
+            self.assertAlmostEqual(actual, wanted, places=6)
+
     def test_confidence_priority_keeps_most_confident_vote_rows(self) -> None:
         items = pl.DataFrame(
             {
