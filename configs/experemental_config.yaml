@@ -67,6 +67,83 @@ data_model_description:
           negative_threshold: 2
           positive_threshold: 7
           uncertain_action: drop
+          
+
+  mix_dataset_hard_negative:
+    # Same validation protocol as mix_dataset, but the training pool is built
+    # deterministically in the order: human -> hard negatives -> LLM remainder.
+    items: data/items.parquet
+    validation_source: human
+    validation_fraction: 0.2
+    leakage_scope: pair
+    candidate_splits: 128
+    seed: ${runtime.seed}
+
+    # Keep the final train size and class balance fixed across experiments.
+    sampling:
+      target_total: 1200000
+      target_positive: 500000
+      target_negative: 700000
+      fill_order:
+        - human
+        - hard_negative
+        - llm
+
+    overlap_resolution:
+      enabled: true
+      source_priority:
+        - human
+        - hard_negative
+        - llm
+
+    sources:
+      human:
+        matches: data/matches.parquet
+        weight: 3.0
+        max_rows: null
+        sampling_strategy: random
+        weight_model:
+          type: constant
+          enabled: false
+        splitter:
+          splitter_type: binary
+          score_type: label
+
+      hard_negative:
+        # Synthetic pairs refer to synthetic item ids, so this source has its
+        # own item table instead of using the shared data/items.parquet.
+        matches: data/hard_negative_matches.parquet
+        items: data/hard_negative_items.parquet
+        weight: 1.0
+        max_rows: null
+        sampling_strategy: random
+        weight_model:
+          type: constant
+          enabled: false
+        splitter:
+          splitter_type: binary
+          score_type: label
+
+      llm:
+        matches: data/matches_llm.parquet
+        weight: 1.0
+        max_rows: null
+        sampling_strategy: category_target_balanced
+        confidence_power: 2.0
+        weight_model:
+          type: transitivity
+          enabled: true
+          penalty_strength: 1.0
+          min_weight_multiplier: 0.25
+          min_comparable_neighbors: 2
+          confidence_weighted_violations: true
+        splitter:
+          splitter_type: binary
+          score_type: votes
+          total_votes: 9
+          negative_threshold: 2
+          positive_threshold: 7
+          uncertain_action: drop
 
   mix_dataset_codex:
     items: data/items.parquet
