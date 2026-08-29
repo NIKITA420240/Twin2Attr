@@ -4,9 +4,11 @@
 test_type: training_quality
 reference_test: hard_no_confidence
 
-# One seed is useful as a smoke test. Use [42, 43, 44] for a final decision.
+# Two paired seeds reduce the chance of selecting a variant on a lucky run.
+# Add 44 for a stronger final decision if the observed gain is small.
 seeds:
   - 42
+  - 43
 
 tests:
   hard_no_confidence:

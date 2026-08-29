@@ -79,7 +79,7 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
             },
         )
         self.assertEqual(len(transitivity_settings), 1)
-        self.assertEqual(suite.seeds, (42,))
+        self.assertEqual(suite.seeds, (42, 43))
 
     def test_vote_sampling_suite_keeps_pool_and_budget_paired(self) -> None:
         suite = load_benchmark_suite(
