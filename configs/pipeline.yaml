@@ -161,7 +161,7 @@ labeling:
     # Every next round halves concurrency until this lower bound is reached.
     min_concurrency: 32
     max_attempts: 3
-    max_rounds: 3
+    max_rounds: 1000
     retry_base_seconds: 2.0
     max_prompt_chars: 6000
 
