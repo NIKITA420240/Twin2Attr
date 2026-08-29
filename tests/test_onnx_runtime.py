@@ -184,6 +184,41 @@ class OnnxRuntimePredictorTests(unittest.TestCase):
         self.assertTrue(engine_cache_exists)
         self.assertTrue(timing_cache_exists)
 
+    def test_tensorrt_provider_uses_session_managed_transfers(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "match.models.transformer.onnx_runtime._require_onnxruntime",
+                return_value=_FakeTensorRtOrt,
+            ),
+            patch(
+                "match.models.transformer.onnx_runtime.torch.cuda.current_stream",
+                return_value=SimpleNamespace(cuda_stream=123),
+            ),
+        ):
+            root = Path(directory)
+            onnx_dir = root / "onnx"
+            onnx_dir.mkdir()
+            (onnx_dir / "classifier.onnx").write_bytes(b"graph")
+            executor = OnnxRuntimeTransformerExecutor(
+                model_directory=root,
+                model_config={"hidden_size": 16},
+                provider="tensorrt",
+                io_binding=True,
+            )
+            session = executor._session("classifier")
+            logits = executor._run_session(
+                session,
+                {
+                    "input_ids": torch.ones((3, 8), dtype=torch.long),
+                    "attention_mask": torch.ones((3, 8), dtype=torch.long),
+                },
+                non_blocking=False,
+            )
+
+        np.testing.assert_array_equal(logits, np.zeros((3, 2), dtype=np.float32))
+        self.assertFalse(executor.use_field_tokens)
+
 
 if __name__ == "__main__":
     unittest.main()

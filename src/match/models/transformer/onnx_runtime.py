@@ -224,7 +224,7 @@ class OnnxRuntimeTransformerExecutor:
 
     @property
     def use_field_tokens(self) -> bool:
-        return bool(self.model_config.get("match_use_field_tokens", True))
+        return bool(self.model_config.get("match_use_field_tokens", False))
 
     @property
     def max_attribute_value_chars(self) -> int | None:
@@ -280,7 +280,7 @@ class OnnxRuntimeTransformerExecutor:
         if missing:
             raise RuntimeError(f"ONNX batch is missing inputs: {sorted(missing)}")
         try:
-            if self.io_binding and self.device.type == "cuda":
+            if self.io_binding and self.provider == "cuda":
                 return self._run_with_io_binding(
                     session,
                     inputs,

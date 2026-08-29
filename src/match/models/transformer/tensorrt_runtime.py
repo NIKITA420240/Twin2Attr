@@ -145,7 +145,7 @@ class TensorRTTransformerExecutor:
 
     @property
     def use_field_tokens(self) -> bool:
-        return bool(self.model_config.get("match_use_field_tokens", True))
+        return bool(self.model_config.get("match_use_field_tokens", False))
 
     @property
     def max_attribute_value_chars(self) -> int | None:
