@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 
+import orjson
 import polars as pl
 from loguru import logger
 
@@ -19,6 +20,7 @@ from ..data import read_parquet
 from ..data_split import DataSplitConfig, split_matches, validate_predefined_split
 from .contracts import InspectionFrames, LoadedTrainingSplits
 from .preparation import (
+    _category_target_sample,
     finalize_source_matches,
     prepare_source_labels,
     prepare_source_matches,
@@ -63,6 +65,141 @@ def _item_lookup(path: Path, *, label: str) -> pl.DataFrame:
     return read_parquet(path, label=label, columns=("id", "category"))
 
 
+def _item_paths(settings: MixedDatasetSettings) -> tuple[Path, ...]:
+    paths = [settings.items]
+    for source in settings.sources:
+        if source.items is not None and source.items not in paths:
+            paths.append(source.items)
+    return tuple(paths)
+
+
+def _combined_item_lookup(settings: MixedDatasetSettings) -> pl.DataFrame:
+    parts = [
+        _item_lookup(path, label=f"mixed dataset item lookup ({path})")
+        for path in _item_paths(settings)
+    ]
+    lookup = pl.concat(parts, how="vertical_relaxed")
+    duplicate_count = lookup.height - lookup.get_column("id").n_unique()
+    if duplicate_count:
+        raise ValueError(
+            "mixed dataset item sources contain "
+            f"{duplicate_count} duplicate item ids"
+        )
+    return lookup
+
+
+def _decode_card_json(row: dict[str, object]) -> dict[str, str]:
+    raw = row.get("card_json")
+    try:
+        card = {} if raw is None else orjson.loads(raw)
+    except (orjson.JSONDecodeError, TypeError, UnicodeDecodeError) as error:
+        raise ValueError("hard-negative card_json must contain a JSON object") from error
+    if not isinstance(card, dict):
+        raise ValueError("hard-negative card_json must contain a JSON object")
+
+    name_parts = [card.get("Название"), card.get("Код модели")]
+    name = " ".join(
+        str(value).strip()
+        for value in name_parts
+        if value is not None and str(value).strip()
+    )
+    category = card.get("категория") or row.get("category") or ""
+    attributes = dict(card)
+    attributes.pop("Название", None)
+    attributes.pop("категория", None)
+    attributes.pop("Код модели", None)
+    return {
+        "name": name,
+        "category": str(category),
+        "attributes": orjson.dumps(attributes).decode("utf-8"),
+    }
+
+
+def _standardize_selected_items(
+    path: Path,
+    required_ids: pl.DataFrame,
+) -> pl.DataFrame:
+    schema = pl.scan_parquet(path).collect_schema()
+    columns = set(schema.names())
+    standard = {"id", "name", "category", "attributes"}
+    if standard.issubset(columns):
+        return (
+            pl.scan_parquet(path)
+            .select("id", "name", "category", "attributes")
+            .join(required_ids.lazy(), on="id", how="inner")
+            .collect(engine="streaming")
+        )
+    if {"id", "category", "card_json"}.issubset(columns):
+        selected = (
+            pl.scan_parquet(path)
+            .select("id", "category", "card_json")
+            .join(required_ids.lazy(), on="id", how="inner")
+            .collect(engine="streaming")
+        )
+        if selected.height == 0:
+            return pl.DataFrame(
+                schema={
+                    "id": schema["id"],
+                    "name": pl.String,
+                    "category": pl.String,
+                    "attributes": pl.String,
+                }
+            )
+        decoded_type = pl.Struct(
+            {
+                "name": pl.String,
+                "category": pl.String,
+                "attributes": pl.String,
+            }
+        )
+        return (
+            selected.with_columns(
+                pl.struct("card_json", "category")
+                .map_elements(_decode_card_json, return_dtype=decoded_type)
+                .alias("_card")
+            )
+            .unnest("_card")
+            .select("id", "name", "category", "attributes")
+        )
+    raise ValueError(
+        f"items file {path} must contain either id/name/category/attributes "
+        "or id/category/card_json"
+    )
+
+
+def _selected_mixed_items(
+    settings: MixedDatasetSettings,
+    *match_frames: pl.DataFrame,
+) -> pl.DataFrame:
+    started_at = perf_counter()
+    required_ids = pl.concat(
+        [
+            frame.select(pl.col(column).alias("id"))
+            for frame in match_frames
+            for column in ("id1", "id2")
+        ]
+    ).unique()
+    parts = [
+        _standardize_selected_items(path, required_ids)
+        for path in _item_paths(settings)
+    ]
+    items = pl.concat(parts, how="vertical_relaxed")
+    if items.height:
+        items = items.unique(subset=["id"], keep="first", maintain_order=True)
+    if items.height != required_ids.height:
+        missing = required_ids.join(items.select("id"), on="id", how="anti")
+        raise ValueError(
+            f"mixed items files are missing {missing.height} selected ids"
+        )
+    logger.info(
+        "Loaded selected mixed items: paths={}, rows={}, elapsed_seconds={:.3f}",
+        [str(path) for path in _item_paths(settings)],
+        items.height,
+        perf_counter() - started_at,
+    )
+    return items
+
+
 def _selected_items(
     path: Path,
     *match_frames: pl.DataFrame,
@@ -91,6 +228,99 @@ def _selected_items(
         perf_counter() - started_at,
     )
     return items
+
+
+def _sample_budget_part(
+    item_lookup: pl.DataFrame,
+    frame: pl.DataFrame,
+    source: DatasetSourceSettings,
+    *,
+    target: int,
+    n: int,
+    seed: int,
+) -> pl.DataFrame:
+    subset = frame.filter(pl.col("target") == target)
+    if n >= subset.height:
+        return subset
+    if n <= 0:
+        return subset.head(0)
+    if source.sampling_strategy == "random":
+        return subset.sample(n=n, shuffle=True, seed=seed)
+    if source.sampling_strategy == "category_target_balanced":
+        return _category_target_sample(
+            item_lookup,
+            subset,
+            max_rows=n,
+            seed=seed,
+            strategy=source.sampling_strategy,
+            confidence_power=source.confidence_power,
+        )
+    # Confidence-aware sampling needs the internal annotation-confidence column,
+    # which is intentionally removed after source finalization. The fixed-budget
+    # recipe therefore supports deterministic random or category-balanced fill.
+    raise ValueError(
+        "fixed mixed-dataset sampling supports random or "
+        "category_target_balanced source sampling"
+    )
+
+
+def _apply_fixed_budget(
+    item_lookup: pl.DataFrame,
+    frames: dict[str, pl.DataFrame],
+    settings: MixedDatasetSettings,
+) -> pl.DataFrame:
+    sampling = settings.sampling
+    if sampling is None:
+        raise RuntimeError("fixed-budget sampling settings are missing")
+
+    remaining = {0: sampling.target_negative, 1: sampling.target_positive}
+    selected_parts: list[pl.DataFrame] = []
+    sources = {source.name: source for source in settings.sources}
+
+    for source_index, source_name in enumerate(sampling.fill_order):
+        frame = frames[source_name]
+        source = sources[source_name]
+        source_parts: list[pl.DataFrame] = []
+        for target in (0, 1):
+            available = frame.filter(pl.col("target") == target).height
+            take = min(available, remaining[target])
+            if take:
+                part = _sample_budget_part(
+                    item_lookup,
+                    frame,
+                    source,
+                    target=target,
+                    n=take,
+                    seed=settings.seed + source_index * 2 + target,
+                )
+                source_parts.append(part)
+                remaining[target] -= part.height
+        if source_parts:
+            selected = pl.concat(source_parts, how="diagonal_relaxed")
+            selected_parts.append(selected)
+            logger.info(
+                "Filled mixed dataset budget: source={}, rows={}, positives={}, "
+                "negatives={}, remaining_positive={}, remaining_negative={}",
+                source_name,
+                selected.height,
+                selected.filter(pl.col("target") == 1).height,
+                selected.filter(pl.col("target") == 0).height,
+                remaining[1],
+                remaining[0],
+            )
+
+    if remaining[0] or remaining[1]:
+        raise ValueError(
+            "mixed dataset sources cannot satisfy fixed class budget: "
+            f"missing_positive={remaining[1]}, missing_negative={remaining[0]}"
+        )
+    train = pl.concat(selected_parts, how="diagonal_relaxed")
+    if train.height != sampling.target_total:
+        raise RuntimeError(
+            f"fixed mixed dataset produced {train.height} rows, "
+            f"expected {sampling.target_total}"
+        )
+    return train
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,10 +433,7 @@ class MixedDatasetModel:
         return prepare_source_labels(matches, source)
 
     def load_training_splits(self) -> LoadedTrainingSplits:
-        item_lookup = _item_lookup(
-            self.settings.items,
-            label="mixed dataset item lookup",
-        )
+        item_lookup = _combined_item_lookup(self.settings)
         labels = {
             source.name: self._load_source_labels(source)
             for source in self.settings.sources
@@ -224,7 +451,9 @@ class MixedDatasetModel:
             )
             for source in self.settings.sources
         }
-        validation_source = prepared.pop(self.settings.validation_source)
+
+        validation_source_name = self.settings.validation_source
+        validation_source = prepared.pop(validation_source_name)
         split = split_matches(
             item_lookup,
             validation_source,
@@ -235,8 +464,21 @@ class MixedDatasetModel:
                 candidate_splits=self.settings.candidate_splits,
             ),
         )
-        train_parts = [split.train_matches, *prepared.values()]
-        train_matches = pl.concat(train_parts, how="diagonal_relaxed")
+        prepared[validation_source_name] = split.train_matches
+
+        if self.settings.sampling is None:
+            train_parts = [
+                prepared[source.name]
+                for source in self.settings.sources
+            ]
+            train_matches = pl.concat(train_parts, how="diagonal_relaxed")
+        else:
+            train_matches = _apply_fixed_budget(
+                item_lookup,
+                prepared,
+                self.settings,
+            )
+
         validation_matches = split.validation_matches.with_columns(
             pl.lit(1.0).cast(pl.Float32).alias("sample_weight")
         )
@@ -247,27 +489,26 @@ class MixedDatasetModel:
             leakage_scope=self.settings.leakage_scope,
         )
         logger.info(
-            "Built mixed dataset: train_rows={}, validation_rows={}, sources={}",
+            "Built mixed dataset: train_rows={}, validation_rows={}, sources={}, "
+            "fixed_budget={}",
             train_matches.height,
             validation_matches.height,
             [source.name for source in self.settings.sources],
+            self.settings.sampling is not None,
         )
-        items = _selected_items(
-            self.settings.items,
+        items = _selected_mixed_items(
+            self.settings,
             train_matches,
             validation_matches,
         )
         return LoadedTrainingSplits(items, train_matches, validation_matches)
 
     def load_inspection_frames(self) -> InspectionFrames:
-        item_lookup = _item_lookup(
-            self.settings.items,
-            label="mixed dataset item lookup",
-        )
+        item_lookup = _combined_item_lookup(self.settings)
         source = self._source(self.settings.validation_source)
         matches = self._load_source(item_lookup, source)
         return InspectionFrames(
-            _selected_items(self.settings.items, matches),
+            _selected_mixed_items(self.settings, matches),
             matches,
         )
 
