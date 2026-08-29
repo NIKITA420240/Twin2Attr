@@ -9,9 +9,9 @@ from typing import Any
 import numpy as np
 import torch
 
-from ...pair_encoding import DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS
 from .executor import TransformerExecutorOutOfMemoryError
 from .onnx_export import CLASSIFIER_ONNX_NAME, ENCODER_ONNX_NAME, ONNX_DIRECTORY_NAME
+from .profile import TransformerArtifactContract, TransformerRuntimeContract
 from .tensorrt_common import TensorRTProfile
 
 
@@ -87,8 +87,12 @@ class OnnxRuntimeTransformerExecutor:
     _device: torch.device = field(init=False, repr=False)
     _classifier_session: Any | None = field(init=False, default=None, repr=False)
     _encoder_session: Any | None = field(init=False, default=None, repr=False)
+    _runtime_contract: TransformerRuntimeContract = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        self._runtime_contract = TransformerRuntimeContract.from_config(
+            self.model_config
+        )
         if self.provider not in {"cpu", "cuda", "tensorrt"}:
             raise ValueError("ONNX Runtime provider must be cpu, cuda or tensorrt")
         if self.device_id < 0:
@@ -208,34 +212,39 @@ class OnnxRuntimeTransformerExecutor:
 
     @property
     def output_dim(self) -> int:
-        hidden_size = self.model_config.get("hidden_size")
-        if not hidden_size:
-            hidden_size = self.model_config.get("backbone_config", {}).get(
-                "hidden_size"
-            )
-        if not hidden_size:
-            raise ValueError("Transformer config does not expose hidden_size")
-        return int(hidden_size)
+        return self.runtime_contract.hidden_size
+
+    @property
+    def num_logits(self) -> int:
+        return self.output_contract.num_logits
+
+    @property
+    def profile(self) -> str:
+        return self.output_contract.profile
+
+    @property
+    def output_contract(self) -> TransformerArtifactContract:
+        return self.runtime_contract.output
+
+    @property
+    def runtime_contract(self) -> TransformerRuntimeContract:
+        return self._runtime_contract
 
     @property
     def max_length(self) -> int | None:
-        value = self.model_config.get("match_max_length")
-        return None if value is None else int(value)
+        return self.runtime_contract.max_length
 
     @property
     def use_field_tokens(self) -> bool:
-        return bool(self.model_config.get("match_use_field_tokens", True))
+        return self.runtime_contract.use_field_tokens
 
     @property
     def max_attribute_value_chars(self) -> int | None:
-        return self.model_config.get("match_max_attribute_value_chars")
+        return self.runtime_contract.max_attribute_value_chars
 
     @property
     def max_attribute_value_tokens(self) -> int | None:
-        return self.model_config.get(
-            "match_max_attribute_value_tokens",
-            DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
-        )
+        return self.runtime_contract.max_attribute_value_tokens
 
     def _new_session(self, path: Path | None) -> Any:
         if path is None or not path.is_file():
@@ -336,13 +345,14 @@ class OnnxRuntimeTransformerExecutor:
             batch,
             non_blocking=non_blocking,
         )
-        if values.ndim != 2 or values.shape[1] != 2:
+        if values.ndim != 2 or values.shape[1] != self.num_logits:
             raise RuntimeError(
-                f"ONNX classifier returned shape {values.shape}, expected [batch, 2]"
+                f"ONNX classifier returned shape {values.shape}, expected "
+                f"[batch, {self.num_logits}]"
             )
         return values.astype(np.float32, copy=False)
 
-    def encode_cls(
+    def encode_pooled(
         self,
         batch: dict[str, torch.Tensor],
         *,
@@ -359,6 +369,15 @@ class OnnxRuntimeTransformerExecutor:
                 f"[batch, {self.output_dim}]"
             )
         return values.astype(np.float32, copy=False)
+
+    def encode_cls(
+        self,
+        batch: dict[str, torch.Tensor],
+        *,
+        non_blocking: bool,
+    ) -> np.ndarray:
+        """Compatibility alias for the profile-specific pooled encoder."""
+        return self.encode_pooled(batch, non_blocking=non_blocking)
 
     def prepare(self, *, classifier: bool, encoder: bool) -> None:
         if classifier:

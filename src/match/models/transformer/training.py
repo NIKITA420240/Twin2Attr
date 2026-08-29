@@ -31,7 +31,13 @@ from .config import ResolvedTrainingConfig, SequenceClassifierConfig, TrainingRe
 from .batching import estimated_pair_lengths
 from .head import PoolingHeadConfig
 from .metrics import compute_class_weights, compute_macro_pr_auc
-from .model import WeightedSequenceTrainer, model_factory
+from .construction import model_factory
+from .model import WeightedSequenceTrainer
+from .profile import (
+    TransformerArtifactContract,
+    TransformerRuntimeContract,
+    is_prompted_profile,
+)
 from .optimizer import LearningRateMultipliers
 from .train_runtime import (
     EpochPerformanceCallback,
@@ -171,7 +177,10 @@ def train_sequence_classifier(
 
     output_path = Path(output_dir).resolve()
     output_path.mkdir(parents=True, exist_ok=True)
-    tokenizer = AutoTokenizer.from_pretrained(config.model_path)
+    tokenizer = AutoTokenizer.from_pretrained(
+        config.model_path,
+        trust_remote_code=is_prompted_profile(config.profile),
+    )
     if config.use_field_tokens:
         add_pair_special_tokens(tokenizer)
         if config.train_new_token_embeddings_only:
@@ -190,6 +199,7 @@ def train_sequence_classifier(
             use_field_tokens=config.use_field_tokens,
             max_attribute_value_chars=config.max_attribute_value_chars,
             max_attribute_value_tokens=config.max_attribute_value_tokens,
+            profile=config.profile,
         )
     logger.info("Max input length: {}", max_length)
     train_pair_lengths = None
@@ -229,6 +239,7 @@ def train_sequence_classifier(
         batch_fields=config.batch_fields,
         field_chunk_size=config.field_chunk_size,
         padding_length_buckets=config.train_padding_length_buckets,
+        profile=config.profile,
     )
     initialize_model = model_factory(
         config.model_path,
@@ -243,6 +254,7 @@ def train_sequence_classifier(
         train_last_n_layers=config.train_last_n_layers,
         head_type=config.head_type,
         head_config=config.head_config,
+        profile=config.profile,
     )
     best_hyperparameters = {
         "learning_rate": config.learning_rate,
@@ -352,14 +364,20 @@ def train_sequence_classifier(
     )
     trainer.train()
     metrics = trainer.evaluate()
-    trainer.model.config.match_max_length = max_length
-    trainer.model.config.match_use_field_tokens = config.use_field_tokens
-    trainer.model.config.match_max_attribute_value_chars = (
-        config.max_attribute_value_chars
+    output_contract = TransformerArtifactContract.for_training(
+        profile=config.profile,
+        head_type=config.head_type,
+        num_logits=int(trainer.model.config.num_labels),
     )
-    trainer.model.config.match_max_attribute_value_tokens = (
-        config.max_attribute_value_tokens
-    )
+    output_contract.apply_to(trainer.model.config)
+    TransformerRuntimeContract(
+        output=output_contract,
+        hidden_size=int(trainer.model.config.hidden_size),
+        max_length=max_length,
+        use_field_tokens=config.use_field_tokens,
+        max_attribute_value_chars=config.max_attribute_value_chars,
+        max_attribute_value_tokens=config.max_attribute_value_tokens,
+    ).apply_encoding_to(trainer.model.config)
     trainer.save_model(str(output_path))
     tokenizer.save_pretrained(output_path)
     if config.onnx_export_enabled:
@@ -433,6 +451,13 @@ def train_sequence_classifier(
         torch_compile_mode=config.torch_compile_mode,
     )
     metadata = {
+        "profile": config.profile,
+        "head_type": config.head_type,
+        "head_config": config.head_config.to_dict(),
+        "num_logits": int(trainer.model.config.num_labels),
+        "probability_transform": (
+            "sigmoid" if int(trainer.model.config.num_labels) == 1 else "softmax"
+        ),
         "validation_macro_pr_auc": float(metrics["eval_macro_pr_auc"]),
         "best_hyperparameters": best_hyperparameters,
         "resolved_config": asdict(resolved_config),
@@ -459,6 +484,7 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
     runtime = parameters.training_runtime
     return SequenceClassifierConfig(
         model_path=parameters.pretrained_model_path,
+        profile=parameters.profile,
         max_epochs=parameters.max_epochs,
         hpo_trials=parameters.hpo_trials,
         learning_rate=parameters.learning_rate,

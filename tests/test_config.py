@@ -34,10 +34,7 @@ class AppConfigTests(unittest.TestCase):
         self.assertTrue(llm_weight_model.confidence_weighted_violations)
         self.assertEqual(self.config.training.model, "transformer")
         self.assertEqual(self.config.training.data_model, "mix_dataset")
-        self.assertEqual(
-            self.config.training.augmentation_model,
-            "attribute_word_dropout",
-        )
+        self.assertIsNone(self.config.training.augmentation_model)
         self.assertIsNone(self.config.training.data_postprocessing_model)
         self.assertEqual(self.config.inference.model, "transformer")
         self.assertIsNone(self.config.inference.augmentation_model)
@@ -54,7 +51,7 @@ class AppConfigTests(unittest.TestCase):
             self.config.inference.solution_path,
             self.config.training.solution_path,
         )
-        self.assertEqual(self.config.inference.transformer.batch_size, 512)
+        self.assertEqual(self.config.inference.transformer.batch_size, 1)
         self.assertEqual(self.config.inference.transformer.dtype, "bfloat16")
         self.assertEqual(self.config.inference.transformer.backend, "pytorch")
         self.assertEqual(self.config.inference.transformer.num_workers, 8)
@@ -180,7 +177,7 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             self.config.model_description.transformer.artifact_dir,
-            PROJECT_ROOT / "models" / "twin2attr" / "bge-reranker-v2-m3",
+            PROJECT_ROOT / "models" / "twin2attr" / "nemotron-native",
         )
         self.assertEqual(
             self.config.model_description.stacking.artifact_dir,
@@ -188,7 +185,11 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             self.config.model_description.transformer.pretrained_model_path,
-            "models/bge-reranker-v2-m3",
+            "models/llama-nemotron-rerank-1b-v2",
+        )
+        self.assertEqual(
+            self.config.model_description.transformer.profile,
+            "prompted_binary_reranker",
         )
         encoding = self.config.model_description.transformer.pair_encoding
         batch_fields = (
@@ -201,8 +202,11 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(onnx_export.opset, 18)
         self.assertEqual(onnx_export.precision, "float16")
         self.assertTrue(onnx_export.export_classifier)
-        self.assertTrue(onnx_export.export_encoder)
-        self.assertTrue(encoding.use_field_tokens)
+        self.assertFalse(onnx_export.export_encoder)
+        self.assertFalse(encoding.use_field_tokens)
+        self.assertFalse(
+            self.config.model_description.transformer.special_token_initialization.enabled
+        )
         self.assertFalse(
             self.config.model_description.transformer.train_new_token_embeddings_only
         )
@@ -228,7 +232,7 @@ class AppConfigTests(unittest.TestCase):
             int,
         )
         self.assertEqual(encoding.max_attribute_value_chars, 256)
-        self.assertEqual(encoding.max_length, 256)
+        self.assertEqual(encoding.max_length, 128)
         self.assertEqual(base.stacking_train_fraction, 0.15)
         self.assertEqual(
             self.config.model_description.stacking.base_model,
@@ -283,6 +287,9 @@ class AppConfigTests(unittest.TestCase):
                 "model_description.transformer.hpo_trials=1",
                 "model_description.transformer.learning_rate=0.00001",
                 "model_description.transformer.embeddings_learning_rate=0.000005",
+                "model_description.transformer.profile=sequence_classifier",
+                "model_description.transformer.head.type=default",
+                "model_description.transformer.pair_encoding.use_field_tokens=true",
                 "model_description.transformer.train_new_token_embeddings_only=true",
                 "model_description.transformer.train_last_n_layers=3",
                 "model_description.transformer.lr_scheduler_type=cosine",
@@ -308,7 +315,7 @@ class AppConfigTests(unittest.TestCase):
     def test_loads_composable_transformer_head(self) -> None:
         head = self.config.model_description.transformer.head
 
-        self.assertEqual(head.type, "hybrid")
+        self.assertEqual(head.type, "native")
         self.assertEqual(head.poolings, ("cls", "attention"))
         self.assertEqual(head.mlp_hidden_dims, (384,))
         self.assertEqual(head.attention_hidden_dim, 192)
@@ -320,7 +327,10 @@ class AppConfigTests(unittest.TestCase):
     def test_can_select_original_transformer_head(self) -> None:
         config = load_app_config_file(
             PROJECT_ROOT / "configs" / "pipeline.yaml",
-            ["model_description.transformer.head.type=default"],
+            [
+                "model_description.transformer.profile=sequence_classifier",
+                "model_description.transformer.head.type=default",
+            ],
         )
 
         self.assertEqual(config.model_description.transformer.head.type, "default")

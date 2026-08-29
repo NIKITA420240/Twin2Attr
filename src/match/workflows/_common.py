@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Iterator
 from loguru import logger
 
 from ..config import AppConfig
+from ..models.transformer.profile import is_prompted_profile
 
 if TYPE_CHECKING:
     from ..prepare_data import PreparedPair
@@ -30,7 +31,10 @@ def resolve_max_length(
         return encoding.max_length
 
     tokenizer = AutoTokenizer.from_pretrained(
-        config.model_description.transformer.pretrained_model_path
+        config.model_description.transformer.pretrained_model_path,
+        trust_remote_code=is_prompted_profile(
+            config.model_description.transformer.profile
+        ),
     )
     if encoding.use_field_tokens:
         add_pair_special_tokens(tokenizer)
@@ -43,6 +47,7 @@ def resolve_max_length(
         use_field_tokens=encoding.use_field_tokens,
         max_attribute_value_chars=encoding.max_attribute_value_chars,
         max_attribute_value_tokens=encoding.max_attribute_value_tokens,
+        profile=config.model_description.transformer.profile,
     )
     logger.info("Pair encoding resolved max_length={}", max_length)
     return max_length

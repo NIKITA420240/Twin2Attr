@@ -19,6 +19,7 @@ from .onnx_runtime import (
     OrtTensorRTProviderOptions,
 )
 from .predictor import TransformerPredictor
+from .profile import TransformerRuntimeContract
 from .tensorrt_common import (
     TensorRTInitializationError,
     TensorRTProfile,
@@ -175,7 +176,9 @@ def _validate_tensorrt_profile(
             f"Transformer batch_size={batch_size} exceeds TensorRT profile "
             f"max_batch_size={profile.max_batch_size}"
         )
-    model_max_length = model_config.get("match_max_length")
+    model_max_length = TransformerRuntimeContract.from_config(
+        model_config
+    ).max_length
     if (
         model_max_length is not None
         and int(model_max_length) > profile.max_sequence_length
@@ -248,9 +251,14 @@ def _build_pytorch_predictor(
 
 
 def _load_components(model_directory: Path) -> tuple[Any, dict[str, Any]]:
-    tokenizer = AutoTokenizer.from_pretrained(model_directory, use_fast=True)
     model_config = json.loads(
         (model_directory / "config.json").read_text(encoding="utf-8")
+    )
+    runtime_contract = TransformerRuntimeContract.from_config(model_config)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_directory,
+        use_fast=True,
+        trust_remote_code=runtime_contract.output.uses_prompted_pairs,
     )
     return tokenizer, model_config
 

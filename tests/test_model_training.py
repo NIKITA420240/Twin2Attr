@@ -87,7 +87,7 @@ class ModelTrainingStrategyTests(unittest.TestCase):
         self.assertEqual(solution["predictor"], "fusion")
         self.assertEqual(solution["model_directory"], "models/transformer")
         self.assertEqual(solution["backend"], "pytorch")
-        self.assertEqual(solution["batch_size"], 512)
+        self.assertEqual(solution["batch_size"], 1)
         self.assertEqual(solution["dtype"], "bfloat16")
         self.assertEqual(solution["num_workers"], 8)
         self.assertEqual(solution["prefetch_factor"], 2)
@@ -150,7 +150,7 @@ class ModelTrainingStrategyTests(unittest.TestCase):
                 "precision": "float16",
                 "opset": 18,
                 "classifier_path": "onnx/classifier.onnx",
-                "encoder_path": "onnx/encoder.onnx",
+                "encoder_path": None,
                 "dynamic_batch": True,
                 "dynamic_sequence_length": True,
             },

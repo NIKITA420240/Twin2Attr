@@ -125,7 +125,7 @@ class ExperimentTrackingTests(unittest.TestCase):
             record = json.loads(record_path.read_text(encoding="utf-8"))
             self.assertEqual(record["experiment_name"], "mmarco-human-baseline")
             self.assertEqual(record["macro_pr_auc_human"], 0.74)
-            self.assertEqual(record["train_data"], "Human")
+            self.assertEqual(record["train_data"], "Human + LLM")
             self.assertEqual(record["split"]["train_rows"], 1)
             self.assertTrue(record["split"]["validation_pairs_hash"])
             with saved_registry.open(encoding="utf-8", newline="") as source:

@@ -33,16 +33,16 @@ class DataModelTests(unittest.TestCase):
     def test_factory_selects_configured_data_model(self) -> None:
         config = load_app_config_file(PROJECT_ROOT / "configs" / "pipeline.yaml")
 
-        self.assertIsInstance(build_data_model(config), BaseDatasetModel)
-        mixed_config = replace(
+        self.assertIsInstance(build_data_model(config), MixedDatasetModel)
+        base_config = replace(
             config,
             training=replace(
                 config.training,
                 model="boosting",
-                data_model="mix_dataset",
+                data_model="base_dataset",
             ),
         )
-        self.assertIsInstance(build_data_model(mixed_config), MixedDatasetModel)
+        self.assertIsInstance(build_data_model(base_config), BaseDatasetModel)
 
     def test_converts_vote_scores_and_applies_source_weight(self) -> None:
         items = pl.DataFrame(

@@ -811,3 +811,60 @@ multiprocessing; если оперативной памяти мало, испо
 ```bash
 uv build
 ```
+
+
+
+## Nemotron reranker
+
+`llama-nemotron-rerank-1b-v2` подключается как профиль существующей модели
+`transformer`. Профиль формирует одну последовательность
+`question:<карточка A>\n\npassage:<карточка B>`, обучается с
+`BCEWithLogitsLoss` и преобразует единственный logit в вероятность через
+`sigmoid`.
+
+Для native zero-shot и fine-tuning:
+
+```yaml
+model_description:
+  transformer:
+    profile: prompted_binary_reranker
+    pretrained_model_path: nvidia/llama-nemotron-rerank-1b-v2
+    pair_encoding:
+      use_field_tokens: false
+    head:
+      type: native
+```
+
+Доступны две сменные головы для эксперимента на одном validation split:
+
+- `native` — штатные average pooling и one-logit `score` из Nemotron;
+- `attention_pooling` — объединение `mean` и обучаемого attention pooling с
+  MLP и одним выходным logit.
+
+Конфигурация attention pooling:
+
+```yaml
+model_description:
+  transformer:
+    profile: prompted_binary_reranker
+    pretrained_model_path: nvidia/llama-nemotron-rerank-1b-v2
+    pair_encoding:
+      use_field_tokens: false
+    head:
+      type: attention_pooling
+      poolings: [mean, attention]
+      attention_hidden_dim: 192
+      attention_num_heads: 1
+      mlp_hidden_dims: [384]
+      dropout: 0.15
+```
+
+Для Llama не использовать `cls` как основной pooling: у модели нет отдельного
+CLS-токена. Обе головы должны возвращать один logit; обучение выполняется через
+`BCEWithLogitsLoss`, а inference — через `sigmoid`.
+
+Параметры attention pooling и MLP инициализируются случайно, поэтому workflow
+`initialize` для этой головы запрещён: сначала выполните `train`. Штатная
+`native`-голова сохраняется без переинициализации и подходит как zero-shot
+baseline. Для профиля обязательно `use_field_tokens: false`, чтобы не добавлять
+случайно инициализированные `[KEY]`/`[VAL]` embeddings в pretrained Nemotron.

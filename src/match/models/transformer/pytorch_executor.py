@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -11,39 +10,13 @@ import torch
 from loguru import logger
 from transformers import PreTrainedModel
 
-from ...pair_encoding import DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS
 from .executor import TransformerExecutorOutOfMemoryError
-
-
-def normalize_inference_dtype(dtype: str) -> str:
-    normalized = dtype.lower()
-    if normalized not in {"float32", "float16", "bfloat16"}:
-        raise ValueError("dtype must be one of: float32, float16, bfloat16")
-    return normalized
-
-
-def torch_inference_dtype(dtype: str) -> torch.dtype:
-    return {
-        "float32": torch.float32,
-        "float16": torch.float16,
-        "bfloat16": torch.bfloat16,
-    }[normalize_inference_dtype(dtype)]
-
-
-def autocast_context(device: torch.device, dtype: str):
-    normalized = normalize_inference_dtype(dtype)
-    if normalized == "float32":
-        return nullcontext()
-    if device.type == "cuda":
-        if normalized == "bfloat16" and not torch.cuda.is_bf16_supported():
-            raise RuntimeError("the selected CUDA device does not support bfloat16")
-        return torch.autocast(
-            device_type="cuda",
-            dtype=torch_inference_dtype(normalized),
-        )
-    if device.type == "cpu" and normalized == "bfloat16":
-        return torch.autocast(device_type="cpu", dtype=torch.bfloat16)
-    raise RuntimeError(f"dtype={normalized!r} is not supported on {device.type}")
+from .precision import (
+    autocast_context,
+    normalize_inference_dtype,
+    torch_inference_dtype,
+)
+from .profile import TransformerArtifactContract, TransformerRuntimeContract
 
 
 class CompiledForward:
@@ -100,9 +73,13 @@ class PyTorchTransformerExecutor:
     backbone_model: Any | None = None
     _compiled_model: Any | None = field(init=False, default=None, repr=False)
     _compiled_backbone: Any | None = field(init=False, default=None, repr=False)
+    _runtime_contract: TransformerRuntimeContract = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.dtype = normalize_inference_dtype(self.dtype)
+        self._runtime_contract = TransformerRuntimeContract.from_config(
+            self.model.config
+        )
         if self.compile_mode not in {
             "default",
             "reduce-overhead",
@@ -131,28 +108,39 @@ class PyTorchTransformerExecutor:
 
     @property
     def output_dim(self) -> int:
-        return int(self.model.config.hidden_size)
+        return self.runtime_contract.hidden_size
+
+    @property
+    def num_logits(self) -> int:
+        return self.output_contract.num_logits
+
+    @property
+    def profile(self) -> str:
+        return self.output_contract.profile
+
+    @property
+    def output_contract(self) -> TransformerArtifactContract:
+        return self.runtime_contract.output
+
+    @property
+    def runtime_contract(self) -> TransformerRuntimeContract:
+        return self._runtime_contract
 
     @property
     def max_length(self) -> int | None:
-        value = getattr(self.model.config, "match_max_length", None)
-        return None if value is None else int(value)
+        return self.runtime_contract.max_length
 
     @property
     def use_field_tokens(self) -> bool:
-        return bool(getattr(self.model.config, "match_use_field_tokens", True))
+        return self.runtime_contract.use_field_tokens
 
     @property
     def max_attribute_value_chars(self) -> int | None:
-        return getattr(self.model.config, "match_max_attribute_value_chars", None)
+        return self.runtime_contract.max_attribute_value_chars
 
     @property
     def max_attribute_value_tokens(self) -> int | None:
-        return getattr(
-            self.model.config,
-            "match_max_attribute_value_tokens",
-            DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
-        )
+        return self.runtime_contract.max_attribute_value_tokens
 
     def _inputs(
         self,
@@ -176,15 +164,16 @@ class PyTorchTransformerExecutor:
             with torch.inference_mode(), autocast_context(self.device, self.dtype):
                 forward = self.forward_model or self._compiled_model or self.model
                 logits = forward(**inputs).logits
-            if logits.ndim != 2 or logits.shape[1] != 2:
+            if logits.ndim != 2 or logits.shape[1] != self.num_logits:
                 raise RuntimeError(
-                    "Transformer classifier must return [batch, 2] logits"
+                    "Transformer classifier returned shape "
+                    f"{tuple(logits.shape)}, expected [batch, {self.num_logits}]"
                 )
             return logits.float().cpu().numpy()
         except torch.cuda.OutOfMemoryError as error:
             raise TransformerExecutorOutOfMemoryError from error
 
-    def encode_cls(
+    def encode_pooled(
         self,
         batch: dict[str, torch.Tensor],
         *,
@@ -202,9 +191,24 @@ class PyTorchTransformerExecutor:
                     **inputs,
                     return_dict=True,
                 ).last_hidden_state
+            if self.output_contract.uses_prompted_pairs:
+                mask = inputs["attention_mask"].unsqueeze(-1).to(hidden_state.dtype)
+                return (
+                    (hidden_state * mask).sum(dim=1)
+                    / mask.sum(dim=1).clamp_min(1.0)
+                ).float().cpu().numpy()
             return hidden_state[:, 0, :].float().cpu().numpy()
         except torch.cuda.OutOfMemoryError as error:
             raise TransformerExecutorOutOfMemoryError from error
+
+    def encode_cls(
+        self,
+        batch: dict[str, torch.Tensor],
+        *,
+        non_blocking: bool,
+    ) -> np.ndarray:
+        """Compatibility alias; prompted profiles use mean rather than CLS."""
+        return self.encode_pooled(batch, non_blocking=non_blocking)
 
     def prepare(self, *, classifier: bool, encoder: bool) -> None:
         del classifier, encoder

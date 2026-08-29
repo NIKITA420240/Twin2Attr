@@ -429,6 +429,7 @@ class SubmissionArchiveTests(unittest.TestCase):
             onnx_directory = transformer / "onnx"
             onnx_directory.mkdir()
             (onnx_directory / "classifier.onnx").write_bytes(b"onnx")
+            (onnx_directory / "classifier.onnx.data").write_bytes(b"weights")
             result = build_submission_archive(config, project_root=root)
 
             with ZipFile(result.path) as archive:
@@ -438,6 +439,7 @@ class SubmissionArchiveTests(unittest.TestCase):
         self.assertEqual(solution["backend"], "onnxruntime")
         self.assertFalse(solution["onnxruntime"]["fallback_to_pytorch"])
         self.assertIn("models/transformer/onnx/classifier.onnx", names)
+        self.assertIn("models/transformer/onnx/classifier.onnx.data", names)
         self.assertNotIn("models/transformer/model.safetensors", names)
         self.assertTrue(
             any(name.startswith("vendor_wheels/onnxruntime_gpu-") for name in names)

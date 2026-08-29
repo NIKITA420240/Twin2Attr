@@ -7,26 +7,14 @@ from time import perf_counter
 from typing import Any
 
 import torch
-import torch.nn.functional as F
 from loguru import logger
-from transformers import (
-    AutoModelForSequenceClassification,
-    PreTrainedModel,
-    PreTrainedTokenizerBase,
-    Trainer,
-)
+from transformers import PreTrainedModel, Trainer
 
-from ...pair_encoding import (
-    add_pair_special_tokens,
-    initialize_pair_special_token_embeddings,
-    pair_special_token_ids,
-)
-from .head import HybridSequenceClassifier, PoolingHeadConfig, PoolingSequenceClassifier
+from .construction import model_factory
+from .objective import weighted_classification_loss
 from .optimizer import (
     LearningRateMultipliers,
     build_transformer_optimizer,
-    freeze_backbone_except_last_layers,
-    restrict_word_embedding_updates,
 )
 from .train_runtime import EpochPerformanceTracker, LengthAwareSampler
 
@@ -207,85 +195,20 @@ class WeightedSequenceTrainer(Trainer):
         num_items_in_batch: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, Any]:
         del num_items_in_batch
-        if model.training and self.performance_tracker is not None:
-            self.performance_tracker.observe(inputs.get("attention_mask"))
-        labels = inputs.pop("labels")
-        sample_weights = inputs.pop("sample_weights")
-        outputs = model(**inputs)
-        losses = F.cross_entropy(
+        performance_tracker = getattr(self, "performance_tracker", None)
+        if model.training and performance_tracker is not None:
+            performance_tracker.observe(inputs.get("attention_mask"))
+        model_inputs = dict(inputs)
+        labels = model_inputs.pop("labels")
+        sample_weights = model_inputs.pop("sample_weights")
+        outputs = model(**model_inputs)
+        loss = weighted_classification_loss(
             outputs.logits,
             labels,
-            weight=self.class_weights.to(outputs.logits.device),
-            reduction="none",
+            sample_weights,
+            self.class_weights,
         )
-        weights = sample_weights.to(outputs.logits.device)
-        loss = torch.sum(losses * weights) / torch.sum(weights)
         return (loss, outputs) if return_outputs else loss
-
-
-def model_factory(
-    model_path: str,
-    tokenizer: PreTrainedTokenizerBase,
-    *,
-    use_field_tokens: bool,
-    special_token_initialization_enabled: bool = False,
-    special_token_key_seed_texts: Sequence[str] = (),
-    special_token_value_seed_texts: Sequence[str] = (),
-    train_new_token_embeddings_only: bool = False,
-    train_last_n_layers: int | None = None,
-    head_type: str = "default",
-    head_config: PoolingHeadConfig | None = None,
-):
-    def initialize_model(trial: Any | None = None) -> PreTrainedModel:
-        del trial
-        if head_type == "hybrid":
-            model = HybridSequenceClassifier.from_backbone_pretrained(
-                model_path,
-                head_config=head_config or PoolingHeadConfig(poolings=("attention",)),
-                id2label={0: "different", 1: "match"},
-                label2id={"different": 0, "match": 1},
-            )
-        elif head_type == "pooling":
-            model = PoolingSequenceClassifier.from_backbone_pretrained(
-                model_path,
-                head_config=head_config or PoolingHeadConfig(),
-                num_labels=2,
-                id2label={0: "different", 1: "match"},
-                label2id={"different": 0, "match": 1},
-            )
-        elif head_type == "default":
-            model = AutoModelForSequenceClassification.from_pretrained(
-                model_path,
-                num_labels=2,
-                id2label={0: "different", 1: "match"},
-                label2id={"different": 0, "match": 1},
-                ignore_mismatched_sizes=True,
-            )
-        else:
-            raise ValueError("head_type must be 'default', 'pooling' or 'hybrid'")
-        if use_field_tokens:
-            add_pair_special_tokens(tokenizer, model)
-            if special_token_initialization_enabled:
-                initialize_pair_special_token_embeddings(
-                    tokenizer,
-                    model,
-                    key_seed_texts=special_token_key_seed_texts,
-                    value_seed_texts=special_token_value_seed_texts,
-                )
-            if train_new_token_embeddings_only:
-                restrict_word_embedding_updates(
-                    model,
-                    pair_special_token_ids(tokenizer),
-                )
-        if train_last_n_layers is not None:
-            freeze_backbone_except_last_layers(
-                model,
-                train_last_n_layers,
-                train_input_word_embeddings=train_new_token_embeddings_only,
-            )
-        return model
-
-    return initialize_model
 
 
 __all__ = ["WeightedSequenceTrainer", "model_factory"]
