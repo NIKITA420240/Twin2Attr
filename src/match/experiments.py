@@ -6,6 +6,7 @@ import csv
 import hashlib
 import json
 import re
+import tempfile
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
 
 
 _EXPERIMENT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-EXPERIMENT_REGISTRY_COLUMNS = (
+_LEGACY_EXPERIMENT_REGISTRY_COLUMNS = (
     "experiment_name",
     "created_at",
     "model",
@@ -41,6 +42,30 @@ EXPERIMENT_REGISTRY_COLUMNS = (
     "validation_rows",
     "validation_pairs_hash",
     "s3_path",
+)
+_PERFORMANCE_REGISTRY_COLUMNS = (
+    "registry_schema_version",
+    "completed_epochs",
+    "performance_epochs_observed",
+    "train_batch_size",
+    "gradient_accumulation_steps",
+    "effective_batch_size",
+    "max_length",
+    "avg_train_epoch_seconds",
+    "total_train_seconds",
+    "avg_examples_per_second",
+    "avg_real_tokens_per_second",
+    "avg_padding_efficiency",
+    "avg_train_peak_cuda_memory_gib",
+    "max_train_peak_cuda_memory_gib",
+    "gpu_name",
+    "gpu_count",
+    "precision",
+    "trainable_parameters",
+)
+EXPERIMENT_REGISTRY_COLUMNS = (
+    *_LEGACY_EXPERIMENT_REGISTRY_COLUMNS,
+    *_PERFORMANCE_REGISTRY_COLUMNS,
 )
 
 
@@ -139,15 +164,129 @@ def _training_metadata(config: AppConfig) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _validate_registry_schema(registry_path: Path) -> None:
+def _migrate_registry_schema(registry_path: Path) -> None:
     if not registry_path.is_file() or registry_path.stat().st_size == 0:
         return
     with registry_path.open("r", encoding="utf-8", newline="") as source:
-        header = next(csv.reader(source), [])
-    if header != list(EXPERIMENT_REGISTRY_COLUMNS):
+        reader = csv.DictReader(source)
+        header = reader.fieldnames or []
+        rows = list(reader)
+    if header == list(EXPERIMENT_REGISTRY_COLUMNS):
+        return
+    if header != list(_LEGACY_EXPERIMENT_REGISTRY_COLUMNS):
         raise ValueError(
             f"experiment registry has an unexpected schema: {registry_path}"
         )
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            newline="",
+            dir=registry_path.parent,
+            prefix=f".{registry_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as output:
+            temporary_path = Path(output.name)
+            writer = csv.DictWriter(output, fieldnames=EXPERIMENT_REGISTRY_COLUMNS)
+            writer.writeheader()
+            for legacy_row in rows:
+                writer.writerow(
+                    {
+                        **legacy_row,
+                        "registry_schema_version": 1,
+                    }
+                )
+        temporary_path.replace(registry_path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def _mean_history_value(
+    history: list[dict[str, Any]],
+    key: str,
+) -> float | str:
+    values = [
+        float(record[key])
+        for record in history
+        if isinstance(record.get(key), (int, float))
+    ]
+    return "" if not values else sum(values) / len(values)
+
+
+def _performance_summary(training_metadata: dict[str, Any]) -> dict[str, Any]:
+    raw_history = training_metadata.get("performance_history")
+    history = (
+        [record for record in raw_history if isinstance(record, dict)]
+        if isinstance(raw_history, list)
+        else []
+    )
+    raw_resolved = training_metadata.get("resolved_config")
+    resolved = raw_resolved if isinstance(raw_resolved, dict) else {}
+    raw_runtime = training_metadata.get("runtime")
+    runtime = raw_runtime if isinstance(raw_runtime, dict) else {}
+
+    train_batch_size = resolved.get("train_batch_size", "")
+    accumulation = resolved.get("gradient_accumulation_steps", "")
+    world_size = runtime.get("world_size", "")
+    effective_batch_size: int | str = ""
+    if all(
+        isinstance(value, int) and not isinstance(value, bool) and value > 0
+        for value in (train_batch_size, accumulation, world_size)
+    ):
+        effective_batch_size = train_batch_size * accumulation * world_size
+
+    train_seconds = [
+        float(record["train_seconds"])
+        for record in history
+        if isinstance(record.get("train_seconds"), (int, float))
+    ]
+    peak_memory = [
+        float(record["peak_cuda_memory_gib"])
+        for record in history
+        if isinstance(record.get("peak_cuda_memory_gib"), (int, float))
+    ]
+    completed_epochs = training_metadata.get("completed_epochs", "")
+    if completed_epochs == "" and history:
+        completed_epochs = len(history)
+
+    return {
+        "registry_schema_version": 2,
+        "completed_epochs": completed_epochs,
+        "performance_epochs_observed": len(history) if history else "",
+        "train_batch_size": train_batch_size,
+        "gradient_accumulation_steps": accumulation,
+        "effective_batch_size": effective_batch_size,
+        "max_length": resolved.get("max_length", ""),
+        "avg_train_epoch_seconds": (
+            "" if not train_seconds else sum(train_seconds) / len(train_seconds)
+        ),
+        "total_train_seconds": "" if not train_seconds else sum(train_seconds),
+        "avg_examples_per_second": _mean_history_value(
+            history,
+            "examples_per_second",
+        ),
+        "avg_real_tokens_per_second": _mean_history_value(
+            history,
+            "real_tokens_per_second",
+        ),
+        "avg_padding_efficiency": _mean_history_value(
+            history,
+            "padding_efficiency",
+        ),
+        "avg_train_peak_cuda_memory_gib": (
+            "" if not peak_memory else sum(peak_memory) / len(peak_memory)
+        ),
+        "max_train_peak_cuda_memory_gib": (
+            "" if not peak_memory else max(peak_memory)
+        ),
+        "gpu_name": runtime.get("gpu_name", ""),
+        "gpu_count": runtime.get("gpu_count", ""),
+        "precision": runtime.get("precision", ""),
+        "trainable_parameters": runtime.get("trainable_parameters", ""),
+    }
 
 
 def _head_description(config: AppConfig) -> str:
@@ -224,6 +363,7 @@ def save_experiment_record(
         "head_learning_rate",
         transformer.head_learning_rate or transformer.learning_rate,
     )
+    performance_summary = _performance_summary(training_metadata)
     s3_path = f"experiments/{name}"
     row: dict[str, Any] = {
         "experiment_name": name,
@@ -250,9 +390,10 @@ def save_experiment_record(
         "validation_rows": splits.validation_matches.height,
         "validation_pairs_hash": split_hash,
         "s3_path": s3_path,
+        **performance_summary,
     }
     record = {
-        "schema_version": 1,
+        "schema_version": 2,
         **row,
         "predictor": artifacts.predictor,
         "metrics": metrics,
@@ -281,7 +422,7 @@ def save_experiment_record(
     )
 
     registry_path.parent.mkdir(parents=True, exist_ok=True)
-    _validate_registry_schema(registry_path)
+    _migrate_registry_schema(registry_path)
     write_header = not registry_path.is_file() or registry_path.stat().st_size == 0
     with registry_path.open("a", encoding="utf-8", newline="") as output:
         writer = csv.DictWriter(output, fieldnames=EXPERIMENT_REGISTRY_COLUMNS)

@@ -450,6 +450,32 @@ def train_sequence_classifier(
         torch_compile=config.torch_compile,
         torch_compile_mode=config.torch_compile_mode,
     )
+    precision = (
+        "bf16"
+        if training_arguments.bf16
+        else "fp16"
+        if training_arguments.fp16
+        else "fp32"
+    )
+    performance_history = performance_tracker.history
+    completed_epochs = (
+        len(performance_history)
+        if performance_history
+        else int(trainer.state.epoch or 0)
+    )
+    runtime = {
+        "gpu_name": (
+            torch.cuda.get_device_name(0) if torch.cuda.is_available() else ""
+        ),
+        "gpu_count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
+        "world_size": int(training_arguments.world_size),
+        "precision": precision,
+        "trainable_parameters": sum(
+            parameter.numel()
+            for parameter in trainer.model.parameters()
+            if parameter.requires_grad
+        ),
+    }
     metadata = {
         "profile": config.profile,
         "head_type": config.head_type,
@@ -461,7 +487,9 @@ def train_sequence_classifier(
         "validation_macro_pr_auc": float(metrics["eval_macro_pr_auc"]),
         "best_hyperparameters": best_hyperparameters,
         "resolved_config": asdict(resolved_config),
-        "performance_history": performance_tracker.history,
+        "completed_epochs": completed_epochs,
+        "performance_history": performance_history,
+        "runtime": runtime,
     }
     (output_path / "training_metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2),
