@@ -26,6 +26,13 @@ def build_data_model(
         return MixedDatasetModel(descriptions.mix_dataset)
     if selected_name == "mix_dataset_codex":
         return MixedDatasetModel(descriptions.mix_dataset_codex)
+    if selected_name == "mix_dataset_hard_negative":
+        settings = descriptions.mix_dataset_hard_negative
+        if settings is None:
+            raise ValueError(
+                "data_model_description.mix_dataset_hard_negative is not configured"
+            )
+        return MixedDatasetModel(settings)
     raise ValueError(f"Unsupported data model: {selected_name!r}")
 
 
