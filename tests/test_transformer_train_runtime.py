@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import Mock
 
 import torch
 
@@ -7,6 +8,7 @@ from match.models.transformer.train_runtime import (
     LengthAwareSampler,
     stratified_sample_indices,
 )
+from match.models.transformer.model import WeightedSequenceTrainer
 from match.models.transformer.config import SequenceClassifierConfig
 from match.models.transformer.training import _training_arguments
 
@@ -74,6 +76,40 @@ class FastDevSamplingTests(unittest.TestCase):
         sampled_labels = [labels[index] for index in first]
         self.assertEqual(sampled_labels.count(0), 16)
         self.assertEqual(sampled_labels.count(1), 4)
+
+    def test_fast_dev_uses_a_separate_eval_dataloader_cache_key(self) -> None:
+        trainer = object.__new__(WeightedSequenceTrainer)
+        validation_dataset = object()
+        fast_dev_dataset = object()
+        trainer.eval_dataset = validation_dataset
+        trainer.fast_dev_dataset = fast_dev_dataset
+        selected_dataset = {}
+
+        def get_eval_dataloader(name):
+            selected_dataset["value"] = trainer.eval_dataset[name]
+            return "fast-dev-loader"
+
+        trainer.get_eval_dataloader = Mock(side_effect=get_eval_dataloader)
+
+        validation_metric = Mock()
+        trainer.compute_metrics = validation_metric
+        trainer.fast_dev_compute_metrics = Mock()
+        trainer.evaluation_loop = Mock(
+            return_value=type(
+                "EvaluationOutput",
+                (),
+                {"metrics": {}, "num_samples": 1},
+            )()
+        )
+        trainer.log = Mock()
+        trainer.state = type("TrainerState", (), {"global_step": 1})()
+
+        trainer._run_fast_dev_evaluation()
+
+        trainer.get_eval_dataloader.assert_called_once_with("fast_dev")
+        self.assertIs(selected_dataset["value"], fast_dev_dataset)
+        self.assertIs(trainer.eval_dataset, validation_dataset)
+        self.assertIs(trainer.compute_metrics, validation_metric)
 
 
 class TrainingArgumentsTests(unittest.TestCase):

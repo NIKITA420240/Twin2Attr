@@ -137,8 +137,14 @@ class WeightedSequenceTrainer(Trainer):
         original_compute_metrics = self.compute_metrics
         self.compute_metrics = self.fast_dev_compute_metrics
         try:
+            original_eval_dataset = self.eval_dataset
+            try:
+                self.eval_dataset = {"fast_dev": self.fast_dev_dataset}
+                fast_dev_dataloader = self.get_eval_dataloader("fast_dev")
+            finally:
+                self.eval_dataset = original_eval_dataset
             output = self.evaluation_loop(
-                self.get_eval_dataloader(self.fast_dev_dataset),
+                fast_dev_dataloader,
                 description="Fast development evaluation",
                 prediction_loss_only=None,
                 ignore_keys=None,
