@@ -6,6 +6,7 @@ from torch import nn
 from match.models.transformer.optimizer import (
     LearningRateMultipliers,
     build_transformer_optimizer,
+    finish_special_token_adaptation,
     freeze_backbone_except_last_layers,
     restrict_word_embedding_updates,
 )
@@ -193,6 +194,70 @@ class TransformerOptimizerTests(unittest.TestCase):
         self.assertTrue(model.backbone.encoder.layer[1].weight.requires_grad)
         self.assertTrue(model.backbone.encoder.layer[2].weight.requires_grad)
         self.assertTrue(model.head.weight.requires_grad)
+
+    def test_finishes_new_token_phase_by_freezing_embeddings(self) -> None:
+        model = FakeModel()
+        restrict_word_embedding_updates(model, [14, 15])
+        freeze_backbone_except_last_layers(
+            model,
+            2,
+            train_input_word_embeddings=True,
+        )
+        optimizer = build_transformer_optimizer(
+            model,
+            backbone_lr=1e-5,
+            multipliers=LearningRateMultipliers(embeddings=10.0),
+            weight_decay=0.01,
+        )
+
+        layers = finish_special_token_adaptation(
+            model,
+            optimizer,
+            None,
+            last_n_layers=2,
+            main_backbone_lr=1e-5,
+            main_multipliers=LearningRateMultipliers(),
+            reset_learning_rates=False,
+        )
+
+        self.assertEqual(layers, (1, 2))
+        self.assertFalse(model.get_input_embeddings().weight.requires_grad)
+        self.assertFalse(model.backbone.encoder.layer[0].weight.requires_grad)
+        self.assertTrue(model.backbone.encoder.layer[1].weight.requires_grad)
+        self.assertTrue(model.head.weight.requires_grad)
+
+    def test_full_model_transition_restores_main_learning_rates(self) -> None:
+        model = FakeModel()
+        optimizer = build_transformer_optimizer(
+            model,
+            backbone_lr=1e-5,
+            multipliers=LearningRateMultipliers(
+                embeddings=10.0,
+                head=10.0,
+                layerwise_decay=1.0,
+            ),
+            weight_decay=0.01,
+        )
+
+        finish_special_token_adaptation(
+            model,
+            optimizer,
+            None,
+            last_n_layers=1,
+            main_backbone_lr=3e-5,
+            main_multipliers=LearningRateMultipliers(
+                embeddings=1.0,
+                head=3.0,
+                layerwise_decay=0.9,
+            ),
+            reset_learning_rates=True,
+        )
+
+        rates = {group["group_name"]: group["lr"] for group in optimizer.param_groups}
+        self.assertAlmostEqual(rates["backbone.layer.2.decay"], 3e-5)
+        self.assertAlmostEqual(rates["head.decay"], 9e-5)
+        self.assertFalse(model.backbone.encoder.layer[1].weight.requires_grad)
+        self.assertTrue(model.backbone.encoder.layer[2].weight.requires_grad)
 
 
 if __name__ == "__main__":

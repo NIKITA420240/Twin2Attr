@@ -183,9 +183,12 @@ def train_sequence_classifier(
     )
     if config.use_field_tokens:
         add_pair_special_tokens(tokenizer)
-        if config.train_new_token_embeddings_only:
+        if (
+            config.train_new_token_embeddings_only
+            or config.special_token_adaptation_mode == "new_tokens_only"
+        ):
             logger.info(
-                "Word-embedding updates restricted to field token ids: {}",
+                "Adaptation word-embedding updates restricted to field token ids: {}",
                 pair_special_token_ids(tokenizer),
             )
     max_length = config.max_length
@@ -252,6 +255,7 @@ def train_sequence_classifier(
         special_token_value_seed_texts=config.special_token_value_seed_texts,
         train_new_token_embeddings_only=config.train_new_token_embeddings_only,
         train_last_n_layers=config.train_last_n_layers,
+        special_token_adaptation_mode=config.special_token_adaptation_mode,
         head_type=config.head_type,
         head_config=config.head_config,
         profile=config.profile,
@@ -260,11 +264,41 @@ def train_sequence_classifier(
         "learning_rate": config.learning_rate,
         "weight_decay": config.weight_decay,
     }
-    learning_rate_multipliers = LearningRateMultipliers.from_learning_rates(
+    main_learning_rate_multipliers = LearningRateMultipliers.from_learning_rates(
         embeddings_lr=config.resolved_embeddings_learning_rate,
         backbone_lr=config.learning_rate,
         head_lr=config.resolved_head_learning_rate,
         layerwise_decay=config.layerwise_lr_decay,
+    )
+    adaptation_backbone_lr = (
+        config.special_token_adaptation_full_model_backbone_learning_rate
+        if config.special_token_adaptation_mode == "full_model"
+        and config.special_token_adaptation_full_model_backbone_learning_rate
+        is not None
+        else config.learning_rate
+    )
+    adaptation_embeddings_lr = (
+        config.special_token_adaptation_embeddings_learning_rate
+        if config.special_token_adaptation_mode != "none"
+        else config.resolved_embeddings_learning_rate
+    )
+    learning_rate_multipliers = LearningRateMultipliers.from_learning_rates(
+        embeddings_lr=adaptation_embeddings_lr,
+        backbone_lr=adaptation_backbone_lr,
+        head_lr=config.resolved_head_learning_rate,
+        layerwise_decay=config.layerwise_lr_decay,
+    )
+    logger.info(
+        "Special tokens: initialization={}, adaptation_mode={}, "
+        "adaptation_optimizer_steps={}, adaptation_embeddings_lr={}, "
+        "adaptation_backbone_lr={}",
+        "mean_existing_tokens"
+        if config.special_token_initialization_enabled
+        else "none",
+        config.special_token_adaptation_mode,
+        config.special_token_adaptation_max_optimizer_steps,
+        config.special_token_adaptation_embeddings_learning_rate,
+        adaptation_backbone_lr,
     )
     validation_metric = partial(
         compute_macro_pr_auc,
@@ -349,11 +383,22 @@ def train_sequence_classifier(
         callbacks=callbacks,
         class_weights=class_weights,
         learning_rate_multipliers=learning_rate_multipliers,
+        main_learning_rate_multipliers=main_learning_rate_multipliers,
+        optimizer_backbone_learning_rate=(
+            adaptation_backbone_lr
+            if config.special_token_adaptation_mode != "none"
+            else None
+        ),
         train_pair_lengths=train_pair_lengths,
         length_bucketing=config.train_length_bucketing,
         mega_batch_multiplier=config.train_mega_batch_multiplier,
         non_blocking_transfer=config.non_blocking_transfer,
         performance_tracker=performance_tracker,
+        special_token_adaptation_mode=config.special_token_adaptation_mode,
+        special_token_adaptation_max_optimizer_steps=(
+            config.special_token_adaptation_max_optimizer_steps
+        ),
+        main_backbone_learning_rate=best_hyperparameters["learning_rate"],
         fast_dev_dataset=fast_dev_dataset,
         fast_dev_compute_metrics=fast_dev_metric,
         fast_dev_every_n_optimizer_steps=(
@@ -363,6 +408,9 @@ def train_sequence_classifier(
         ),
     )
     trainer.train()
+    special_token_adaptation_runtime = (
+        trainer.special_token_adaptation_runtime()
+    )
     metrics = trainer.evaluate()
     output_contract = TransformerArtifactContract.for_training(
         profile=config.profile,
@@ -409,12 +457,23 @@ def train_sequence_classifier(
         learning_rate=best_hyperparameters["learning_rate"],
         embeddings_learning_rate=(
             best_hyperparameters["learning_rate"]
-            * learning_rate_multipliers.embeddings
+            * main_learning_rate_multipliers.embeddings
         ),
         train_new_token_embeddings_only=config.train_new_token_embeddings_only,
         train_last_n_layers=config.train_last_n_layers,
+        special_token_adaptation_mode=config.special_token_adaptation_mode,
+        special_token_adaptation_max_optimizer_steps=(
+            config.special_token_adaptation_max_optimizer_steps
+        ),
+        special_token_adaptation_embeddings_learning_rate=(
+            config.special_token_adaptation_embeddings_learning_rate
+        ),
+        special_token_adaptation_full_model_backbone_learning_rate=(
+            config.special_token_adaptation_full_model_backbone_learning_rate
+        ),
         head_learning_rate=(
-            best_hyperparameters["learning_rate"] * learning_rate_multipliers.head
+            best_hyperparameters["learning_rate"]
+            * main_learning_rate_multipliers.head
         ),
         layerwise_lr_decay=learning_rate_multipliers.layerwise_decay,
         weight_decay=best_hyperparameters["weight_decay"],
@@ -490,6 +549,7 @@ def train_sequence_classifier(
         "completed_epochs": completed_epochs,
         "performance_history": performance_history,
         "runtime": runtime,
+        "special_token_adaptation": special_token_adaptation_runtime,
     }
     (output_path / "training_metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2),
@@ -519,6 +579,16 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
         embeddings_learning_rate=parameters.embeddings_learning_rate,
         train_new_token_embeddings_only=parameters.train_new_token_embeddings_only,
         train_last_n_layers=parameters.train_last_n_layers,
+        special_token_adaptation_mode=parameters.special_token_adaptation.mode,
+        special_token_adaptation_max_optimizer_steps=(
+            parameters.special_token_adaptation.max_optimizer_steps
+        ),
+        special_token_adaptation_embeddings_learning_rate=(
+            parameters.special_token_adaptation.embeddings_learning_rate
+        ),
+        special_token_adaptation_full_model_backbone_learning_rate=(
+            parameters.special_token_adaptation.full_model_backbone_learning_rate
+        ),
         special_token_initialization_enabled=(
             parameters.special_token_initialization.enabled
         ),

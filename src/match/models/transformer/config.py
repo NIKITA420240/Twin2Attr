@@ -53,6 +53,10 @@ class SequenceClassifierConfig:
     embeddings_learning_rate: float | None = None
     train_new_token_embeddings_only: bool = False
     train_last_n_layers: int | None = None
+    special_token_adaptation_mode: str = "none"
+    special_token_adaptation_max_optimizer_steps: int = 0
+    special_token_adaptation_embeddings_learning_rate: float | None = None
+    special_token_adaptation_full_model_backbone_learning_rate: float | None = None
     lr_scheduler_type: str = "linear"
     head_learning_rate: float | None = None
     layerwise_lr_decay: float = 1.0
@@ -203,6 +207,50 @@ class SequenceClassifierConfig:
                     )
         if self.train_last_n_layers is not None and self.train_last_n_layers < 1:
             raise ValueError("train_last_n_layers must be positive or None")
+        if self.special_token_adaptation_mode not in {
+            "none",
+            "new_tokens_only",
+            "full_model",
+        }:
+            raise ValueError("unsupported special_token_adaptation_mode")
+        if self.special_token_adaptation_max_optimizer_steps < 0:
+            raise ValueError("special token adaptation steps must not be negative")
+        if (
+            self.special_token_adaptation_embeddings_learning_rate is not None
+            and self.special_token_adaptation_embeddings_learning_rate <= 0.0
+        ):
+            raise ValueError(
+                "special token adaptation embeddings LR must be positive or None"
+            )
+        if self.special_token_adaptation_mode != "none":
+            if not self.use_field_tokens:
+                raise ValueError("special token adaptation requires use_field_tokens")
+            if self.train_last_n_layers is None:
+                raise ValueError(
+                    "special token adaptation requires train_last_n_layers"
+                )
+            if self.hpo_trials > 1:
+                raise ValueError("special token adaptation requires hpo_trials=1")
+            if self.special_token_adaptation_max_optimizer_steps < 1:
+                raise ValueError(
+                    "special token adaptation steps must be positive"
+                )
+            if (
+                self.special_token_adaptation_embeddings_learning_rate is None
+                or self.special_token_adaptation_embeddings_learning_rate <= 0.0
+            ):
+                raise ValueError(
+                    "special token adaptation embeddings LR must be positive"
+                )
+        if (
+            self.special_token_adaptation_full_model_backbone_learning_rate
+            is not None
+            and self.special_token_adaptation_full_model_backbone_learning_rate
+            <= 0.0
+        ):
+            raise ValueError(
+                "special token full-model backbone LR must be positive or None"
+            )
         if self.lr_scheduler_type not in {"linear", "cosine"}:
             raise ValueError("lr_scheduler_type must be 'linear' or 'cosine'")
         if self.onnx_opset < 14:
@@ -234,6 +282,10 @@ class ResolvedTrainingConfig:
     embeddings_learning_rate: float
     train_new_token_embeddings_only: bool
     train_last_n_layers: int | None
+    special_token_adaptation_mode: str
+    special_token_adaptation_max_optimizer_steps: int
+    special_token_adaptation_embeddings_learning_rate: float | None
+    special_token_adaptation_full_model_backbone_learning_rate: float | None
     head_learning_rate: float
     layerwise_lr_decay: float
     weight_decay: float

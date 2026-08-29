@@ -10,6 +10,9 @@ import polars as pl
 from match.config import load_app_config_file
 from match.experiments import (
     EXPERIMENT_REGISTRY_COLUMNS,
+    _INTERMEDIATE_SPECIAL_TOKEN_REGISTRY_COLUMNS,
+    _PRE_SPECIAL_TOKEN_REGISTRY_COLUMNS,
+    _migrate_registry_schema,
     configure_experiment,
     save_experiment_record,
     validate_experiment_name,
@@ -148,6 +151,10 @@ class ExperimentTrackingTests(unittest.TestCase):
                             "precision": "bf16",
                             "trainable_parameters": 123_456,
                         },
+                        "special_token_adaptation": {
+                            "actual_optimizer_steps": 500,
+                            "seconds": 42.5,
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -175,7 +182,7 @@ class ExperimentTrackingTests(unittest.TestCase):
                 rows[0]["s3_path"],
                 "experiments/mmarco-human-baseline",
             )
-            self.assertEqual(rows[0]["registry_schema_version"], "2")
+            self.assertEqual(rows[0]["registry_schema_version"], "3")
             self.assertEqual(rows[0]["completed_epochs"], "2")
             self.assertEqual(rows[0]["performance_epochs_observed"], "2")
             self.assertEqual(rows[0]["train_batch_size"], "256")
@@ -189,6 +196,27 @@ class ExperimentTrackingTests(unittest.TestCase):
             )
             self.assertEqual(rows[0]["max_train_peak_cuda_memory_gib"], "14.0")
             self.assertEqual(rows[0]["precision"], "bf16")
+            self.assertEqual(rows[0]["warmup_ratio"], "0.06")
+            self.assertEqual(
+                rows[0]["special_token_initialization"],
+                "mean_existing_tokens",
+            )
+            self.assertEqual(
+                rows[0]["special_token_adaptation_mode"],
+                "new_tokens_only",
+            )
+            self.assertEqual(
+                rows[0]["special_token_adaptation_max_optimizer_steps"],
+                "500",
+            )
+            self.assertEqual(
+                rows[0]["special_token_adaptation_actual_optimizer_steps"],
+                "500",
+            )
+            self.assertEqual(
+                rows[0]["special_token_adaptation_seconds"],
+                "42.5",
+            )
             self.assertTrue(experiment_dir.is_dir())
 
     def test_migrates_legacy_registry_and_preserves_existing_rows(self) -> None:
@@ -241,7 +269,49 @@ class ExperimentTrackingTests(unittest.TestCase):
             self.assertEqual(rows[0]["registry_schema_version"], "1")
             self.assertEqual(rows[0]["avg_train_epoch_seconds"], "")
             self.assertEqual(rows[1]["experiment_name"], "new-experiment")
-            self.assertEqual(rows[1]["registry_schema_version"], "2")
+            self.assertEqual(rows[1]["registry_schema_version"], "3")
+
+    def test_migrates_intermediate_special_token_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            registry_path = Path(directory) / "experiments.csv"
+            intermediate_columns = (
+                *_PRE_SPECIAL_TOKEN_REGISTRY_COLUMNS,
+                *_INTERMEDIATE_SPECIAL_TOKEN_REGISTRY_COLUMNS,
+            )
+            with registry_path.open("w", encoding="utf-8", newline="") as output:
+                writer = csv.DictWriter(
+                    output,
+                    fieldnames=intermediate_columns,
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "experiment_name": "intermediate-experiment",
+                        "registry_schema_version": 2,
+                        "special_token_initialization": "mean_existing_tokens",
+                        "special_token_adaptation_mode": "new_tokens_only",
+                        "special_token_adaptation_steps": 500,
+                        "special_token_adaptation_embeddings_lr": 1e-4,
+                    }
+                )
+
+            _migrate_registry_schema(registry_path)
+
+            with registry_path.open(encoding="utf-8", newline="") as source:
+                reader = csv.DictReader(source)
+                rows = list(reader)
+            self.assertEqual(reader.fieldnames, list(EXPERIMENT_REGISTRY_COLUMNS))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["experiment_name"], "intermediate-experiment")
+            self.assertEqual(rows[0]["registry_schema_version"], "2")
+            self.assertEqual(
+                rows[0]["special_token_adaptation_max_optimizer_steps"],
+                "500",
+            )
+            self.assertEqual(
+                rows[0]["special_token_adaptation_embeddings_lr"],
+                "0.0001",
+            )
 
     def test_rejects_registry_with_another_schema(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

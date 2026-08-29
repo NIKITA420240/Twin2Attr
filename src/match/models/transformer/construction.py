@@ -94,6 +94,7 @@ def model_factory(
     special_token_value_seed_texts: Sequence[str] = (),
     train_new_token_embeddings_only: bool = False,
     train_last_n_layers: int | None = None,
+    special_token_adaptation_mode: str = "none",
     head_type: str = "default",
     head_config: PoolingHeadConfig | None = None,
     profile: str = SEQUENCE_CLASSIFIER_PROFILE,
@@ -114,6 +115,7 @@ def model_factory(
             head_type=head_type,
             num_logits=int(model.config.num_labels),
         )
+        model.config.match_train_last_n_layers = train_last_n_layers
         # Legacy sequence classifiers historically had no match_* metadata at
         # initialization time. Keep that observable behavior; the training
         # boundary persists a complete contract before saving the artifact.
@@ -130,16 +132,25 @@ def model_factory(
                     key_seed_texts=special_token_key_seed_texts,
                     value_seed_texts=special_token_value_seed_texts,
                 )
-            if train_new_token_embeddings_only:
+            if (
+                train_new_token_embeddings_only
+                or special_token_adaptation_mode == "new_tokens_only"
+            ):
                 restrict_word_embedding_updates(
                     model,
                     pair_special_token_ids(tokenizer),
                 )
-        if train_last_n_layers is not None:
+        if (
+            train_last_n_layers is not None
+            and special_token_adaptation_mode != "full_model"
+        ):
             freeze_backbone_except_last_layers(
                 model,
                 train_last_n_layers,
-                train_input_word_embeddings=train_new_token_embeddings_only,
+                train_input_word_embeddings=(
+                    train_new_token_embeddings_only
+                    or special_token_adaptation_mode == "new_tokens_only"
+                ),
             )
         return model
 

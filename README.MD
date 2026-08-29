@@ -411,12 +411,16 @@ model_description:
   transformer:
     learning_rate: 3.0e-5
     train_last_n_layers: 3
-    train_new_token_embeddings_only: false
-    embeddings_learning_rate: null
-    special_token_initialization:
-      enabled: true
-      key_seed_texts: [key, attribute, ключ, поле]
-      value_seed_texts: [value, значение, характеристика]
+    special_tokens:
+      initialization:
+        method: mean_existing_tokens
+        key_seed_texts: [key, attribute, ключ, поле]
+        value_seed_texts: [value, значение, характеристика]
+      adaptation:
+        mode: new_tokens_only
+        max_optimizer_steps: 500
+        embeddings_learning_rate: 1.0e-4
+        full_model_backbone_learning_rate: null
     head_learning_rate: 1.0e-4
     layerwise_lr_decay: 0.9
 ```
@@ -429,15 +433,20 @@ model_description:
 - `5` или `6` — абляции с большей адаптационной способностью;
 - значение больше количества layers модели завершается понятной ошибкой.
 
-При численном `train_last_n_layers` значение
-`train_new_token_embeddings_only: false` оставляет всю embedding matrix frozen.
-Не включайте `train_new_token_embeddings_only: true` в P0: хотя optimizer
-обновляет только две новые строки, autograd всё равно должен пройти до
-embedding layer, что заметно ухудшает экономию памяти и времени. Этот режим
-оставлен только для отдельного эксперимента с адаптацией `[KEY]`/`[VAL]`; в
-нём `embeddings_learning_rate` задаёт LR этих строк.
+`special_tokens.adaptation.mode` управляет короткой первой фазой:
 
-При `special_token_initialization.enabled=true` новые `[KEY]` и `[VAL]`
+- `none` — сразу обучаются только top-N и head;
+- `new_tokens_only` — до `max_optimizer_steps` вместе с top-N и head
+  обновляются только строки `[KEY]`/`[VAL]`, затем они замораживаются;
+- `full_model` — до указанного шага обучается весь backbone и head, затем
+  остаются top-N и head.
+
+`max_optimizer_steps` считает optimizer updates, а не microbatches, и входит
+в общее число шагов обучения. При `gradient_accumulation_steps=4` один такой
+шаг содержит четыре microbatch. Обычный `warmup_ratio` независимо управляет
+расписанием learning rate.
+
+При `special_tokens.initialization.method=mean_existing_tokens` новые `[KEY]` и `[VAL]`
 инициализируются до freeze. Каждый текст из `key_seed_texts` или
 `value_seed_texts` разбирается текущим BGE tokenizer на subword ids; среднее
 их существующих embedding-векторов записывается соответственно в `[KEY]` или

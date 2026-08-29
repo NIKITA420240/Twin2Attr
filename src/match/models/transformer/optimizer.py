@@ -186,6 +186,19 @@ def _restricted_token_ids(parameter: nn.Parameter) -> tuple[int, ...] | None:
     return None if value is None else tuple(int(token_id) for token_id in value)
 
 
+def _remove_embedding_restriction(model: PreTrainedModel) -> None:
+    embeddings = model.get_input_embeddings()
+    if embeddings is None or not hasattr(embeddings, "weight"):
+        return
+    weight = embeddings.weight
+    handle = getattr(weight, _GRADIENT_MASK_HANDLE_ATTRIBUTE, None)
+    if handle is not None:
+        handle.remove()
+        delattr(weight, _GRADIENT_MASK_HANDLE_ATTRIBUTE)
+    if hasattr(weight, _TRAINABLE_TOKEN_IDS_ATTRIBUTE):
+        delattr(weight, _TRAINABLE_TOKEN_IDS_ATTRIBUTE)
+
+
 def _mask_unselected_embedding_gradients(
     parameter: nn.Parameter,
     token_ids: tuple[int, ...],
@@ -380,10 +393,57 @@ def optimizer_group_summary(
     )
 
 
+def finish_special_token_adaptation(
+    model: PreTrainedModel,
+    optimizer: torch.optim.Optimizer,
+    lr_scheduler: object | None,
+    *,
+    last_n_layers: int,
+    main_backbone_lr: float,
+    main_multipliers: LearningRateMultipliers,
+    reset_learning_rates: bool,
+) -> tuple[int, ...]:
+    """Switch from the short adaptation phase to the normal top-N phase."""
+    _remove_embedding_restriction(model)
+    trainable_layers = freeze_backbone_except_last_layers(model, last_n_layers)
+    if not reset_learning_rates:
+        return trainable_layers
+
+    layer_count = len(_encoder_layers(model.base_model))
+    scheduler_base_lrs = getattr(lr_scheduler, "base_lrs", None)
+    for index, group in enumerate(optimizer.param_groups):
+        name = str(group.get("group_name", ""))
+        if name.startswith("head."):
+            target_lr = main_backbone_lr * main_multipliers.head
+        elif name.startswith("backbone.layer."):
+            layer_index = int(name.split(".")[2])
+            distance_from_top = layer_count - layer_index - 1
+            target_lr = (
+                main_backbone_lr
+                * main_multipliers.layerwise_decay**distance_from_top
+            )
+        else:
+            target_lr = main_backbone_lr
+        old_base_lr = (
+            float(scheduler_base_lrs[index])
+            if scheduler_base_lrs is not None
+            else float(group["lr"])
+        )
+        schedule_factor = (
+            float(group["lr"]) / old_base_lr if old_base_lr > 0.0 else 1.0
+        )
+        group["initial_lr"] = target_lr
+        group["lr"] = target_lr * schedule_factor
+        if scheduler_base_lrs is not None:
+            scheduler_base_lrs[index] = target_lr
+    return trainable_layers
+
+
 __all__ = [
     "LearningRateMultipliers",
     "build_transformer_optimizer",
     "freeze_backbone_except_last_layers",
+    "finish_special_token_adaptation",
     "optimizer_group_summary",
     "restrict_word_embedding_updates",
 ]

@@ -702,6 +702,59 @@ class SpecialTokenInitializationSettings:
                     f"{name}_seed_texts must contain non-empty strings"
                 )
 
+    @property
+    def method(self) -> str:
+        """Return the public config name for the initialization policy."""
+        return "mean_existing_tokens" if self.enabled else "none"
+
+
+@dataclass(frozen=True, slots=True)
+class SpecialTokenAdaptationSettings:
+    """Short first training phase used to adapt newly added field tokens."""
+
+    mode: str = "none"
+    max_optimizer_steps: int = 0
+    embeddings_learning_rate: float | None = None
+    full_model_backbone_learning_rate: float | None = None
+
+    def __post_init__(self) -> None:
+        normalized_mode = self.mode.strip().lower()
+        if normalized_mode not in {"none", "new_tokens_only", "full_model"}:
+            raise ValueError(
+                "model_description.transformer.special_tokens.adaptation.mode "
+                "must be one of: none, new_tokens_only, full_model"
+            )
+        object.__setattr__(self, "mode", normalized_mode)
+        if (
+            self.embeddings_learning_rate is not None
+            and self.embeddings_learning_rate <= 0.0
+        ):
+            raise ValueError("embeddings_learning_rate must be positive or null")
+        if (
+            self.full_model_backbone_learning_rate is not None
+            and self.full_model_backbone_learning_rate <= 0.0
+        ):
+            raise ValueError(
+                "full_model_backbone_learning_rate must be positive or null"
+            )
+        if normalized_mode == "none":
+            if self.max_optimizer_steps < 0:
+                raise ValueError("special-token adaptation steps must not be negative")
+            return
+        if self.max_optimizer_steps < 1:
+            raise ValueError(
+                "enabled special-token adaptation requires positive "
+                "max_optimizer_steps"
+            )
+        if (
+            self.embeddings_learning_rate is None
+            or self.embeddings_learning_rate <= 0.0
+        ):
+            raise ValueError(
+                "enabled special-token adaptation requires positive "
+                "embeddings_learning_rate"
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class FastDevValidationSettings:
@@ -871,6 +924,9 @@ class TransformerParameters:
     special_token_initialization: SpecialTokenInitializationSettings = (
         SpecialTokenInitializationSettings()
     )
+    special_token_adaptation: SpecialTokenAdaptationSettings = (
+        SpecialTokenAdaptationSettings()
+    )
     validation: TransformerValidationSettings = TransformerValidationSettings()
     lr_scheduler_type: str = "linear"
     head_learning_rate: float | None = None
@@ -919,6 +975,25 @@ class TransformerParameters:
             raise ValueError(
                 "special token initialization requires pair_encoding.use_field_tokens"
             )
+        adaptation = self.special_token_adaptation
+        if adaptation.mode != "none":
+            if not self.pair_encoding.use_field_tokens:
+                raise ValueError(
+                    "special token adaptation requires pair_encoding.use_field_tokens"
+                )
+            if self.train_last_n_layers is None:
+                raise ValueError(
+                    "special token adaptation requires train_last_n_layers"
+                )
+            if self.hpo_trials > 1:
+                raise ValueError(
+                    "special token adaptation currently requires hpo_trials=1"
+                )
+            if self.train_new_token_embeddings_only:
+                raise ValueError(
+                    "special token adaptation conflicts with legacy "
+                    "train_new_token_embeddings_only"
+                )
         if self.lr_scheduler_type not in {"linear", "cosine"}:
             raise ValueError(
                 "transformer.lr_scheduler_type must be 'linear' or 'cosine'"
@@ -1644,12 +1719,39 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             "config section 'transformer.export.onnx' must be a mapping"
         )
     encoding = _section(transformer, "pair_encoding")
-    special_token_initialization_value = transformer.get(
-        "special_token_initialization", {}
-    )
+    special_tokens_value = transformer.get("special_tokens")
+    if special_tokens_value is not None and not isinstance(
+        special_tokens_value, Mapping
+    ):
+        raise ValueError("config section 'transformer.special_tokens' must be a mapping")
+    if special_tokens_value is not None:
+        special_token_initialization_value = special_tokens_value.get(
+            "initialization", {}
+        )
+        special_token_adaptation_value = special_tokens_value.get("adaptation", {})
+    else:
+        special_token_initialization_value = transformer.get(
+            "special_token_initialization", {}
+        )
+        special_token_adaptation_value = {}
     if not isinstance(special_token_initialization_value, Mapping):
         raise ValueError(
-            "config section 'transformer.special_token_initialization' must be a mapping"
+            "config section 'transformer.special_tokens.initialization' must be a mapping"
+        )
+    if not isinstance(special_token_adaptation_value, Mapping):
+        raise ValueError(
+            "config section 'transformer.special_tokens.adaptation' must be a mapping"
+        )
+    special_token_initialization_method = str(
+        special_token_initialization_value.get("method", "none")
+    ).strip().lower()
+    if special_tokens_value is not None and special_token_initialization_method not in {
+        "none",
+        "mean_existing_tokens",
+    }:
+        raise ValueError(
+            "model_description.transformer.special_tokens.initialization.method "
+            "must be one of: none, mean_existing_tokens"
         )
     validation_value = transformer.get("validation", {})
     if not isinstance(validation_value, Mapping):
@@ -2094,23 +2196,58 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 ),
                 special_token_initialization=SpecialTokenInitializationSettings(
                     enabled=_bool(
-                        special_token_initialization_value.get("enabled", False),
-                        "model_description.transformer.special_token_initialization."
-                        "enabled",
+                        (
+                            special_token_initialization_method
+                            == "mean_existing_tokens"
+                            if special_tokens_value is not None
+                            else special_token_initialization_value.get(
+                                "enabled", False
+                            )
+                        ),
+                        "model_description.transformer.special_tokens."
+                        "initialization.method",
                     ),
                     key_seed_texts=_string_tuple(
                         special_token_initialization_value.get(
                             "key_seed_texts", ()
                         ),
-                        "model_description.transformer.special_token_initialization."
+                        "model_description.transformer.special_tokens.initialization."
                         "key_seed_texts",
                     ),
                     value_seed_texts=_string_tuple(
                         special_token_initialization_value.get(
                             "value_seed_texts", ()
                         ),
-                        "model_description.transformer.special_token_initialization."
+                        "model_description.transformer.special_tokens.initialization."
                         "value_seed_texts",
+                    ),
+                ),
+                special_token_adaptation=SpecialTokenAdaptationSettings(
+                    mode=str(special_token_adaptation_value.get("mode", "none")),
+                    max_optimizer_steps=int(
+                        special_token_adaptation_value.get("max_optimizer_steps", 0)
+                    ),
+                    embeddings_learning_rate=(
+                        None
+                        if special_token_adaptation_value.get(
+                            "embeddings_learning_rate"
+                        ) is None
+                        else float(
+                            special_token_adaptation_value[
+                                "embeddings_learning_rate"
+                            ]
+                        )
+                    ),
+                    full_model_backbone_learning_rate=(
+                        None
+                        if special_token_adaptation_value.get(
+                            "full_model_backbone_learning_rate"
+                        ) is None
+                        else float(
+                            special_token_adaptation_value[
+                                "full_model_backbone_learning_rate"
+                            ]
+                        )
                     ),
                 ),
                 validation=TransformerValidationSettings(
@@ -2477,6 +2614,40 @@ def _serializable(value: Any) -> Any:
                 if field.name != "name"
             }
             for source in value.sources
+        }
+        return serialized
+    if isinstance(value, TransformerParameters):
+        serialized = {
+            field.name: _serializable(getattr(value, field.name))
+            for field in fields(value)
+            if field.name
+            not in {
+                "special_token_initialization",
+                "special_token_adaptation",
+                "embeddings_learning_rate",
+                "train_new_token_embeddings_only",
+            }
+        }
+        if value.embeddings_learning_rate is not None:
+            serialized["embeddings_learning_rate"] = value.embeddings_learning_rate
+        if value.train_new_token_embeddings_only:
+            serialized["train_new_token_embeddings_only"] = True
+        initialization = value.special_token_initialization
+        adaptation = value.special_token_adaptation
+        serialized["special_tokens"] = {
+            "initialization": {
+                "method": initialization.method,
+                "key_seed_texts": list(initialization.key_seed_texts),
+                "value_seed_texts": list(initialization.value_seed_texts),
+            },
+            "adaptation": {
+                "mode": adaptation.mode,
+                "max_optimizer_steps": adaptation.max_optimizer_steps,
+                "embeddings_learning_rate": adaptation.embeddings_learning_rate,
+                "full_model_backbone_learning_rate": (
+                    adaptation.full_model_backbone_learning_rate
+                ),
+            },
         }
         return serialized
     if is_dataclass(value):

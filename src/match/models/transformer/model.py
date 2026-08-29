@@ -15,6 +15,7 @@ from .objective import weighted_classification_loss
 from .optimizer import (
     LearningRateMultipliers,
     build_transformer_optimizer,
+    finish_special_token_adaptation,
 )
 from .train_runtime import EpochPerformanceTracker, LengthAwareSampler
 
@@ -25,11 +26,16 @@ class WeightedSequenceTrainer(Trainer):
         *args: Any,
         class_weights: torch.Tensor,
         learning_rate_multipliers: LearningRateMultipliers | None = None,
+        main_learning_rate_multipliers: LearningRateMultipliers | None = None,
+        optimizer_backbone_learning_rate: float | None = None,
         train_pair_lengths: Sequence[int] | None = None,
         length_bucketing: bool = False,
         mega_batch_multiplier: int = 50,
         non_blocking_transfer: bool = False,
         performance_tracker: EpochPerformanceTracker | None = None,
+        special_token_adaptation_mode: str = "none",
+        special_token_adaptation_max_optimizer_steps: int = 0,
+        main_backbone_learning_rate: float | None = None,
         fast_dev_dataset: Any | None = None,
         fast_dev_compute_metrics: Any | None = None,
         fast_dev_every_n_optimizer_steps: int | None = None,
@@ -38,6 +44,10 @@ class WeightedSequenceTrainer(Trainer):
         self.learning_rate_multipliers = (
             learning_rate_multipliers or LearningRateMultipliers()
         )
+        self.main_learning_rate_multipliers = (
+            main_learning_rate_multipliers or self.learning_rate_multipliers
+        )
+        self.optimizer_backbone_learning_rate = optimizer_backbone_learning_rate
         self.train_pair_lengths = (
             None if train_pair_lengths is None else tuple(train_pair_lengths)
         )
@@ -45,6 +55,17 @@ class WeightedSequenceTrainer(Trainer):
         self.mega_batch_multiplier = int(mega_batch_multiplier)
         self.non_blocking_transfer = bool(non_blocking_transfer)
         self.performance_tracker = performance_tracker
+        self.special_token_adaptation_mode = special_token_adaptation_mode
+        self.special_token_adaptation_max_optimizer_steps = int(
+            special_token_adaptation_max_optimizer_steps
+        )
+        self.main_backbone_learning_rate = main_backbone_learning_rate
+        self._special_token_adaptation_finished = (
+            special_token_adaptation_mode == "none"
+        )
+        self._special_token_adaptation_started_at: float | None = None
+        self._special_token_adaptation_actual_optimizer_steps = 0
+        self._special_token_adaptation_seconds = 0.0
         if fast_dev_dataset is None:
             if fast_dev_compute_metrics is not None or fast_dev_every_n_optimizer_steps is not None:
                 raise ValueError(
@@ -110,7 +131,11 @@ class WeightedSequenceTrainer(Trainer):
         if self.optimizer is None:
             self.optimizer = build_transformer_optimizer(
                 self.model,
-                backbone_lr=float(self.args.learning_rate),
+                backbone_lr=(
+                    float(self.args.learning_rate)
+                    if self.optimizer_backbone_learning_rate is None
+                    else self.optimizer_backbone_learning_rate
+                ),
                 multipliers=self.learning_rate_multipliers,
                 weight_decay=float(self.args.weight_decay),
             )
@@ -165,6 +190,44 @@ class WeightedSequenceTrainer(Trainer):
         start_time: float,
         learning_rate: float | None = None,
     ) -> None:
+        if (
+            not self._special_token_adaptation_finished
+            and self.state.global_step
+            >= self.special_token_adaptation_max_optimizer_steps
+        ):
+            if self.main_backbone_learning_rate is None:
+                raise RuntimeError("main backbone learning rate is not configured")
+            last_n_layers = getattr(
+                self.model.config, "match_train_last_n_layers", None
+            )
+            if last_n_layers is None:
+                raise RuntimeError("main train_last_n_layers is not configured")
+            trainable_layers = finish_special_token_adaptation(
+                self.model,
+                self.optimizer,
+                self.lr_scheduler,
+                last_n_layers=int(last_n_layers),
+                main_backbone_lr=self.main_backbone_learning_rate,
+                main_multipliers=self.main_learning_rate_multipliers,
+                reset_learning_rates=(
+                    self.special_token_adaptation_mode == "full_model"
+                ),
+            )
+            self._special_token_adaptation_finished = True
+            self._special_token_adaptation_actual_optimizer_steps = int(
+                self.state.global_step
+            )
+            if self._special_token_adaptation_started_at is not None:
+                self._special_token_adaptation_seconds = max(
+                    perf_counter() - self._special_token_adaptation_started_at,
+                    0.0,
+                )
+            logger.info(
+                "Finished special-token adaptation at optimizer step {}; "
+                "continuing with encoder layers {} and classifier head",
+                self.state.global_step,
+                trainable_layers,
+            )
         super()._maybe_log_save_evaluate(
             tr_loss,
             grad_norm,
@@ -187,6 +250,27 @@ class WeightedSequenceTrainer(Trainer):
         self._run_fast_dev_evaluation()
         self._last_fast_dev_evaluation_step = self.state.global_step
 
+    def special_token_adaptation_runtime(self) -> dict[str, int | float]:
+        """Return observed duration and optimizer updates of the adaptation phase."""
+        if self.special_token_adaptation_mode == "none":
+            return {"actual_optimizer_steps": 0, "seconds": 0.0}
+        actual_steps = self._special_token_adaptation_actual_optimizer_steps
+        seconds = self._special_token_adaptation_seconds
+        if not self._special_token_adaptation_finished:
+            actual_steps = min(
+                int(self.state.global_step),
+                self.special_token_adaptation_max_optimizer_steps,
+            )
+            if self._special_token_adaptation_started_at is not None:
+                seconds = max(
+                    perf_counter() - self._special_token_adaptation_started_at,
+                    0.0,
+                )
+        return {
+            "actual_optimizer_steps": actual_steps,
+            "seconds": seconds,
+        }
+
     def compute_loss(
         self,
         model: PreTrainedModel,
@@ -195,6 +279,13 @@ class WeightedSequenceTrainer(Trainer):
         num_items_in_batch: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, Any]:
         del num_items_in_batch
+        if (
+            model.training
+            and self.special_token_adaptation_mode != "none"
+            and not self._special_token_adaptation_finished
+            and self._special_token_adaptation_started_at is None
+        ):
+            self._special_token_adaptation_started_at = perf_counter()
         performance_tracker = getattr(self, "performance_tracker", None)
         if model.training and performance_tracker is not None:
             performance_tracker.observe(inputs.get("attention_mask"))

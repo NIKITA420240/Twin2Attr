@@ -69,7 +69,7 @@ inference:
     # Keep PyTorch as the default until the exported ONNX graphs pass the
     # accuracy and end-to-end H100 benchmark gates.
     backend: pytorch
-    batch_size: 1
+    batch_size: 512
     dtype: bfloat16
     # Prepare and prefetch batches in parallel while the GPU runs the model.
     num_workers: 8
@@ -199,11 +199,44 @@ analysis_models:
 
 model_description:
   transformer:
-    # sequence_classifier keeps the existing BGE/RuBERT two-logit behavior.
-    # prompted_binary_reranker enables Nemotron prompting and one-logit scoring.
-    profile: prompted_binary_reranker
-    pretrained_model_path: models/llama-nemotron-rerank-1b-v2
-    artifact_dir: models/twin2attr/nemotron-native
+    pretrained_model_path: models/bge-reranker-v2-m3
+    artifact_dir: models/twin2attr/bge-reranker-v2-m3
+
+    # Main training phase after special-token adaptation.
+    train_last_n_layers: 3
+    learning_rate: 3.0e-5
+    head_learning_rate: 1.0e-4
+    layerwise_lr_decay: 0.9
+    weight_decay: 0.01
+
+    # Scheduler warm-up is independent of special-token adaptation.
+    warmup_ratio: 0.06
+    # Supported values: linear, cosine.
+    lr_scheduler_type: cosine
+
+    special_tokens:
+      initialization:
+        # none | mean_existing_tokens
+        method: mean_existing_tokens
+        key_seed_texts:
+          - key
+          - attribute
+          - ключ
+          - поле
+        value_seed_texts:
+          - value
+          - значение
+          - характеристика
+      adaptation:
+        # none | new_tokens_only | full_model
+        mode: new_tokens_only
+        # Number of optimizer updates, not microbatches.
+        max_optimizer_steps: 500
+        # Learning rate for the [KEY] and [VAL] embedding rows.
+        embeddings_learning_rate: 1.0e-4
+        # Used only by mode=full_model; null falls back to learning_rate.
+        full_model_backbone_learning_rate: null
+
     tokenizer:
       batch_fields:
         enabled: true
@@ -216,39 +249,20 @@ model_description:
         dynamic_batch: true
         dynamic_sequence_length: true
         export_classifier: true
-        export_encoder: false
+        export_encoder: true
     pair_encoding:
-      use_field_tokens: false
+      use_field_tokens: true
       # null disables the pre-tokenization character hard cap.
       max_attribute_value_chars: 256
       # null disables per-attribute value truncation.
       max_attribute_value_tokens: 16
       # null lets the training data determine the limit.
-      max_length: 128
+      max_length: 256
       quantile: 0.95
       sample_size: 10000
       hard_cap: 512
     max_epochs: 2
     hpo_trials: 1
-    # Used directly when hpo_trials=1; otherwise these are initial values.
-    # Base LR for Transformer encoder layers and the value tuned by HPO.
-    learning_rate: 3.0e-5
-    # Unused while input embeddings are frozen. Set a positive value only with
-    # train_new_token_embeddings_only=true.
-    embeddings_learning_rate: null
-    train_new_token_embeddings_only: false
-    # null: full fine-tune; N: freeze embeddings and all but the top N encoder
-    # layers. P0 starts with top-3 plus the classifier head.
-    train_last_n_layers: 3
-    # Seed the new [KEY]/[VAL] rows from meaningful existing BGE subwords before
-    # freezing them. These texts are tokenized; they are not vocabulary ids.
-    special_token_initialization:
-      enabled: false
-      key_seed_texts: [key, attribute, ключ, поле]
-      value_seed_texts: [value, значение, характеристика]
-    head_learning_rate: 1.0e-4
-    layerwise_lr_decay: 0.9
-    weight_decay: 0.01
     hpo_learning_rate_min: 0.000001
     hpo_learning_rate_max: 0.00005
     hpo_weight_decay_min: 0.0
@@ -257,9 +271,6 @@ model_description:
     # Eval has no backward pass; use a larger batch independently of train.
     eval_batch_size: 256
     gradient_accumulation_steps: 1
-    warmup_ratio: 0.06
-    # Supported values: linear, cosine.
-    lr_scheduler_type: cosine
     max_grad_norm: 1.0
     early_stopping_patience: 2
     auto_find_batch_size: true
@@ -295,8 +306,11 @@ model_description:
         enabled: false
         mode: reduce-overhead
     head:
-      # default keeps the Hugging Face CLS head; pooling builds the branches below.
-      type: native
+      # default: Hugging Face two-class classifier head (reinitialized when the
+      # checkpoint head shape differs); pooling: a new pooling classifier;
+      # hybrid: pretrained scalar reranker head plus a new attention branch.
+      # Use hybrid only for a checkpoint whose native head emits one score/pair.
+      type: hybrid
       # Supported values: cls, mean, max, attention. Their outputs are concatenated.
       poolings: [cls, attention]
       # Empty list gives a single linear classifier after pooling.

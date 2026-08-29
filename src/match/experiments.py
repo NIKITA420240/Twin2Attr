@@ -63,9 +63,30 @@ _PERFORMANCE_REGISTRY_COLUMNS = (
     "precision",
     "trainable_parameters",
 )
-EXPERIMENT_REGISTRY_COLUMNS = (
+_INTERMEDIATE_SPECIAL_TOKEN_REGISTRY_COLUMNS = (
+    "special_token_initialization",
+    "special_token_adaptation_mode",
+    "special_token_adaptation_steps",
+    "special_token_adaptation_embeddings_lr",
+    "special_token_adaptation_full_model_backbone_lr",
+)
+_SPECIAL_TOKEN_REGISTRY_COLUMNS = (
+    "warmup_ratio",
+    "special_token_initialization",
+    "special_token_adaptation_mode",
+    "special_token_adaptation_max_optimizer_steps",
+    "special_token_adaptation_actual_optimizer_steps",
+    "special_token_adaptation_embeddings_lr",
+    "special_token_adaptation_full_model_backbone_lr",
+    "special_token_adaptation_seconds",
+)
+_PRE_SPECIAL_TOKEN_REGISTRY_COLUMNS = (
     *_LEGACY_EXPERIMENT_REGISTRY_COLUMNS,
     *_PERFORMANCE_REGISTRY_COLUMNS,
+)
+EXPERIMENT_REGISTRY_COLUMNS = (
+    *_PRE_SPECIAL_TOKEN_REGISTRY_COLUMNS,
+    *_SPECIAL_TOKEN_REGISTRY_COLUMNS,
 )
 
 
@@ -173,7 +194,14 @@ def _migrate_registry_schema(registry_path: Path) -> None:
         rows = list(reader)
     if header == list(EXPERIMENT_REGISTRY_COLUMNS):
         return
-    if header != list(_LEGACY_EXPERIMENT_REGISTRY_COLUMNS):
+    if tuple(header) not in {
+        tuple(_LEGACY_EXPERIMENT_REGISTRY_COLUMNS),
+        tuple(_PRE_SPECIAL_TOKEN_REGISTRY_COLUMNS),
+        (
+            *_PRE_SPECIAL_TOKEN_REGISTRY_COLUMNS,
+            *_INTERMEDIATE_SPECIAL_TOKEN_REGISTRY_COLUMNS,
+        ),
+    }:
         raise ValueError(
             f"experiment registry has an unexpected schema: {registry_path}"
         )
@@ -192,12 +220,19 @@ def _migrate_registry_schema(registry_path: Path) -> None:
             writer = csv.DictWriter(output, fieldnames=EXPERIMENT_REGISTRY_COLUMNS)
             writer.writeheader()
             for legacy_row in rows:
-                writer.writerow(
-                    {
-                        **legacy_row,
-                        "registry_schema_version": 1,
-                    }
+                migrated_row = {
+                    key: value
+                    for key, value in legacy_row.items()
+                    if key in EXPERIMENT_REGISTRY_COLUMNS
+                }
+                if "special_token_adaptation_steps" in legacy_row:
+                    migrated_row[
+                        "special_token_adaptation_max_optimizer_steps"
+                    ] = legacy_row["special_token_adaptation_steps"]
+                migrated_row["registry_schema_version"] = legacy_row.get(
+                    "registry_schema_version", 1
                 )
+                writer.writerow(migrated_row)
         temporary_path.replace(registry_path)
     finally:
         if temporary_path is not None:
@@ -253,7 +288,7 @@ def _performance_summary(training_metadata: dict[str, Any]) -> dict[str, Any]:
         completed_epochs = len(history)
 
     return {
-        "registry_schema_version": 2,
+        "registry_schema_version": 3,
         "completed_epochs": completed_epochs,
         "performance_epochs_observed": len(history) if history else "",
         "train_batch_size": train_batch_size,
@@ -351,6 +386,7 @@ def save_experiment_record(
     macro_pr_auc = metrics.get(metric_name)
 
     transformer = config.model_description.transformer
+    special_token_adaptation = transformer.special_token_adaptation
     training_metadata = _training_metadata(config)
     resolved = training_metadata.get("resolved_config")
     resolved_config = resolved if isinstance(resolved, dict) else {}
@@ -364,6 +400,10 @@ def save_experiment_record(
         transformer.head_learning_rate or transformer.learning_rate,
     )
     performance_summary = _performance_summary(training_metadata)
+    raw_adaptation = training_metadata.get("special_token_adaptation")
+    adaptation_runtime = (
+        raw_adaptation if isinstance(raw_adaptation, dict) else {}
+    )
     s3_path = f"experiments/{name}"
     row: dict[str, Any] = {
         "experiment_name": name,
@@ -391,9 +431,35 @@ def save_experiment_record(
         "validation_pairs_hash": split_hash,
         "s3_path": s3_path,
         **performance_summary,
+        "warmup_ratio": transformer.warmup_ratio,
+        "special_token_initialization": (
+            transformer.special_token_initialization.method
+        ),
+        "special_token_adaptation_mode": (
+            special_token_adaptation.mode
+        ),
+        "special_token_adaptation_max_optimizer_steps": (
+            special_token_adaptation.max_optimizer_steps
+        ),
+        "special_token_adaptation_actual_optimizer_steps": (
+            adaptation_runtime.get("actual_optimizer_steps", "")
+        ),
+        "special_token_adaptation_embeddings_lr": (
+            ""
+            if special_token_adaptation.embeddings_learning_rate is None
+            else special_token_adaptation.embeddings_learning_rate
+        ),
+        "special_token_adaptation_full_model_backbone_lr": (
+            ""
+            if special_token_adaptation.full_model_backbone_learning_rate is None
+            else special_token_adaptation.full_model_backbone_learning_rate
+        ),
+        "special_token_adaptation_seconds": adaptation_runtime.get(
+            "seconds", ""
+        ),
     }
     record = {
-        "schema_version": 2,
+        "schema_version": 3,
         **row,
         "predictor": artifacts.predictor,
         "metrics": metrics,
