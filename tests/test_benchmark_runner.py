@@ -33,6 +33,7 @@ class ConfiguredBenchmarkRunnerTests(unittest.TestCase):
                 "inference_quality",
                 "transitivity_quality",
                 "typed_attribute_quality",
+                "typed_transformer_quality",
                 "codex_annotation_quality",
                 "hard_negative_quality",
                 "attribute_word_dropout_quality",
@@ -139,6 +140,33 @@ class ConfiguredBenchmarkRunnerTests(unittest.TestCase):
             self.assertEqual(actual, enabled_types)
             self.assertEqual(configured.training.model, "boosting")
             self.assertIsNone(configured.training.augmentation_model)
+
+    def test_typed_transformer_cases_preserve_current_nemotron_contract(self) -> None:
+        suite = load_benchmark_suite(
+            PROJECT_ROOT
+            / "configs"
+            / "benchmark_tests"
+            / "typed_transformer_quality.yaml",
+            allowed_test_types={"training_quality"},
+        )
+
+        native = apply_benchmark_test(self.config, suite.tests["native_baseline"])
+        typed = apply_benchmark_test(
+            self.config,
+            suite.tests["typed_attribute_fusion"],
+        )
+
+        self.assertEqual(native.model_description.transformer.head.type, "native")
+        self.assertFalse(native.pair_features.typed_attributes.enabled)
+        self.assertEqual(
+            typed.model_description.transformer.head.type,
+            "typed_attribute_fusion",
+        )
+        self.assertTrue(typed.pair_features.typed_attributes.enabled)
+        self.assertEqual(
+            typed.model_description.transformer.profile,
+            "prompted_binary_reranker",
+        )
 
 
 if __name__ == "__main__":

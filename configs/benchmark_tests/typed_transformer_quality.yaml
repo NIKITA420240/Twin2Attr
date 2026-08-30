@@ -1,0 +1,56 @@
+# Human-label paired comparison for the current Nemotron typed-fusion head.
+test_type: training_quality
+reference_test: native_baseline
+
+# One screening seed first; use [42, 43, 44] before accepting a quality gain.
+seeds:
+  - 42
+
+tests:
+  native_baseline:
+    name: nemotron_native_human_labels
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.augmentation_model
+        value: null
+      - path: training.data_model
+        value: base_dataset
+      - path: model_description.transformer.profile
+        value: prompted_binary_reranker
+      - path: model_description.transformer.pretrained_model_path
+        value: models/llama-nemotron-rerank-1b-v2
+      - path: model_description.transformer.pair_encoding.use_field_tokens
+        value: false
+      - path: model_description.transformer.pair_encoding.max_length
+        value: 128
+      - path: model_description.transformer.head.type
+        value: native
+      - path: model_description.transformer.export.onnx.enabled
+        value: false
+      - path: pair_features.typed_attributes.enabled
+        value: false
+
+  typed_attribute_fusion:
+    name: nemotron_typed_attribute_fusion_human_labels
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.augmentation_model
+        value: null
+      - path: training.data_model
+        value: base_dataset
+      - path: model_description.transformer.profile
+        value: prompted_binary_reranker
+      - path: model_description.transformer.pretrained_model_path
+        value: models/llama-nemotron-rerank-1b-v2
+      - path: model_description.transformer.pair_encoding.use_field_tokens
+        value: false
+      - path: model_description.transformer.pair_encoding.max_length
+        value: 128
+      - path: model_description.transformer.head.type
+        value: typed_attribute_fusion
+      - path: model_description.transformer.export.onnx.enabled
+        value: false
+      - path: pair_features.typed_attributes.enabled
+        value: true

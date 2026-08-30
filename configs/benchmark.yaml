@@ -41,6 +41,14 @@ benchmark:
       tests_path: configs/benchmark_tests/typed_attribute_quality.yaml
       selected_tests: null
 
+    # Paired Human-label fit for the current Nemotron native baseline versus
+    # the same backbone with deterministic typed-attribute residual fusion.
+    typed_transformer_quality:
+      type: training_quality
+      enabled: false
+      tests_path: configs/benchmark_tests/typed_transformer_quality.yaml
+      selected_tests: null
+
     # Retrains two paired Transformers with the same 750,000-row
     # pseudo-labeled-data budget.
     codex_annotation_quality:
