@@ -320,7 +320,7 @@ uv run python run.py benchmark \
 
 Полезность Codex-разметки проверяет `codex_annotation_quality`. Он сравнивает
 `human + 750000 LLM` с таким же бюджетом псевдоразметки:
-`human + 724772 LLM + 25228 Codex`. В обоих случаях validation строится только
+`human + 720622 LLM + 29378 Codex`. В обоих случаях validation строится только
 из human-разметки и проверяется по хэшу. `results.parquet` дополнительно содержит
 `total_train_rows`,
 `human_train_rows`, `llm_train_rows` и `codex_reviewed_train_rows`.
@@ -607,7 +607,7 @@ confidence_weighting:
 использует weighted BCE/soft cross-entropy; остальные модели продолжают
 обучаться по hard `target`.
 
-`mix_dataset_codex` дополнительно добавляет все 25 228 бинарно переразмеченных
+`mix_dataset_codex` дополнительно добавляет все 29 378 бинарно переразмеченных
 пар из `data/matches_llm_ambiguous_reviewed.parquet`. Для них используется новая
 колонка `target`; `original_target`, `confidence` и `reason` остаются
 диагностическими и не подаются модели:

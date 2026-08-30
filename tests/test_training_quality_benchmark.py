@@ -361,7 +361,7 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
         )
         self.assertEqual(baseline.training.data_model, "mix_dataset")
         self.assertEqual(fixed.training.data_model, "mix_dataset_codex")
-        self.assertEqual(fixed_llm.max_rows, 724_772)
+        self.assertEqual(fixed_llm.max_rows, 720_622)
         self.assertEqual(suite.seeds, (42,))
 
     def test_suite_changes_the_intended_weighting_switch(self) -> None:
