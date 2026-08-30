@@ -29,6 +29,7 @@ class WeightedSequenceTrainer(Trainer):
         length_bucketing: bool = False,
         mega_batch_multiplier: int = 50,
         non_blocking_transfer: bool = False,
+        optimizer_fused: bool = False,
         performance_tracker: EpochPerformanceTracker | None = None,
         fast_dev_dataset: Any | None = None,
         fast_dev_compute_metrics: Any | None = None,
@@ -44,6 +45,7 @@ class WeightedSequenceTrainer(Trainer):
         self.length_bucketing = bool(length_bucketing)
         self.mega_batch_multiplier = int(mega_batch_multiplier)
         self.non_blocking_transfer = bool(non_blocking_transfer)
+        self.optimizer_fused = bool(optimizer_fused)
         self.performance_tracker = performance_tracker
         if fast_dev_dataset is None:
             if fast_dev_compute_metrics is not None or fast_dev_every_n_optimizer_steps is not None:
@@ -113,6 +115,7 @@ class WeightedSequenceTrainer(Trainer):
                 backbone_lr=float(self.args.learning_rate),
                 multipliers=self.learning_rate_multipliers,
                 weight_decay=float(self.args.weight_decay),
+                fused=self.optimizer_fused,
             )
         return self.optimizer
 

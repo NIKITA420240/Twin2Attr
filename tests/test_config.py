@@ -115,6 +115,7 @@ class AppConfigTests(unittest.TestCase):
             self.config.inference.transformer.torch_compile.dynamic
         )
         training_runtime = self.config.model_description.transformer.training_runtime
+        self.assertFalse(training_runtime.optimizer.fused)
         self.assertTrue(training_runtime.length_bucketing.enabled)
         self.assertEqual(
             training_runtime.length_bucketing.mega_batch_multiplier,
@@ -594,6 +595,19 @@ class AppConfigTests(unittest.TestCase):
                     "token_cache.build_chunk_size=0"
                 ],
             )
+
+    def test_enables_fused_training_optimizer_by_override(self) -> None:
+        configured = load_app_config_file(
+            PROJECT_ROOT / "configs" / "pipeline.yaml",
+            [
+                "model_description.transformer.training_runtime."
+                "optimizer.fused=true"
+            ],
+        )
+
+        self.assertTrue(
+            configured.model_description.transformer.training_runtime.optimizer.fused
+        )
 
     def test_rejects_incomplete_feature_execution_order(self) -> None:
         with self.assertRaisesRegex(ValueError, "every feature exactly once"):

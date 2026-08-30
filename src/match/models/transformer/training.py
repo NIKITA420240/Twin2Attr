@@ -440,6 +440,7 @@ def train_sequence_classifier(
             length_bucketing=config.train_length_bucketing,
             mega_batch_multiplier=config.train_mega_batch_multiplier,
             non_blocking_transfer=config.non_blocking_transfer,
+            optimizer_fused=config.optimizer_fused,
         )
         best_run = hpo_trainer.hyperparameter_search(
             backend="optuna",
@@ -485,6 +486,7 @@ def train_sequence_classifier(
         length_bucketing=config.train_length_bucketing,
         mega_batch_multiplier=config.train_mega_batch_multiplier,
         non_blocking_transfer=config.non_blocking_transfer,
+        optimizer_fused=config.optimizer_fused,
         performance_tracker=performance_tracker,
         fast_dev_dataset=fast_dev_dataset,
         fast_dev_compute_metrics=fast_dev_metric,
@@ -495,7 +497,12 @@ def train_sequence_classifier(
         ),
     )
     trainer.train()
-    metrics = trainer.evaluate()
+    if trainer.state.best_metric is None:
+        raise RuntimeError(
+            "training completed without a best validation metric despite "
+            "epoch evaluation"
+        )
+    validation_macro_pr_auc = float(trainer.state.best_metric)
     output_contract = TransformerArtifactContract.for_training(
         profile=config.profile,
         head_type=config.head_type,
@@ -589,6 +596,7 @@ def train_sequence_classifier(
         token_cache_enabled=config.token_cache_enabled,
         token_cache_directory=str(config.token_cache_directory),
         token_cache_build_chunk_size=config.token_cache_build_chunk_size,
+        optimizer_fused=config.optimizer_fused,
         torch_compile=config.torch_compile,
         torch_compile_mode=config.torch_compile_mode,
     )
@@ -609,7 +617,7 @@ def train_sequence_classifier(
         "probability_transform": (
             "sigmoid" if int(trainer.model.config.num_labels) == 1 else "softmax"
         ),
-        "validation_macro_pr_auc": float(metrics["eval_macro_pr_auc"]),
+        "validation_macro_pr_auc": validation_macro_pr_auc,
         "best_hyperparameters": best_hyperparameters,
         "resolved_config": asdict(resolved_config),
         "performance_history": performance_tracker.history,
@@ -621,7 +629,7 @@ def train_sequence_classifier(
     logger.info("Model and metadata saved to {!s}", output_path)
     return TrainingResult(
         model_dir=output_path,
-        validation_macro_pr_auc=float(metrics["eval_macro_pr_auc"]),
+        validation_macro_pr_auc=validation_macro_pr_auc,
         best_hyperparameters=best_hyperparameters,
         resolved_config=resolved_config,
     )
@@ -688,6 +696,7 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
         token_cache_directory=runtime.token_cache.directory,
         token_cache_build_chunk_size=runtime.token_cache.build_chunk_size,
         attention_implementation=runtime.attention.implementation,
+        optimizer_fused=runtime.optimizer.fused,
         torch_compile=runtime.torch_compile.enabled,
         torch_compile_mode=runtime.torch_compile.mode,
         seed=config.runtime.seed,

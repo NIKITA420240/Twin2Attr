@@ -18,12 +18,13 @@
 | Sharded token cache | Реализовано | Исключение повторной токенизации неизменившихся источников данных |
 | SDPA | Реализовано | Оптимизированное вычисление attention |
 | Performance logging | Реализовано | Измерение examples/s, tokens/s, padding efficiency и peak VRAM |
+| Fused AdamW | Реализовано, выключено по умолчанию | Уменьшение overhead optimizer step на CUDA |
+| Отказ от повторного final eval | Реализовано | Использование метрики уже выбранного лучшего checkpoint |
 
 ## Что ещё можно сделать
 
 | Приоритет | Оптимизация | Что ускоряет | Потенциальный эффект | Память | Риск для качества | Сложность | Когда имеет смысл |
 |---|---|---|---:|---|---|---|---|
-| P0 | Fused AdamW | Optimizer step | 2–8% train throughput | Небольшое снижение overhead | Нет | Низкая | Следующая безопасная оптимизация |
 | P0 | Накопительный batch-profile cache | Старт повторных запусков и autotuner | Убирает повторный полный поиск; косвенно 5–20% через лучший batch | Без изменений | Нет | Средняя | Среда обучения и проверки совпадает |
 | P0 | Throughput-based batch tuner | Загрузку GPU | 5–20% | Автоматически выбирает безопасный предел | Нет при сохранении effective batch | Средняя | После появления стабильного benchmark |
 | P0 | Batch size по length bucket для eval/inference | Offline validation и проверку | 10–40% eval/inference | Эффективнее использует VRAM | Нет | Средняя | Длины входов сильно различаются |
@@ -31,7 +32,6 @@
 | P1 | Автоподбор padding buckets | Attention и compiled shapes | 3–15% | Меньше padding | Нет | Средняя | `padding_efficiency` ниже 90–95% |
 | P1 | Кэшируемые варианты аугментации | CPU preprocessing и tokenization | 5–25% при CPU bottleneck | Требует больше диска | Низкий; проверить разнообразие | Средняя | Используется динамический `attribute_word_dropout` |
 | P1 | Token-level augmentation | CPU preprocessing и tokenization | 10–30% при CPU bottleneck | Почти без изменений | Средний: нельзя повреждать prompt | Высокая | Материализованные варианты слишком велики |
-| P1 | Удаление лишнего финального full eval | Конец train run | До стоимости одного validation pass | Без изменений | Нет | Низкая | Повторная оценка лучшей модели не нужна |
 | P1 | BF16 full evaluation | Validation | 5–20% validation | Ниже | Обычно отсутствует | Низкая | GPU поддерживает BF16 |
 | P1 | Потоковый расчёт validation metrics | Validation и перенос logits | 2–10% wall time | Ниже | Нет | Средняя | Validation-набор большой |
 | P1 | Асинхронное сохранение checkpoint | Паузы на запись модели | 1–10% wall time | Нужна CPU RAM для snapshot | Нет | Средняя | Сохранение 1B checkpoint останавливает GPU |
@@ -51,7 +51,7 @@
 
 ## Рекомендуемый порядок
 
-1. Реализовать Fused AdamW с выключателем и fallback.
+1. Выполнить GPU A/B обычного и Fused AdamW.
 2. Реализовать performance-profile cache.
 3. Добавить throughput-based batch tuner, использующий сохранённую статистику.
 4. Подбирать отдельный безопасный batch для каждого length bucket при
@@ -97,4 +97,3 @@
 5. Выполняется не менее трёх measured runs.
 6. Сравниваются `real_tokens/s`, время эпохи и peak VRAM.
 7. Проверяется PR-AUC либо эквивалентность predictions.
-
