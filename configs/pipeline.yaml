@@ -345,7 +345,7 @@ data_model_description:
       llm:
         matches: data/matches_llm.parquet
         weight: 1.0
-        max_rows: 619285
+        max_rows: null
         sampling_strategy: category_target_balanced
         confidence_weighting:
           enabled: false

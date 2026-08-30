@@ -625,15 +625,16 @@ uv run python run.py train \
 Активный `mix_dataset_all_annotations` объединяет Human, Codex review,
 neural review и уверенную LLM-разметку. Приоритет пересечений равен
 `[human, codex_reviewed, neural_review, llm]`; Codex-примеры имеют вес `1.5`,
-Human — `3.0`, остальные — `1.0`. Чтобы сохранить прежний бюджет в 750 000
-псевдометок, используются 30 378 Codex, 100 337 neural-review и не более
-619 285 LLM-строк. Validation по-прежнему строится только из Human.
+Human — `3.0`, остальные — `1.0`. Для финального обучения лимит LLM-источника
+отключён: используются все уверенные LLM-строки после разрешения пересечений.
+Validation по-прежнему строится только из Human. Benchmark `all_annotations_quality`
+сохраняет лимит 619 285 LLM-строк для фиксированного бюджета в 750 000 псевдометок.
 
-Настройки источников, пороги голосов и ограничение размера LLM-выборки находятся
-в `data_model_description.mix_dataset.sources`.
+Настройки источников и пороги голосов находятся в
+`data_model_description.mix_dataset_all_annotations.sources`.
 
 Пересечения источников разрешаются блоком
-`data_model_description.mix_dataset.overlap_resolution`. Пара `(id1, id2)`
+`data_model_description.mix_dataset_all_annotations.overlap_resolution`. Пара `(id1, id2)`
 считается неупорядоченной, поэтому `(A, B)` и `(B, A)` — одно пересечение.
 Если пара присутствует в нескольких источниках, остаются все её строки только
 из первого источника в `source_priority`; это правило действует и при

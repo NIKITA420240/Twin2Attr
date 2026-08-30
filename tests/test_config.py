@@ -413,12 +413,8 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(sources["neural_review"].target_column, "llm_score")
         self.assertEqual(sources["neural_review"].splitter.target_mode, "soft")
-        self.assertEqual(sources["llm"].max_rows, 619_285)
+        self.assertIsNone(sources["llm"].max_rows)
         self.assertEqual(sources["llm"].splitter.target_mode, "soft")
-        self.assertEqual(
-            30_378 + 100_337 + sources["llm"].max_rows,
-            750_000,
-        )
 
     def test_rejects_fractional_vote_threshold(self) -> None:
         with self.assertRaisesRegex(ValueError, "whole vote counts"):
