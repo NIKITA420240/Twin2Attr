@@ -25,7 +25,7 @@ benchmark. Оценки ускорения являются ориентиров
 | Sharded token cache | Включено | До устранения почти всей повторной токенизации | Нет |
 | SDPA attention | Включено | 5–20% | Только численная погрешность |
 | Fused AdamW | Включено на CUDA с fallback | 2–8% | Нет |
-| Кэш профиля batch size | Запланировано | Убирает повторный autotuning | Нет |
+| Кэш профиля batch size | Включён для inference benchmark | Убирает повторный полный поиск | Нет |
 | Throughput-based batch tuner | Запланировано | 5–20% | Нет при сохранении effective batch |
 | Batch size по length bucket для eval/inference | Запланировано | 10–40% eval/inference | Нет |
 | Удаление дублирующего final validation | Включено | До стоимости одного validation pass | Нет |
@@ -250,6 +250,41 @@ training_runtime:
 training завершается явной ошибкой вместо сохранения непроверенной
 модели.
 
+### 11. Накопительный профиль batch size
+
+Inference benchmark сохраняет результаты batch-кандидатов в
+`.cache/batch_profiles/inference/<fingerprint>.json`. Одновременно snapshot
+профиля записывается в каталог конкретного benchmark run.
+
+```yaml
+analysis_models:
+  backend_benchmark:
+    batch_profiles:
+      enabled: true
+      directory: .cache/batch_profiles
+      safe_batch_fraction: 0.875
+      batch_size_multiple: 8
+```
+
+Fingerprint включает GPU и VRAM, версии PyTorch/CUDA/Transformers, content hash
+checkpoint, mode, precision, SDPA/eager, `torch.compile`, `max_length`, padding
+buckets и квантили фактических token lengths.
+
+Для каждого batch сохраняются `tokens_per_second`, `pairs_per_second`, peak
+VRAM, p95 времени batch и статус `completed`, `oom` или `failed`. Повторный
+benchmark объединяет новые данные с существующим профилем по batch size.
+
+`best_batch_size` выбирается по максимальному `tokens_per_second`, а
+`safe_batch_size` уменьшается на заданный запас и округляется до
+`batch_size_multiple`. При настройках по умолчанию лучший batch 256 даёт
+безопасный batch 224. Функция `recommended_starting_batch_size` возвращает его
+только при точном совпадении fingerprint; профиль от другого GPU, checkpoint,
+precision или attention backend не применяется.
+
+Текущий speed-suite собирает точки SDPA для batch 128, 256, 384 и 512. Реальный
+GPU benchmark ещё нужно выполнить на целевой системе. Сбор аналогичного
+профиля непосредственно из train loop остаётся следующим этапом.
+
 ## Очередь следующих оптимизаций
 
 ### P0. Throughput-based batch tuner
@@ -258,11 +293,10 @@ training завершается явной ошибкой вместо сохр�
 throughput. Планируется короткий прогрев нескольких размеров, например
 `64, 128, 192, 256, 320`, с выбором максимального `real_tokens_per_second`.
 
-Результат нужно кэшировать по fingerprint окружения, модели и runtime:
-GPU/VRAM, PyTorch/CUDA/Transformers, checkpoint, число обучаемых слоёв,
-precision, SDPA, compile, optimizer, `max_length`, buckets, micro/effective batch.
-Хранить следует `best_batch_size` и `safe_batch_size` с 10–15% запасом
-VRAM. При точном совпадении fingerprint поиск можно пропустить.
+Persistent profile и выбор `best/safe batch` уже реализованы для inference
+benchmark. Следующий шаг — использовать тот же формат внутри короткого train
+autotuner с временной моделью и optimizer, чтобы warmup не изменял реальные
+веса.
 
 Для validation и inference можно профилировать отдельный batch size для
 каждого length bucket: короткие последовательности позволяют безопасно
@@ -312,7 +346,7 @@ FP8 имеет смысл только на поддерживаемом GPU п�
 
 1. Замерить breakdown wall time: train, validation, tokenization, checkpoint I/O.
 2. Выполнить GPU A/B обычного и Fused AdamW.
-3. Добавить кэш профиля и throughput-based batch tuner.
+3. Подключить существующий кэш профиля к train batch autotuner.
 4. Подобрать отдельный batch по length bucket для validation/inference.
 5. Ускорить validation через BF16, больший eval batch и streaming metrics.
 6. Автоматически подобрать padding buckets по квантилям token lengths.
@@ -344,3 +378,4 @@ FP8 имеет смысл только на поддерживаемом GPU п�
 | 2026-08-30 | Speed benchmark пересобран как eager vs SDPA | Configuration tests |
 | 2026-08-30 | Fused AdamW с CUDA/PyTorch fallback | Unit tests; GPU A/B ожидается |
 | 2026-08-30 | Удалён повторный full validation после train | Integration tests |
+| 2026-08-30 | Накопительный inference batch-profile cache с best/safe batch | Unit и benchmark integration tests |

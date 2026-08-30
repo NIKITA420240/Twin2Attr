@@ -412,6 +412,12 @@ analysis_models:
     reference_test: test_1
     compare_predictions: true
     output_dir: analysis/backend_benchmark
+    batch_profiles:
+      enabled: true
+      directory: .cache/batch_profiles
+      # 256 * 0.875 = 224, leaving headroom for evaluator allocations.
+      safe_batch_fraction: 0.875
+      batch_size_multiple: 8
 
   attribute_importance:
     model: transformer

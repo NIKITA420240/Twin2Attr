@@ -64,6 +64,27 @@ class BackendBenchmarkTests(unittest.TestCase):
         self.assertEqual(changed.inference.transformer.batch_size, 2048)
         self.assertEqual(self.config.inference.transformer.batch_size, 512)
 
+    def test_loads_batch_profile_cache_settings(self) -> None:
+        settings = self.config.analysis_models.backend_benchmark.batch_profiles
+
+        self.assertTrue(settings.enabled)
+        self.assertEqual(
+            settings.directory,
+            PROJECT_ROOT / ".cache" / "batch_profiles",
+        )
+        self.assertEqual(settings.safe_batch_fraction, 0.875)
+        self.assertEqual(settings.batch_size_multiple, 8)
+
+    def test_rejects_invalid_safe_batch_fraction(self) -> None:
+        with self.assertRaisesRegex(ValueError, "safe_batch_fraction"):
+            load_benchmark_config_file(
+                PROJECT_ROOT / "configs" / "benchmark.yaml",
+                (
+                    "analysis_models.backend_benchmark.batch_profiles."
+                    "safe_batch_fraction=0",
+                ),
+            )
+
     def test_rejects_unknown_override_path(self) -> None:
         test = BenchmarkTest(
             key="invalid",
@@ -94,6 +115,10 @@ class BackendBenchmarkTests(unittest.TestCase):
                 warmup_batches=1,
                 measured_runs=2,
                 output_dir=root / "output",
+                batch_profiles=replace(
+                    self.config.analysis_models.backend_benchmark.batch_profiles,
+                    directory=root / "profiles",
+                ),
             )
             config = replace(
                 self.config,
@@ -154,6 +179,12 @@ class BackendBenchmarkTests(unittest.TestCase):
 
             rows = pl.read_parquet(result.output_path).sort("test")
             report = json.loads(result.report_path.read_text(encoding="utf-8"))
+            profile_summaries = report["batch_profiles"]
+            cached_profile = json.loads(
+                Path(profile_summaries[0]["cache_path"]).read_text(
+                    encoding="utf-8"
+                )
+            )
 
         self.assertEqual(result.completed_tests, 1)
         self.assertEqual(result.failed_tests, 1)
@@ -186,6 +217,9 @@ class BackendBenchmarkTests(unittest.TestCase):
         self.assertTrue(rows.get_column("pr_auc").is_not_null().all())
         self.assertEqual(report["test_type"], "speed")
         self.assertEqual(report["reference_test"], "test_1")
+        self.assertEqual(len(profile_summaries), 1)
+        self.assertEqual(cached_profile["workload"]["mode"], "inference")
+        self.assertEqual(cached_profile["measurements"][0]["batch_size"], 512)
 
 
 if __name__ == "__main__":

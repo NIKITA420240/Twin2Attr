@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import gc
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean, pstdev
@@ -30,6 +31,16 @@ from ..benchmarks.suite import (
     apply_benchmark_test,
     load_benchmark_suite,
     select_benchmark_tests,
+)
+from ..batch_profiles import (
+    BatchMeasurement,
+    PerformanceWorkload,
+    current_environment,
+    model_content_hash,
+    profile_fingerprint,
+    save_profile,
+    update_profile,
+    utc_now,
 )
 from ..config import (
     AppConfig,
@@ -175,6 +186,60 @@ def _gpu_memory_used_gb() -> float | None:
         return None
 
 
+def _gpu_peak_memory_gib() -> float | None:
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return None
+        return float(torch.cuda.max_memory_allocated()) / 1024**3
+    except (ImportError, RuntimeError):
+        return None
+
+
+def _token_statistics(
+    predictor: Any,
+    batch: PredictionBatch,
+    *,
+    max_length: int | None,
+) -> tuple[int, dict[str, int]] | None:
+    """Count real tokenizer tokens once, outside measured inference time."""
+    tokenizer = getattr(predictor, "tokenizer", None)
+    batching = getattr(predictor, "_batching", None)
+    resolved_length = getattr(predictor, "_resolved_max_length", None)
+    if tokenizer is None or batching is None or not callable(resolved_length):
+        return None
+    try:
+        pairs = batch.prepared_pairs()
+        collator = batching.collator(
+            tokenizer,
+            max_length=resolved_length(pairs, max_length),
+        )
+        lengths: list[int] = []
+        for offset in range(0, len(pairs), 4_096):
+            encoded = collator(pairs[offset : offset + 4_096])
+            attention_mask = encoded["attention_mask"]
+            lengths.extend(
+                int(value)
+                for value in attention_mask.sum(dim=1).detach().cpu().tolist()
+            )
+        if not lengths:
+            return 0, {"p50": 0, "p90": 0, "p95": 0, "p99": 0}
+        values = np.asarray(lengths, dtype=np.int64)
+        return int(values.sum()), {
+            name: int(np.percentile(values, percentile, method="higher"))
+            for name, percentile in (
+                ("p50", 50),
+                ("p90", 90),
+                ("p95", 95),
+                ("p99", 99),
+            )
+        }
+    except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+        logger.warning("Could not collect exact token statistics for benchmark")
+        return None
+
+
 def _quality_metrics(
     labels: np.ndarray,
     probabilities: np.ndarray,
@@ -235,6 +300,10 @@ def _run_test(
     measured_runs: int,
     output_dir: Path,
     test_type: str,
+    token_statistics_cache: dict[
+        tuple[int | None, int | None, int | None],
+        tuple[int, dict[str, int]] | None,
+    ],
 ) -> tuple[dict[str, Any], np.ndarray | None]:
     config = apply_benchmark_test(base_config, test)
     test_dir = output_dir / test.key
@@ -257,7 +326,17 @@ def _run_test(
         ),
         "batch_size": transformer.batch_size,
         "dtype": transformer.dtype,
+        "attention": transformer.attention.implementation,
+        "torch_compile": transformer.torch_compile.enabled,
         "max_length": transformer.max_length,
+        "padding_buckets": (
+            None
+            if (
+                not transformer.length_bucketing.enabled
+                or transformer.length_bucketing.padding_length_buckets is None
+            )
+            else list(transformer.length_bucketing.padding_length_buckets)
+        ),
         "max_attribute_value_chars": transformer.max_attribute_value_chars,
         "max_attribute_value_tokens": transformer.max_attribute_value_tokens,
         "sample_rows": batch.matches.height,
@@ -268,7 +347,12 @@ def _run_test(
         "min_inference_seconds": None,
         "std_inference_seconds": None,
         "pairs_per_second": None,
+        "tokens_per_second": None,
+        "real_tokens": None,
+        "length_quantiles": None,
         "gpu_memory_used_gb": None,
+        "peak_vram_gib": None,
+        "p95_step_ms": None,
         "mean_probability_difference": None,
         "max_probability_difference": None,
         "class_disagreement_rate": None,
@@ -296,6 +380,21 @@ def _run_test(
         _cuda_synchronize()
         row["prepare_seconds"] = perf_counter() - started
 
+        token_key = (
+            transformer.max_length,
+            transformer.max_attribute_value_chars,
+            transformer.max_attribute_value_tokens,
+        )
+        if token_key not in token_statistics_cache:
+            token_statistics_cache[token_key] = _token_statistics(
+                predictor,
+                batch,
+                max_length=transformer.max_length,
+            )
+        token_statistics = token_statistics_cache[token_key]
+        if token_statistics is not None:
+            row["real_tokens"], row["length_quantiles"] = token_statistics
+
         warmup_started = perf_counter()
         if warmup_batches:
             warmup_rows = min(
@@ -319,6 +418,13 @@ def _run_test(
         if not np.isfinite(predictions).all():
             raise RuntimeError("benchmark predictions contain NaN or infinity")
         average = mean(durations)
+        batch_count = max(
+            1,
+            math.ceil(batch.matches.height / transformer.batch_size),
+        )
+        per_step_milliseconds = [
+            duration * 1_000.0 / batch_count for duration in durations
+        ]
         row.update(
             {
                 "status": "completed",
@@ -326,16 +432,141 @@ def _run_test(
                 "min_inference_seconds": min(durations),
                 "std_inference_seconds": pstdev(durations),
                 "pairs_per_second": batch.matches.height / average,
+                "tokens_per_second": (
+                    None
+                    if row["real_tokens"] is None
+                    else float(row["real_tokens"]) / average
+                ),
                 "gpu_memory_used_gb": _gpu_memory_used_gb(),
+                "peak_vram_gib": _gpu_peak_memory_gib(),
+                "p95_step_ms": float(
+                    np.percentile(
+                        np.asarray(per_step_milliseconds),
+                        95,
+                        method="higher",
+                    )
+                ),
             }
         )
     except Exception as error:  # Keep independent benchmark cases running.
-        row["error"] = f"{type(error).__name__}: {error}"
+        error_text = f"{type(error).__name__}: {error}"
+        if "out of memory" in error_text.lower() or type(error).__name__ in {
+            "OutOfMemoryError",
+            "CUDAOutOfMemoryError",
+        }:
+            row["status"] = "oom"
+        row["error"] = error_text
         logger.exception("Backend benchmark test {} failed", test.key)
     finally:
         del predictor
         _release_backend()
     return row, predictions
+
+
+def _model_directory(base_solution: dict[str, Any], solution_root: Path) -> Path:
+    value = Path(str(base_solution["model_directory"]))
+    return value if value.is_absolute() else solution_root / value
+
+
+def _persist_batch_profiles(
+    settings: Any,
+    base_solution: dict[str, Any],
+    solution_root: Path,
+    rows: list[dict[str, Any]],
+    output_dir: Path,
+) -> list[dict[str, Any]]:
+    options = settings.batch_profiles
+    if not options.enabled:
+        return []
+    environment = current_environment()
+    model_hash = model_content_hash(
+        _model_directory(base_solution, solution_root)
+    )
+    grouped: dict[str, tuple[PerformanceWorkload, list[BatchMeasurement]]] = {}
+    for row in rows:
+        if row["backend"] != "pytorch":
+            continue
+        workload = PerformanceWorkload(
+            model_hash=model_hash,
+            mode="inference",
+            dtype=str(row["dtype"]),
+            attention=str(row["attention"]),
+            torch_compile=bool(row["torch_compile"]),
+            max_length=(
+                None if row["max_length"] is None else int(row["max_length"])
+            ),
+            padding_buckets=tuple(int(value) for value in (row["padding_buckets"] or ())),
+            length_quantiles=(
+                None
+                if row["length_quantiles"] is None
+                else {
+                    str(key): int(value)
+                    for key, value in row["length_quantiles"].items()
+                }
+            ),
+        )
+        fingerprint = profile_fingerprint(environment, workload)
+        status = str(row["status"])
+        if status not in {"completed", "oom"}:
+            status = "failed"
+        measurement = BatchMeasurement(
+            batch_size=int(row["batch_size"]),
+            status=status,
+            tokens_per_second=(
+                None
+                if row["tokens_per_second"] is None
+                else float(row["tokens_per_second"])
+            ),
+            pairs_per_second=(
+                None
+                if row["pairs_per_second"] is None
+                else float(row["pairs_per_second"])
+            ),
+            peak_vram_gib=(
+                None
+                if row["peak_vram_gib"] is None
+                else float(row["peak_vram_gib"])
+            ),
+            p95_step_ms=(
+                None
+                if row["p95_step_ms"] is None
+                else float(row["p95_step_ms"])
+            ),
+            measured_at=utc_now(),
+        )
+        if fingerprint not in grouped:
+            grouped[fingerprint] = (workload, [])
+        grouped[fingerprint][1].append(measurement)
+
+    summaries: list[dict[str, Any]] = []
+    snapshot_directory = output_dir / "batch_profiles"
+    for workload, measurements in grouped.values():
+        profile = update_profile(
+            options.directory,
+            environment,
+            workload,
+            tuple(measurements),
+            safe_batch_fraction=options.safe_batch_fraction,
+            batch_size_multiple=options.batch_size_multiple,
+        )
+        snapshot_path = save_profile(snapshot_directory, profile)
+        summaries.append(
+            {
+                "fingerprint": profile.fingerprint,
+                "attention": workload.attention,
+                "dtype": workload.dtype,
+                "torch_compile": workload.torch_compile,
+                "best_batch_size": profile.best_batch_size,
+                "safe_batch_size": profile.safe_batch_size,
+                "cache_path": str(
+                    options.directory
+                    / workload.mode
+                    / f"{profile.fingerprint}.json"
+                ),
+                "snapshot_path": str(snapshot_path),
+            }
+        )
+    return summaries
 
 
 def run_backend_benchmark(config: AppConfig) -> BackendBenchmarkResult:
@@ -383,6 +614,10 @@ def run_backend_benchmark(config: AppConfig) -> BackendBenchmarkResult:
 
     rows: list[dict[str, Any]] = []
     predictions: dict[str, np.ndarray] = {}
+    token_statistics_cache: dict[
+        tuple[int | None, int | None, int | None],
+        tuple[int, dict[str, int]] | None,
+    ] = {}
     for test in tests:
         logger.info("Running backend benchmark test: {} ({})", test.key, test.name)
         row, values = _run_test(
@@ -395,6 +630,7 @@ def run_backend_benchmark(config: AppConfig) -> BackendBenchmarkResult:
             measured_runs=settings.measured_runs,
             output_dir=output_dir,
             test_type=test_type,
+            token_statistics_cache=token_statistics_cache,
         )
         rows.append(row)
         if values is not None:
@@ -473,6 +709,14 @@ def run_backend_benchmark(config: AppConfig) -> BackendBenchmarkResult:
                 if value is not None and reference_value is not None:
                     row[f"delta_{metric}"] = float(value - reference_value)
 
+    batch_profiles = _persist_batch_profiles(
+        settings,
+        base_solution,
+        solution_root,
+        rows,
+        output_dir,
+    )
+
     output_path = output_dir / "results.parquet"
     report_path = output_dir / "report.json"
     pl.DataFrame(rows, infer_schema_length=None).write_parquet(output_path)
@@ -484,6 +728,7 @@ def run_backend_benchmark(config: AppConfig) -> BackendBenchmarkResult:
         "compare_predictions": settings.compare_predictions,
         "completed_tests": completed,
         "failed_tests": len(rows) - completed,
+        "batch_profiles": batch_profiles,
         "tests": rows,
     }
     report_path.write_text(

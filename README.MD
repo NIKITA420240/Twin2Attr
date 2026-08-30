@@ -247,6 +247,13 @@ reference-предсказаниям: максимальная
 измениться. Quality-suite считает `PR-AUC`, `ROC-AUC`, accuracy, precision,
 recall и F1 вместе с дельтами относительно своего reference-теста.
 
+Speed benchmark также накапливает hardware/workload-профили в
+`.cache/batch_profiles`. Для SDPA измеряются batch 128, 256, 384 и 512;
+сохраняются throughput, peak VRAM, p95 batch latency и OOM. Exact fingerprint
+учитывает GPU, runtime, checkpoint и tensor shapes. Профиль содержит самый
+быстрый `best_batch_size` и консервативный `safe_batch_size`, который можно
+использовать как старт следующего поиска или значение для проверяющей системы.
+
 Влияние транзитивности проверяется отдельным training-quality benchmark. Он
 заново обучает `transitivity_off` и `transitivity_on` с одинаковыми seed,
 split, моделью и гиперпараметрами; затем сравнивает

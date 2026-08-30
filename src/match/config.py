@@ -1234,6 +1234,22 @@ class AttributeImportanceAnalysisSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class BatchProfileSettings:
+    enabled: bool = False
+    directory: Path = Path(".cache/batch_profiles")
+    safe_batch_fraction: float = 0.875
+    batch_size_multiple: int = 8
+
+    def __post_init__(self) -> None:
+        if not 0.0 < self.safe_batch_fraction <= 1.0:
+            raise ValueError(
+                "batch_profiles.safe_batch_fraction must be in (0, 1]"
+            )
+        if self.batch_size_multiple < 1:
+            raise ValueError("batch_profiles.batch_size_multiple must be positive")
+
+
+@dataclass(frozen=True, slots=True)
 class BackendBenchmarkSettings:
     tests_path: Path
     selected_tests: tuple[str, ...] | None
@@ -1243,6 +1259,7 @@ class BackendBenchmarkSettings:
     reference_test: str
     compare_predictions: bool
     output_dir: Path
+    batch_profiles: BatchProfileSettings = BatchProfileSettings()
 
     def __post_init__(self) -> None:
         if self.sample_size is not None and self.sample_size < 1:
@@ -2009,6 +2026,16 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         raise ValueError(
             "config section 'analysis_models.backend_benchmark' must be a mapping"
         )
+    batch_profiles_value = (
+        {}
+        if backend_benchmark_value is None
+        else backend_benchmark_value.get("batch_profiles", {})
+    )
+    if not isinstance(batch_profiles_value, Mapping):
+        raise ValueError(
+            "config section 'analysis_models.backend_benchmark.batch_profiles' "
+            "must be a mapping"
+        )
     augmentation_models = _section(resolved, "augmentation_models")
     attribute_shuffle = _section(augmentation_models, "attribute_shuffle")
     attribute_word_dropout = _section(
@@ -2445,6 +2472,26 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     output_dir=_path(
                         _required(backend_benchmark_value, "output_dir"),
                         "analysis_models.backend_benchmark.output_dir",
+                    ),
+                    batch_profiles=BatchProfileSettings(
+                        enabled=_bool(
+                            batch_profiles_value.get("enabled", False),
+                            "analysis_models.backend_benchmark.batch_profiles.enabled",
+                        ),
+                        directory=_path(
+                            batch_profiles_value.get(
+                                "directory", ".cache/batch_profiles"
+                            ),
+                            "analysis_models.backend_benchmark.batch_profiles.directory",
+                        ),
+                        safe_batch_fraction=float(
+                            batch_profiles_value.get(
+                                "safe_batch_fraction", 0.875
+                            )
+                        ),
+                        batch_size_multiple=int(
+                            batch_profiles_value.get("batch_size_multiple", 8)
+                        ),
                     ),
                 )
             ),
@@ -3160,6 +3207,7 @@ __all__ = [
     "AugmentationModelsSettings",
     "BaseDatasetSettings",
     "BatchFieldsSettings",
+    "BatchProfileSettings",
     "BoostingParameters",
     "CascadeParameters",
     "ConfigSource",

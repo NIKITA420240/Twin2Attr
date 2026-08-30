@@ -13,9 +13,39 @@ tests:
         value: eager
 
   sdpa:
-    name: pytorch_sdpa
+    name: pytorch_sdpa_batch_512
     overrides:
       - path: inference.transformer.backend
         value: pytorch
       - path: inference.transformer.attention.implementation
         value: sdpa
+
+  sdpa_batch_128:
+    name: pytorch_sdpa_batch_128
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.attention.implementation
+        value: sdpa
+      - path: inference.transformer.batch_size
+        value: 128
+
+  sdpa_batch_256:
+    name: pytorch_sdpa_batch_256
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.attention.implementation
+        value: sdpa
+      - path: inference.transformer.batch_size
+        value: 256
+
+  sdpa_batch_384:
+    name: pytorch_sdpa_batch_384
+    overrides:
+      - path: inference.transformer.backend
+        value: pytorch
+      - path: inference.transformer.attention.implementation
+        value: sdpa
+      - path: inference.transformer.batch_size
+        value: 384

@@ -97,7 +97,16 @@ class ConfiguredBenchmarkRunnerTests(unittest.TestCase):
             allowed_test_types={"speed"},
         )
 
-        self.assertEqual(tuple(suite.tests), ("eager_reference", "sdpa"))
+        self.assertEqual(
+            tuple(suite.tests),
+            (
+                "eager_reference",
+                "sdpa",
+                "sdpa_batch_128",
+                "sdpa_batch_256",
+                "sdpa_batch_384",
+            ),
+        )
         self.assertEqual(suite.reference_test, "eager_reference")
         eager = apply_benchmark_test(self.config, suite.tests["eager_reference"])
         sdpa = apply_benchmark_test(self.config, suite.tests["sdpa"])
