@@ -152,8 +152,8 @@ class ExperimentTrackingTests(unittest.TestCase):
                             "trainable_parameters": 123_456,
                         },
                         "special_token_adaptation": {
-                            "actual_optimizer_steps": 500,
-                            "seconds": 42.5,
+                            "actual_optimizer_steps": 0,
+                            "seconds": 0.0,
                         },
                     }
                 ),
@@ -199,11 +199,11 @@ class ExperimentTrackingTests(unittest.TestCase):
             self.assertEqual(rows[0]["warmup_ratio"], "0.06")
             self.assertEqual(
                 rows[0]["special_token_initialization"],
-                "mean_existing_tokens",
+                "none",
             )
             self.assertEqual(
                 rows[0]["special_token_adaptation_mode"],
-                "new_tokens_only",
+                "none",
             )
             self.assertEqual(
                 rows[0]["special_token_adaptation_max_optimizer_steps"],
@@ -211,11 +211,11 @@ class ExperimentTrackingTests(unittest.TestCase):
             )
             self.assertEqual(
                 rows[0]["special_token_adaptation_actual_optimizer_steps"],
-                "500",
+                "0",
             )
             self.assertEqual(
                 rows[0]["special_token_adaptation_seconds"],
-                "42.5",
+                "0.0",
             )
             self.assertTrue(experiment_dir.is_dir())
 

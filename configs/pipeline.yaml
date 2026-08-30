@@ -199,11 +199,12 @@ analysis_models:
 
 model_description:
   transformer:
-    pretrained_model_path: models/bge-reranker-v2-m3
-    artifact_dir: models/twin2attr/bge-reranker-v2-m3
+    profile: prompted_binary_reranker
+    pretrained_model_path: models/nvidia-llama
+    artifact_dir: models/twin2attr/nvidia-llama
 
     # Main training phase after special-token adaptation.
-    train_last_n_layers: 3
+    train_last_n_layers: 16
     learning_rate: 3.0e-5
     head_learning_rate: 1.0e-4
     layerwise_lr_decay: 0.9
@@ -217,7 +218,7 @@ model_description:
     special_tokens:
       initialization:
         # none | mean_existing_tokens
-        method: mean_existing_tokens
+        method: none
         key_seed_texts:
           - key
           - attribute
@@ -229,7 +230,7 @@ model_description:
           - характеристика
       adaptation:
         # none | new_tokens_only | full_model
-        mode: new_tokens_only
+        mode: none
         # Number of optimizer updates, not microbatches.
         max_optimizer_steps: 500
         # Learning rate for the [KEY] and [VAL] embedding rows.
@@ -251,7 +252,9 @@ model_description:
         export_classifier: true
         export_encoder: true
     pair_encoding:
-      use_field_tokens: true
+      # Nemotron consumes one prompted sequence and must keep its pretrained
+      # vocabulary unchanged; [KEY]/[VAL] field tokens are therefore disabled.
+      use_field_tokens: false
       # null disables the pre-tokenization character hard cap.
       max_attribute_value_chars: 256
       # null disables per-attribute value truncation.
@@ -310,7 +313,7 @@ model_description:
       # checkpoint head shape differs); pooling: a new pooling classifier;
       # hybrid: pretrained scalar reranker head plus a new attention branch.
       # Use hybrid only for a checkpoint whose native head emits one score/pair.
-      type: hybrid
+      type: native
       # Supported values: cls, mean, max, attention. Their outputs are concatenated.
       poolings: [cls, attention]
       # Empty list gives a single linear classifier after pooling.

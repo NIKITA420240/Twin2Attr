@@ -177,7 +177,7 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             self.config.model_description.transformer.artifact_dir,
-            PROJECT_ROOT / "models" / "twin2attr" / "bge-reranker-v2-m3",
+            PROJECT_ROOT / "models" / "twin2attr" / "nvidia-llama",
         )
         self.assertEqual(
             self.config.model_description.stacking.artifact_dir,
@@ -185,11 +185,11 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             self.config.model_description.transformer.pretrained_model_path,
-            "models/bge-reranker-v2-m3",
+            "models/nvidia-llama",
         )
         self.assertEqual(
             self.config.model_description.transformer.profile,
-            "sequence_classifier",
+            "prompted_binary_reranker",
         )
         encoding = self.config.model_description.transformer.pair_encoding
         batch_fields = (
@@ -203,8 +203,8 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(onnx_export.precision, "float16")
         self.assertTrue(onnx_export.export_classifier)
         self.assertTrue(onnx_export.export_encoder)
-        self.assertTrue(encoding.use_field_tokens)
-        self.assertTrue(
+        self.assertFalse(encoding.use_field_tokens)
+        self.assertFalse(
             self.config.model_description.transformer.special_token_initialization.enabled
         )
         self.assertFalse(
@@ -212,12 +212,12 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             self.config.model_description.transformer.train_last_n_layers,
-            3,
+            4,
         )
         adaptation = (
             self.config.model_description.transformer.special_token_adaptation
         )
-        self.assertEqual(adaptation.mode, "new_tokens_only")
+        self.assertEqual(adaptation.mode, "none")
         self.assertEqual(adaptation.max_optimizer_steps, 500)
         self.assertEqual(adaptation.embeddings_learning_rate, 1e-4)
         self.assertEqual(self.config.model_description.transformer.max_epochs, 2)
@@ -322,7 +322,7 @@ class AppConfigTests(unittest.TestCase):
     def test_loads_composable_transformer_head(self) -> None:
         head = self.config.model_description.transformer.head
 
-        self.assertEqual(head.type, "hybrid")
+        self.assertEqual(head.type, "native")
         self.assertEqual(head.poolings, ("cls", "attention"))
         self.assertEqual(head.mlp_hidden_dims, (384,))
         self.assertEqual(head.attention_hidden_dim, 192)
