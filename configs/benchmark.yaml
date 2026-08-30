@@ -48,12 +48,20 @@ benchmark:
       tests_path: configs/benchmark_tests/codex_annotation_quality.yaml
       selected_tests: null
 
-    # Two three-epoch fits: human + LLM baseline versus the same pool with
-    # 130,000 additive synthetic hard negatives at weight 0.5.
+    # Two three-epoch fits: human + LLM versus the same pool with 130,000
+    # hard negatives. Dynamic augmentation is disabled in both arms.
     hard_negative_quality:
       type: training_quality
-      enabled: true
+      enabled: false
       tests_path: configs/benchmark_tests/hard_negative_quality.yaml
+      selected_tests: null
+
+    # Independent four-fit 2x2 ablation for attribute_word_dropout and hard
+    # negatives. Use configs/benchmark_attribute_word_dropout.yaml to run it.
+    attribute_word_dropout_quality:
+      type: training_quality
+      enabled: true
+      tests_path: configs/benchmark_tests/attribute_word_dropout_quality.yaml
       selected_tests: null
 
     # Three paired fits: current confident-only data, fixed old labels and

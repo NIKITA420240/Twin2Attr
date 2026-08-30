@@ -35,6 +35,7 @@ class ConfiguredBenchmarkRunnerTests(unittest.TestCase):
                 "typed_attribute_quality",
                 "codex_annotation_quality",
                 "hard_negative_quality",
+                "attribute_word_dropout_quality",
                 "neural_relabel_quality",
                 "llm_vote_sampling_quality",
                 "soft_label_confidence_quality",

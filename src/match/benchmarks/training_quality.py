@@ -84,6 +84,8 @@ def _run_case(
         "name": test.name,
         "seed": seed,
         "experiment_name": experiment_name,
+        "data_model": None,
+        "augmentation_model": None,
         "status": "failed",
         "validation_macro_pr_auc": None,
         "delta_validation_macro_pr_auc": None,
@@ -113,6 +115,12 @@ def _run_case(
     started = perf_counter()
     try:
         configured = apply_benchmark_test(base_config, _seeded_test(test, seed))
+        row.update(
+            {
+                "data_model": configured.training.data_model,
+                "augmentation_model": configured.training.augmentation_model,
+            }
+        )
         if configured.training.data_model not in {
             "mix_dataset",
             "mix_dataset_hard_negative",

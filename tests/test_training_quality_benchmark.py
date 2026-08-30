@@ -33,6 +33,12 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
             / "benchmark_tests"
             / "hard_negative_quality.yaml"
         )
+        self.attribute_word_dropout_tests_path = (
+            PROJECT_ROOT
+            / "configs"
+            / "benchmark_tests"
+            / "attribute_word_dropout_quality.yaml"
+        )
         self.vote_sampling_tests_path = (
             PROJECT_ROOT
             / "configs"
@@ -67,15 +73,24 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
             list(suite.tests),
             ["human_llm", "human_llm_hard_negative"],
         )
+        expected_factors = {
+            "human_llm": ("mix_dataset", None),
+            "human_llm_hard_negative": (
+                "mix_dataset_hard_negative",
+                None,
+            ),
+        }
         self.assertEqual(
-            configured["human_llm"].training.data_model,
-            "mix_dataset",
+            {
+                key: (
+                    config.training.data_model,
+                    config.training.augmentation_model,
+                )
+                for key, config in configured.items()
+            },
+            expected_factors,
         )
         experiment = configured["human_llm_hard_negative"]
-        self.assertEqual(
-            experiment.training.data_model,
-            "mix_dataset_hard_negative",
-        )
         self.assertEqual(
             {
                 config.model_description.transformer.max_epochs
@@ -91,6 +106,47 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
         )
         self.assertEqual(hard_source.max_rows, 130_000)
         self.assertEqual(hard_source.weight, 0.5)
+        self.assertEqual(suite.seeds, (42,))
+
+    def test_attribute_word_dropout_suite_is_independent_factorial(self) -> None:
+        suite = load_benchmark_suite(
+            self.attribute_word_dropout_tests_path,
+            allowed_test_types={"training_quality"},
+        )
+        configured = {
+            key: apply_benchmark_test(self.config, test)
+            for key, test in suite.tests.items()
+        }
+
+        self.assertEqual(suite.reference_test, "human_llm")
+        self.assertEqual(
+            {
+                key: (
+                    config.training.data_model,
+                    config.training.augmentation_model,
+                    config.model_description.transformer.max_epochs,
+                )
+                for key, config in configured.items()
+            },
+            {
+                "human_llm": ("mix_dataset", None, 3),
+                "human_llm_word_dropout": (
+                    "mix_dataset",
+                    "attribute_word_dropout",
+                    3,
+                ),
+                "human_llm_hard_negative": (
+                    "mix_dataset_hard_negative",
+                    None,
+                    3,
+                ),
+                "human_llm_hard_negative_word_dropout": (
+                    "mix_dataset_hard_negative",
+                    "attribute_word_dropout",
+                    3,
+                ),
+            },
+        )
         self.assertEqual(suite.seeds, (42,))
 
     def test_neural_relabel_suite_has_three_equal_budget_arms(self) -> None:
@@ -294,6 +350,8 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
                 "name": test.name,
                 "seed": seed,
                 "experiment_name": f"{test.key}-seed-{seed}",
+                "data_model": "mix_dataset",
+                "augmentation_model": None,
                 "status": "completed",
                 "validation_macro_pr_auc": metric,
                 "delta_validation_macro_pr_auc": None,
