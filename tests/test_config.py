@@ -94,6 +94,10 @@ class AppConfigTests(unittest.TestCase):
         self.assertTrue(
             self.config.inference.transformer.non_blocking_transfer
         )
+        self.assertEqual(
+            self.config.inference.transformer.attention.implementation,
+            "auto",
+        )
         length_bucketing = self.config.inference.transformer.length_bucketing
         self.assertFalse(length_bucketing.enabled)
         self.assertEqual(
@@ -126,6 +130,7 @@ class AppConfigTests(unittest.TestCase):
         self.assertTrue(training_runtime.dataloader.non_blocking_transfer)
         self.assertTrue(training_runtime.performance_logging.enabled)
         self.assertFalse(training_runtime.token_cache.enabled)
+        self.assertEqual(training_runtime.attention.implementation, "auto")
         self.assertEqual(
             training_runtime.token_cache.directory,
             PROJECT_ROOT / ".cache" / "tokenized_pairs",
@@ -571,6 +576,13 @@ class AppConfigTests(unittest.TestCase):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
                 ["inference.transformer.torch_compile.mode=fastest"],
+            )
+
+    def test_rejects_unknown_attention_implementation(self) -> None:
+        with self.assertRaisesRegex(ValueError, "attention.implementation"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                ["inference.transformer.attention.implementation=magic"],
             )
 
     def test_rejects_invalid_training_token_cache_chunk_size(self) -> None:

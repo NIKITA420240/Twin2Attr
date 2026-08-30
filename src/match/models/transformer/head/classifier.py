@@ -75,6 +75,7 @@ class PoolingSequenceClassifier(PreTrainedModel):
         num_labels: int,
         id2label: dict[int, str],
         label2id: dict[str, int],
+        attention_implementation: str = "auto",
     ) -> PoolingSequenceClassifier:
         backbone_config = AutoConfig.from_pretrained(model_path)
         config = PoolingSequenceClassifierConfig(
@@ -88,6 +89,11 @@ class PoolingSequenceClassifier(PreTrainedModel):
         model.backbone = AutoModel.from_pretrained(
             model_path,
             config=backbone_config,
+            **(
+                {}
+                if attention_implementation == "auto"
+                else {"attn_implementation": attention_implementation}
+            ),
         )
         return model
 
@@ -223,8 +229,16 @@ class HybridSequenceClassifier(PreTrainedModel):
         head_config: PoolingHeadConfig,
         id2label: dict[int, str],
         label2id: dict[str, int],
+        attention_implementation: str = "auto",
     ) -> HybridSequenceClassifier:
-        pretrained = AutoModelForSequenceClassification.from_pretrained(model_path)
+        pretrained = AutoModelForSequenceClassification.from_pretrained(
+            model_path,
+            **(
+                {}
+                if attention_implementation == "auto"
+                else {"attn_implementation": attention_implementation}
+            ),
+        )
         backbone_config = AutoConfig.from_pretrained(model_path)
         config = HybridSequenceClassifierConfig(
             backbone_config=backbone_config.to_dict(),

@@ -1,5 +1,6 @@
-# Additive ablation for synthetic hard negatives. Both arms use the same
-# Transformer, seed, human validation split and human/LLM source settings.
+# Additive ablation for synthetic hard negatives. Both arms disable dynamic
+# augmentation and use the same Transformer, seed, validation split and
+# human/LLM source settings.
 test_type: training_quality
 reference_test: human_llm
 
@@ -15,6 +16,8 @@ tests:
         value: transformer
       - path: training.data_model
         value: mix_dataset
+      - path: training.augmentation_model
+        value: null
       - path: model_description.transformer.hpo_trials
         value: 1
       - path: model_description.transformer.max_epochs
@@ -29,6 +32,8 @@ tests:
         value: transformer
       - path: training.data_model
         value: mix_dataset_hard_negative
+      - path: training.augmentation_model
+        value: null
       - path: model_description.transformer.hpo_trials
         value: 1
       - path: model_description.transformer.max_epochs

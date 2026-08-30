@@ -47,6 +47,7 @@ class PredictorLoadingTests(unittest.TestCase):
                         "mode": "reduce-overhead",
                         "dynamic": True,
                     },
+                    "attention": {"implementation": "sdpa"},
                 },
                 self.root,
             )
@@ -67,6 +68,7 @@ class PredictorLoadingTests(unittest.TestCase):
             compile_enabled=True,
             compile_mode="reduce-overhead",
             compile_dynamic=True,
+            attention_implementation="sdpa",
             device=None,
         )
         load_maxpooling.assert_not_called()

@@ -281,7 +281,7 @@ def train_sequence_classifier(
         "Train runtime: length_bucketing={}, mega_batch_multiplier={}, "
         "padding_length_buckets={}, workers={}, prefetch_factor={}, "
         "persistent_workers={}, pin_memory={}, non_blocking_transfer={}, "
-        "torch_compile={}",
+        "attention={}, torch_compile={}",
         config.train_length_bucketing,
         config.train_mega_batch_multiplier,
         config.train_padding_length_buckets,
@@ -290,6 +290,7 @@ def train_sequence_classifier(
         config.dataloader_persistent_workers,
         config.dataloader_pin_memory,
         config.non_blocking_transfer,
+        config.attention_implementation,
         config.torch_compile,
     )
 
@@ -361,6 +362,7 @@ def train_sequence_classifier(
         head_config=config.head_config,
         typed_feature_count=len(typed_feature_names),
         profile=config.profile,
+        attention_implementation=config.attention_implementation,
     )
     best_hyperparameters = {
         "learning_rate": config.learning_rate,
@@ -684,6 +686,7 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
         token_cache_enabled=runtime.token_cache.enabled,
         token_cache_directory=runtime.token_cache.directory,
         token_cache_build_chunk_size=runtime.token_cache.build_chunk_size,
+        attention_implementation=runtime.attention.implementation,
         torch_compile=runtime.torch_compile.enabled,
         torch_compile_mode=runtime.torch_compile.mode,
         seed=config.runtime.seed,

@@ -44,6 +44,7 @@ def load_trained_classifier(
     *,
     device: str | torch.device | None = None,
     dtype: str = "float32",
+    attention_implementation: str = "auto",
 ) -> tuple[PreTrainedTokenizerBase, PreTrainedModel]:
     """Restore native, project-pooling, or Nemotron-attention artifacts."""
     target_device = resolve_device(device)
@@ -68,6 +69,11 @@ def load_trained_classifier(
         trust_remote_code=contract.uses_prompted_pairs,
     )
     model_type = config_values.get("model_type")
+    attention_kwargs = (
+        {}
+        if attention_implementation == "auto"
+        else {"attn_implementation": attention_implementation}
+    )
     if model_type == NemotronAttentionConfig.model_type:
         model = NemotronAttentionSequenceClassifier.from_artifact(directory)
     elif model_type == NemotronTypedFusionConfig.model_type:
@@ -80,7 +86,14 @@ def load_trained_classifier(
         model = AutoModelForSequenceClassification.from_pretrained(
             directory,
             trust_remote_code=contract.uses_prompted_pairs,
+            **attention_kwargs,
         )
+    if attention_implementation != "auto" and model_type in {
+        NemotronAttentionConfig.model_type,
+        HybridSequenceClassifierConfig.model_type,
+        PoolingSequenceClassifierConfig.model_type,
+    }:
+        model.set_attn_implementation(attention_implementation)
     restored_contract = TransformerArtifactContract.from_config(model.config)
     if restored_contract != contract:
         raise RuntimeError(

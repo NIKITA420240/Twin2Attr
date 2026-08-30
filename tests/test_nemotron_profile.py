@@ -751,10 +751,15 @@ TinyBidirectionalForSequenceClassification.register_for_auto_class(
                 use_field_tokens=False,
                 profile="prompted_binary_reranker",
                 head_type="native",
+                attention_implementation="sdpa",
             )()
 
         self.assertIs(restored, native)
-        load.assert_called_once_with("nemotron", trust_remote_code=True)
+        load.assert_called_once_with(
+            "nemotron",
+            trust_remote_code=True,
+            attn_implementation="sdpa",
+        )
         self.assertEqual(native.config.match_num_logits, 1)
         self.assertEqual(native.config.match_probability_transform, "sigmoid")
 

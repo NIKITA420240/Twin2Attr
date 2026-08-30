@@ -35,6 +35,7 @@ class ConfiguredBenchmarkRunnerTests(unittest.TestCase):
                 "typed_attribute_quality",
                 "codex_annotation_quality",
                 "hard_negative_quality",
+                "attribute_word_dropout_quality",
                 "neural_relabel_quality",
                 "llm_vote_sampling_quality",
                 "soft_label_confidence_quality",
@@ -86,6 +87,28 @@ class ConfiguredBenchmarkRunnerTests(unittest.TestCase):
             "completed",
             "completed",
         ])
+
+    def test_speed_suite_was_rebuilt_as_sdpa_ab_test(self) -> None:
+        suite = load_benchmark_suite(
+            PROJECT_ROOT
+            / "configs"
+            / "benchmark_tests"
+            / "speed_optimizations.yaml",
+            allowed_test_types={"speed"},
+        )
+
+        self.assertEqual(tuple(suite.tests), ("eager_reference", "sdpa"))
+        self.assertEqual(suite.reference_test, "eager_reference")
+        eager = apply_benchmark_test(self.config, suite.tests["eager_reference"])
+        sdpa = apply_benchmark_test(self.config, suite.tests["sdpa"])
+        self.assertEqual(
+            eager.inference.transformer.attention.implementation,
+            "eager",
+        )
+        self.assertEqual(
+            sdpa.inference.transformer.attention.implementation,
+            "sdpa",
+        )
 
     def test_typed_attribute_ablation_cases_produce_valid_configs(self) -> None:
         suite = load_benchmark_suite(

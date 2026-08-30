@@ -292,6 +292,8 @@ inference:
     prefetch_factor: 2
     pin_memory: true
     non_blocking_transfer: true
+    attention:
+      implementation: eager
     # Group similarly sized pairs and limit the tensor shapes seen by the GPU.
     length_bucketing:
       enabled: false

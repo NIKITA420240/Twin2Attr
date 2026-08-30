@@ -1,6 +1,29 @@
 # Twin2Attr
 
-Сопоставление товарных карточек с помощью cross-encoder и классификатора.
+Система сопоставления товарных карточек: она объединяет человеческую разметку,
+LLM soft labels и синтетические hard negatives, а затем дообучает cross-encoder
+для оценки вероятности того, что две карточки описывают один товар.
+
+![Схема обучения Twin2Attr](docs/assets/training-pipeline.png)
+
+## Как устроено обучение
+
+1. `mix_dataset_hard_negative` собирает Human, LLM и hard-negative пары,
+   устраняет пересечения между источниками и назначает примерам веса.
+2. Карточки нормализуются и превращаются в упорядоченные пары атрибутов.
+3. Профиль `prompted_binary_reranker` формирует единый вход
+   `question:<карточка A>\n\npassage:<карточка B>` длиной до 128 токенов.
+4. Bidirectional Nemotron Llama 1B сохраняет штатный logit и дополняет его
+   residual-коррекцией `typed_attribute_fusion`. В текущем P0-режиме обучаются
+   верхние три слоя и typed head.
+5. Weighted BCE учитывает hard или soft target, вес источника, вес класса и
+   дополнительные множители качества примера.
+6. Лучший checkpoint выбирается по `macro PR-AUC` на отдельной Human validation;
+   после обучения сохраняются модель, resolved config и `solution.json`.
+
+Активная конфигурация находится в `configs/pipeline.yaml`. Альтернативные
+головы, источники данных и аугментации проверяются отдельными paired-бенчмарками,
+чтобы менять только один фактор при неизменном validation split.
 
 ## Установка
 
@@ -227,7 +250,7 @@ benchmark:
 
 ```text
 configs/benchmark_tests/backends.yaml              # четыре backend-а
-configs/benchmark_tests/speed_optimizations.yaml   # технические ускорения
+configs/benchmark_tests/speed_optimizations.yaml   # eager против SDPA
 configs/benchmark_tests/quality_optimizations.yaml # сокращение входа/precision
 configs/benchmark_tests/transitivity_quality.yaml  # влияние весов на обучение
 configs/benchmark_tests/codex_annotation_quality.yaml # ценность Codex-разметки
@@ -253,10 +276,11 @@ manifest обученного CatBoost-артефакта, поэтому traini
 `typed_attribute_quality` в `configs/benchmark.yaml`; после screening на seed 42
 лучший вариант следует подтвердить на seed `42`, `43` и `44`.
 
-Inference benchmark использует один и тот же checkpoint
-`weights/cross-encoder-ms-marco-l12-v3`. Fallback между backend-ами отключается,
-чтобы тест ONNX или TensorRT не измерил PyTorch незаметно. Speed-suite требует
-эквивалентности reference-предсказаниям: максимальная
+Inference benchmark использует один и тот же checkpoint. Fallback между
+backend-ами отключается, чтобы тест другого backend-а не измерил PyTorch
+незаметно. Старый speed-suite удалён; новый начинается с изолированного A/B
+теста PyTorch `eager` против `sdpa`. Он требует эквивалентности
+reference-предсказаниям: максимальная
 разница вероятностей не больше `1e-3` и ни один класс при пороге `0.5` не должен
 измениться. Quality-suite считает `PR-AUC`, `ROC-AUC`, accuracy, precision,
 recall и F1 вместе с дельтами относительно своего reference-теста.
@@ -653,11 +677,12 @@ uv run python run.py train \
 
 ### Частичный fine-tuning Transformer
 
-Для BGE reranker по умолчанию включён P0-режим: обучаются только три верхних
-encoder layer и classifier head. Input embeddings, включая добавленные
-`[KEY]`/`[VAL]`, и более ранние слои backbone заморожены. Это уменьшает
-потребление памяти optimizer/gradient и не строит backward-граф через нижнюю
-часть модели.
+В текущем Nemotron reranker включён P0-режим: обучаются только три верхних
+encoder layer и `typed_attribute_fusion`-голова. Input embeddings и более
+ранние слои backbone заморожены. Это уменьшает потребление памяти
+optimizer/gradient и не строит backward-граф через нижнюю часть модели.
+Механизм также поддерживает legacy sequence-classifier профили с
+`[KEY]`/`[VAL]`, но активный Nemotron использует `use_field_tokens: false`.
 
 ```yaml
 model_description:
@@ -690,14 +715,13 @@ embedding layer, что заметно ухудшает экономию пам�
 оставлен только для отдельного эксперимента с адаптацией `[KEY]`/`[VAL]`; в
 нём `embeddings_learning_rate` задаёт LR этих строк.
 
-При `special_token_initialization.enabled=true` новые `[KEY]` и `[VAL]`
+Для legacy sequence-classifier профиля при
+`special_token_initialization.enabled=true` новые `[KEY]` и `[VAL]`
 инициализируются до freeze. Каждый текст из `key_seed_texts` или
-`value_seed_texts` разбирается текущим BGE tokenizer на subword ids; среднее
-их существующих embedding-векторов записывается соответственно в `[KEY]` или
-`[VAL]`. Это обычные слова-доноры, а не ручные номера vocabulary. Например,
-`значение` может состоять из нескольких subword-токенов, и все они войдут в
-среднее. Пустой список или текст, дающий только special/unknown tokens,
-завершает запуск ошибкой, чтобы не получить случайную инициализацию.
+`value_seed_texts` разбирается активным tokenizer на subword ids; среднее их
+существующих embedding-векторов записывается соответственно в `[KEY]` или
+`[VAL]`. Это обычные слова-доноры, а не ручные номера vocabulary. Пустой список
+или текст, дающий только special/unknown tokens, завершает запуск ошибкой.
 
 Для сравнимых экспериментов меняйте только глубину и сохраняйте одинаковыми
 датасет, seed, `learning_rate` и effective batch:
@@ -742,8 +766,8 @@ uv run python run.py train \
   model_description.transformer.training_runtime.dataloader.num_workers=8
 ```
 
-Две опции намеренно выключены по умолчанию, поскольку требуют замера на
-конкретной модели и H100:
+Token cache и compilation намеренно выключены по умолчанию, поскольку требуют
+замера на конкретной модели и H100:
 
 ```yaml
 model_description:
@@ -801,6 +825,22 @@ uv run python run.py train \
 `null` сохраняет обычный динамический padding.
 `torch_compile` включает оптимизированный PyTorch-граф; если compilation backend
 не поддерживает операцию, predictor автоматически продолжает в eager mode.
+`attention.implementation` выбирается при создании PyTorch-модели и действует
+одинаково в train и inference: `sdpa` явно включает PyTorch Scaled Dot Product
+Attention, `eager` полностью его отключает, а `auto` оставляет выбор библиотеке
+Transformers. Для A/B без SDPA используйте:
+
+```bash
+uv run python run.py train \
+  model_description.transformer.training_runtime.attention.implementation=eager
+```
+
+Для будущего inference-manifest переключатель находится в
+`inference.transformer.attention.implementation`: train/initialize сохраняет
+его в `solution.json`. Непосредственный `predict` читает уже созданный
+`solution.json`, поэтому для существующего артефакта режим меняется в поле
+`attention.implementation` самого manifest. ONNX Runtime и TensorRT эту
+настройку игнорируют, поскольку используют собственные kernels.
 
 Готовый Transformer можно дополнительно экспортировать в два ONNX-графа:
 `onnx/classifier.onnx` возвращает logits, а `onnx/encoder.onnx` — CLS embedding
@@ -1000,6 +1040,9 @@ OmegaConf используется только на границе загруз
   "model_directory": "models/twin2attr/transformer",
   "batch_size": 512,
   "dtype": "bfloat16",
+  "attention": {
+    "implementation": "sdpa"
+  },
   "torch_compile": {
     "enabled": true,
     "mode": "reduce-overhead",

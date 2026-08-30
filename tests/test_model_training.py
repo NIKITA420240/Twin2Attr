@@ -93,6 +93,7 @@ class ModelTrainingStrategyTests(unittest.TestCase):
         self.assertEqual(solution["prefetch_factor"], 2)
         self.assertTrue(solution["pin_memory"])
         self.assertTrue(solution["non_blocking_transfer"])
+        self.assertEqual(solution["attention"], {"implementation": "auto"})
         self.assertEqual(
             solution["tokenizer"],
             {

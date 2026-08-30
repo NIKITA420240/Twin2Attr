@@ -340,6 +340,21 @@ class TorchCompileSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class AttentionSettings:
+    """Attention kernel selected when a PyTorch Transformer is constructed."""
+
+    implementation: str = "auto"
+
+    def __post_init__(self) -> None:
+        normalized = self.implementation.lower()
+        if normalized not in {"auto", "eager", "sdpa"}:
+            raise ValueError(
+                "attention.implementation must be one of: auto, eager, sdpa"
+            )
+        object.__setattr__(self, "implementation", normalized)
+
+
+@dataclass(frozen=True, slots=True)
 class TrainingLengthBucketingSettings:
     enabled: bool = True
     mega_batch_multiplier: int = 50
@@ -416,6 +431,7 @@ class TrainingTokenCacheSettings:
 
 @dataclass(frozen=True, slots=True)
 class TransformerTrainingRuntimeSettings:
+    attention: AttentionSettings = AttentionSettings()
     length_bucketing: TrainingLengthBucketingSettings = (
         TrainingLengthBucketingSettings()
     )
@@ -606,6 +622,7 @@ class TransformerInferenceSettings:
     prefetch_factor: int = 2
     pin_memory: bool = True
     non_blocking_transfer: bool = True
+    attention: AttentionSettings = AttentionSettings()
     length_bucketing: LengthBucketingSettings = LengthBucketingSettings()
     torch_compile: TorchCompileSettings = TorchCompileSettings()
     onnxruntime: OnnxRuntimeSettings = OnnxRuntimeSettings()
@@ -1960,6 +1977,11 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         raise ValueError(
             "config section 'inference.transformer.torch_compile' must be a mapping"
         )
+    inference_attention_value = inference_transformer.get("attention", {})
+    if not isinstance(inference_attention_value, Mapping):
+        raise ValueError(
+            "config section 'inference.transformer.attention' must be a mapping"
+        )
     onnxruntime_value = inference_transformer.get("onnxruntime", {})
     if not isinstance(onnxruntime_value, Mapping):
         raise ValueError(
@@ -2042,6 +2064,12 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     if not isinstance(training_runtime_value, Mapping):
         raise ValueError(
             "config section 'transformer.training_runtime' must be a mapping"
+        )
+    training_attention_value = training_runtime_value.get("attention", {})
+    if not isinstance(training_attention_value, Mapping):
+        raise ValueError(
+            "config section 'transformer.training_runtime.attention' "
+            "must be a mapping"
         )
     training_length_bucketing_value = training_runtime_value.get(
         "length_bucketing", {}
@@ -2241,6 +2269,11 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 non_blocking_transfer=_bool(
                     inference_transformer.get("non_blocking_transfer", True),
                     "inference.transformer.non_blocking_transfer",
+                ),
+                attention=AttentionSettings(
+                    implementation=str(
+                        inference_attention_value.get("implementation", "auto")
+                    )
                 ),
                 length_bucketing=length_bucketing,
                 torch_compile=TorchCompileSettings(
@@ -2596,6 +2629,13 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     transformer.get("layerwise_lr_decay", 1.0)
                 ),
                 training_runtime=TransformerTrainingRuntimeSettings(
+                    attention=AttentionSettings(
+                        implementation=str(
+                            training_attention_value.get(
+                                "implementation", "auto"
+                            )
+                        )
+                    ),
                     length_bucketing=TrainingLengthBucketingSettings(
                         enabled=_bool(
                             training_length_bucketing_value.get("enabled", True),
@@ -3104,6 +3144,7 @@ __all__ = [
     "FEATURE_PROVIDER_NAMES",
     "AnalysisModelsSettings",
     "AnalysisSettings",
+    "AttentionSettings",
     "AppConfig",
     "AttributeImportanceAnalysisSettings",
     "BackendBenchmarkSettings",

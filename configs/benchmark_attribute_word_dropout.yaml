@@ -1,0 +1,14 @@
+# Run only the independent attribute_word_dropout x hard-negative ablation:
+#   uv run python run.py benchmark \
+#     --config configs/benchmark_attribute_word_dropout.yaml
+benchmark:
+  base_config_path: configs/benchmark_pipeline.yaml
+  output_dir: analysis/benchmark
+  fail_fast: false
+
+  jobs:
+    attribute_word_dropout_quality:
+      type: training_quality
+      enabled: true
+      tests_path: configs/benchmark_tests/attribute_word_dropout_quality.yaml
+      selected_tests: null

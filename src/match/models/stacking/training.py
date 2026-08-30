@@ -80,6 +80,9 @@ class StackingTrainer:
             compile_dynamic=(
                 self.config.inference.transformer.torch_compile.dynamic
             ),
+            attention_implementation=(
+                self.config.inference.transformer.attention.implementation
+            ),
             device=self.config.runtime.device,
         )
         stacking_batch = PredictionBatch(
