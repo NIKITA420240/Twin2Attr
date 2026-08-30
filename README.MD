@@ -1,6 +1,28 @@
 # Twin2Attr
 
-Сопоставление товарных карточек с помощью cross-encoder и классификатора.
+Система сопоставления товарных карточек: она объединяет человеческую разметку,
+LLM soft labels и синтетические hard negatives, а затем дообучает cross-encoder
+для оценки вероятности того, что две карточки описывают один товар.
+
+![Схема обучения Twin2Attr](docs/assets/training-pipeline.png)
+
+## Как устроено обучение
+
+1. `mix_dataset_hard_negative` собирает Human, LLM и hard-negative пары,
+   устраняет пересечения между источниками и назначает примерам веса.
+2. Карточки нормализуются и превращаются в упорядоченные пары атрибутов.
+3. Профиль `prompted_binary_reranker` формирует единый вход
+   `question:<карточка A>\n\npassage:<карточка B>` длиной до 128 токенов.
+4. Bidirectional Nemotron Llama 1B возвращает один logit через штатную
+   `native`-голову. В текущем P0-режиме обучаются верхние три слоя и head.
+5. Weighted BCE учитывает hard или soft target, вес источника, вес класса и
+   дополнительные множители качества примера.
+6. Лучший checkpoint выбирается по `macro PR-AUC` на отдельной Human validation;
+   после обучения сохраняются модель, resolved config и `solution.json`.
+
+Активная конфигурация находится в `configs/pipeline.yaml`. Альтернативные
+головы, источники данных и аугментации проверяются отдельными paired-бенчмарками,
+чтобы менять только один фактор при неизменном validation split.
 
 ## Установка
 
@@ -639,11 +661,12 @@ uv run python run.py train \
 
 ### Частичный fine-tuning Transformer
 
-Для BGE reranker по умолчанию включён P0-режим: обучаются только три верхних
-encoder layer и classifier head. Input embeddings, включая добавленные
-`[KEY]`/`[VAL]`, и более ранние слои backbone заморожены. Это уменьшает
-потребление памяти optimizer/gradient и не строит backward-граф через нижнюю
-часть модели.
+В текущем Nemotron reranker включён P0-режим: обучаются только три верхних
+encoder layer и штатная `native`-голова. Input embeddings и более ранние слои
+backbone заморожены. Это уменьшает потребление памяти optimizer/gradient и не
+строит backward-граф через нижнюю часть модели. Механизм также поддерживает
+legacy sequence-classifier профили с `[KEY]`/`[VAL]`, но активный Nemotron
+использует `use_field_tokens: false`.
 
 ```yaml
 model_description:
@@ -676,14 +699,13 @@ embedding layer, что заметно ухудшает экономию пам�
 оставлен только для отдельного эксперимента с адаптацией `[KEY]`/`[VAL]`; в
 нём `embeddings_learning_rate` задаёт LR этих строк.
 
-При `special_token_initialization.enabled=true` новые `[KEY]` и `[VAL]`
+Для legacy sequence-classifier профиля при
+`special_token_initialization.enabled=true` новые `[KEY]` и `[VAL]`
 инициализируются до freeze. Каждый текст из `key_seed_texts` или
-`value_seed_texts` разбирается текущим BGE tokenizer на subword ids; среднее
-их существующих embedding-векторов записывается соответственно в `[KEY]` или
-`[VAL]`. Это обычные слова-доноры, а не ручные номера vocabulary. Например,
-`значение` может состоять из нескольких subword-токенов, и все они войдут в
-среднее. Пустой список или текст, дающий только special/unknown tokens,
-завершает запуск ошибкой, чтобы не получить случайную инициализацию.
+`value_seed_texts` разбирается активным tokenizer на subword ids; среднее их
+существующих embedding-векторов записывается соответственно в `[KEY]` или
+`[VAL]`. Это обычные слова-доноры, а не ручные номера vocabulary. Пустой список
+или текст, дающий только special/unknown tokens, завершает запуск ошибкой.
 
 Для сравнимых экспериментов меняйте только глубину и сохраняйте одинаковыми
 датасет, seed, `learning_rate` и effective batch:
