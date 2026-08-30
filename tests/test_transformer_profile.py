@@ -55,6 +55,20 @@ class TransformerArtifactContractTests(unittest.TestCase):
     def test_heads_are_validated_by_profile(self) -> None:
         with self.assertRaisesRegex(ValueError, "invalid for profile"):
             validate_profile_head(SEQUENCE_CLASSIFIER_PROFILE, "native")
+        self.assertEqual(
+            validate_profile_head(
+                SEQUENCE_CLASSIFIER_PROFILE,
+                "gated_residual_fusion",
+            ),
+            (SEQUENCE_CLASSIFIER_PROFILE, "gated_residual_fusion"),
+        )
+        self.assertEqual(
+            validate_profile_head(
+                PROMPTED_BINARY_RERANKER_PROFILE,
+                "gated_residual_fusion",
+            ),
+            (PROMPTED_BINARY_RERANKER_PROFILE, "gated_residual_fusion"),
+        )
 
     def test_runtime_contract_reads_nested_backbone_and_legacy_defaults(self) -> None:
         contract = TransformerRuntimeContract.from_config(
@@ -95,6 +109,27 @@ class TransformerArtifactContractTests(unittest.TestCase):
         contract.apply_encoding_to(config)
 
         self.assertEqual(TransformerRuntimeContract.from_config(config), contract)
+
+    def test_gated_fusion_uses_typed_runtime_contract(self) -> None:
+        options = TypedAttributeOptions(enabled=True)
+        names = typed_attribute_feature_names(enabled_types=options.enabled_types)
+        contract = TransformerRuntimeContract(
+            output=TransformerArtifactContract.for_training(
+                profile=SEQUENCE_CLASSIFIER_PROFILE,
+                head_type="gated_residual_fusion",
+                num_logits=2,
+            ),
+            hidden_size=24,
+            max_length=128,
+            use_field_tokens=True,
+            max_attribute_value_chars=256,
+            max_attribute_value_tokens=16,
+            typed_attribute_options=options,
+            typed_feature_names=names,
+            typed_feature_schema_version=1,
+        )
+
+        self.assertEqual(contract.typed_feature_names, names)
 
 
 if __name__ == "__main__":

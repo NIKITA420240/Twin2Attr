@@ -22,6 +22,7 @@ from match.models.transformer.head import PoolingHeadConfig
 from match.models.transformer.nemotron import (
     NemotronAttentionConfig,
     NemotronAttentionSequenceClassifier,
+    NemotronGatedResidualFusionSequenceClassifier,
     NemotronTypedFusionSequenceClassifier,
 )
 from match.models.transformer.profile import (
@@ -342,6 +343,75 @@ TinyBidirectionalForSequenceClassification.register_for_auto_class(
                 restored = NemotronTypedFusionSequenceClassifier.from_artifact(
                     artifact
                 ).eval()
+                with torch.inference_mode():
+                    actual = restored(
+                        **inputs,
+                        typed_features=typed_features,
+                    ).logits
+
+        torch.testing.assert_close(actual, expected)
+
+    def test_gated_residual_fusion_starts_as_native_and_round_trips(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self._tiny_remote_checkpoint(root)
+            options = TypedAttributeOptions(enabled=True)
+            feature_names = typed_attribute_feature_names(
+                enabled_types=options.enabled_types
+            )
+            with patch(
+                "transformers.dynamic_module_utils.HF_MODULES_CACHE",
+                str(root / "modules_cache"),
+            ):
+                model = (
+                    NemotronGatedResidualFusionSequenceClassifier
+                    .from_backbone_pretrained(
+                        str(source),
+                        head_config=PoolingHeadConfig(
+                            poolings=("mean", "attention"),
+                            mlp_hidden_dims=(8,),
+                            typed_hidden_dims=(8, 4),
+                            dropout=0.0,
+                        ),
+                        typed_feature_count=len(feature_names),
+                    )
+                    .eval()
+                )
+                inputs = {
+                    "input_ids": torch.tensor([[1, 2, 3], [4, 5, 0]]),
+                    "attention_mask": torch.tensor([[1, 1, 1], [1, 1, 0]]),
+                }
+                typed_features = torch.randn(2, len(feature_names))
+                with torch.inference_mode():
+                    native = model.native_model(**inputs).logits
+                    expected = model(
+                        **inputs,
+                        typed_features=typed_features,
+                    ).logits
+                torch.testing.assert_close(expected, native)
+
+                TransformerRuntimeContract(
+                    output=TransformerArtifactContract.for_training(
+                        profile="prompted_binary_reranker",
+                        head_type="gated_residual_fusion",
+                        num_logits=1,
+                    ),
+                    hidden_size=8,
+                    max_length=24,
+                    use_field_tokens=False,
+                    max_attribute_value_chars=256,
+                    max_attribute_value_tokens=16,
+                    typed_attribute_options=options,
+                    typed_feature_names=feature_names,
+                    typed_feature_schema_version=1,
+                ).apply_encoding_to(model.config)
+                artifact = root / "gated_artifact"
+                model.save_pretrained(artifact)
+                restored = (
+                    NemotronGatedResidualFusionSequenceClassifier.from_artifact(
+                        artifact
+                    ).eval()
+                )
                 with torch.inference_mode():
                     actual = restored(
                         **inputs,

@@ -957,11 +957,13 @@ class TransformerHeadParameters:
             "native",
             "attention_pooling",
             "typed_attribute_fusion",
+            "gated_residual_fusion",
         }
         if normalized_type not in supported_types:
             raise ValueError(
                 "transformer.head.type must be one of: default, pooling, hybrid, "
-                "native, attention_pooling, typed_attribute_fusion"
+                "native, attention_pooling, typed_attribute_fusion, "
+                "gated_residual_fusion"
             )
         normalized_poolings = tuple(
             pooling.strip().lower() for pooling in self.poolings

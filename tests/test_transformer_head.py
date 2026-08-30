@@ -11,6 +11,9 @@ from transformers import (
 )
 
 from match.models.transformer.head import (
+    GatedResidualFusionHead,
+    GatedResidualFusionSequenceClassifier,
+    GatedResidualFusionSequenceClassifierConfig,
     HybridSequenceClassifier,
     HybridSequenceClassifierConfig,
     PoolingHeadConfig,
@@ -21,6 +24,62 @@ from match.models.transformer.predictor import load_trained_classifier
 
 
 class TransformerPoolingHeadTests(unittest.TestCase):
+    def test_gated_residual_head_is_exact_noop_after_reset(self) -> None:
+        head = GatedResidualFusionHead(
+            hidden_size=4,
+            typed_feature_count=6,
+            config=PoolingHeadConfig(
+                poolings=("mean", "attention"),
+                mlp_hidden_dims=(5,),
+                typed_hidden_dims=(3,),
+                dropout=0.0,
+            ),
+        ).eval()
+        head.reset_residual_outputs()
+
+        correction = head(
+            torch.randn(2, 4, 4),
+            torch.tensor([[1, 1, 1, 1], [1, 1, 0, 0]]),
+            torch.randn(2, 6),
+        )
+
+        torch.testing.assert_close(correction, torch.zeros(2, 1))
+
+    def test_gated_residual_sequence_classifier_starts_as_native(self) -> None:
+        backbone = XLMRobertaConfig(
+            vocab_size=32,
+            hidden_size=8,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            intermediate_size=16,
+            max_position_embeddings=32,
+            num_labels=1,
+        )
+        model = GatedResidualFusionSequenceClassifier(
+            GatedResidualFusionSequenceClassifierConfig(
+                backbone_config=backbone.to_dict(),
+                head_config=PoolingHeadConfig(
+                    poolings=("mean", "attention"),
+                    typed_hidden_dims=(4,),
+                    dropout=0.0,
+                ).to_dict(),
+                typed_feature_count=6,
+                num_labels=2,
+            )
+        ).eval()
+        inputs = {
+            "input_ids": torch.tensor([[0, 5, 6, 2], [0, 7, 2, 1]]),
+            "attention_mask": torch.tensor([[1, 1, 1, 1], [1, 1, 1, 0]]),
+        }
+
+        with torch.inference_mode():
+            hidden_states = model.backbone(**inputs).last_hidden_state
+            native_score = model.native_head(hidden_states)
+            logits = model(**inputs, typed_features=torch.randn(2, 6)).logits
+
+        torch.testing.assert_close(logits[:, :1], torch.zeros_like(native_score))
+        torch.testing.assert_close(logits[:, 1:], native_score)
+
     def test_combines_selected_poolings_and_ignores_padding(self) -> None:
         head = TransformerPoolingHead(
             hidden_size=2,

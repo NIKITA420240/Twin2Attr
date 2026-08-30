@@ -9,6 +9,7 @@ from .head import PoolingHeadConfig
 from .profile import (
     PROMPTED_BINARY_RERANKER_PROFILE,
     SEQUENCE_CLASSIFIER_PROFILE,
+    head_uses_typed_features,
     is_prompted_profile,
     validate_profile_head,
 )
@@ -184,17 +185,17 @@ class SequenceClassifierConfig:
         if self.max_length_hard_cap < 8:
             raise ValueError("max_length_hard_cap must be at least 8")
         validate_profile_head(self.profile, self.head_type)
-        if self.head_type == "typed_attribute_fusion":
+        if head_uses_typed_features(self.head_type):
             if not self.typed_attribute_options.enabled:
                 raise ValueError(
-                    "typed_attribute_fusion requires enabled typed attributes"
+                    f"{self.head_type} requires enabled typed attributes"
                 )
         if (
             is_prompted_profile(self.profile)
-            and self.head_type == "attention_pooling"
+            and self.head_type in {"attention_pooling", "gated_residual_fusion"}
             and "cls" in self.head_config.poolings
         ):
-            raise ValueError("Nemotron attention pooling cannot use cls")
+            raise ValueError(f"Nemotron {self.head_type} cannot use cls")
         if is_prompted_profile(self.profile) and self.use_field_tokens:
             raise ValueError(
                 f"{PROMPTED_BINARY_RERANKER_PROFILE} requires use_field_tokens=False"

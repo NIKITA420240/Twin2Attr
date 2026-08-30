@@ -17,12 +17,14 @@ from ...pair_encoding import (
     pair_special_token_ids,
 )
 from .head import (
+    GatedResidualFusionSequenceClassifier,
     HybridSequenceClassifier,
     PoolingHeadConfig,
     PoolingSequenceClassifier,
 )
 from .nemotron import (
     NemotronAttentionSequenceClassifier,
+    NemotronGatedResidualFusionSequenceClassifier,
     NemotronTypedFusionSequenceClassifier,
 )
 from .optimizer import (
@@ -74,6 +76,24 @@ def _build_classifier(
             model_path,
             head_config=head_config or PoolingHeadConfig(),
             typed_feature_count=typed_feature_count,
+            attention_implementation=attention_implementation,
+        )
+    if is_prompted_profile(profile) and head_type == "gated_residual_fusion":
+        return NemotronGatedResidualFusionSequenceClassifier.from_backbone_pretrained(
+            model_path,
+            head_config=head_config
+            or PoolingHeadConfig(poolings=("mean", "attention")),
+            typed_feature_count=typed_feature_count,
+            attention_implementation=attention_implementation,
+        )
+    if head_type == "gated_residual_fusion":
+        return GatedResidualFusionSequenceClassifier.from_backbone_pretrained(
+            model_path,
+            head_config=head_config
+            or PoolingHeadConfig(poolings=("mean", "attention")),
+            typed_feature_count=typed_feature_count,
+            id2label={0: "different", 1: "match"},
+            label2id={"different": 0, "match": 1},
             attention_implementation=attention_implementation,
         )
     if head_type == "hybrid":

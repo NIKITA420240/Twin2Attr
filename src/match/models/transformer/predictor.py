@@ -28,6 +28,7 @@ from .profile import (
     PROMPTED_BINARY_RERANKER_PROFILE,
     SEQUENCE_CLASSIFIER_PROFILE,
     TransformerArtifactContract,
+    head_uses_typed_features,
 )
 from .pytorch_executor import (
     CompiledForward,
@@ -321,7 +322,7 @@ class TransformerPredictor:
             output_width=self._output_contract.num_logits,
             max_length=max_length,
             require_typed_features=(
-                self._output_contract.head_type == "typed_attribute_fusion"
+                head_uses_typed_features(self._output_contract.head_type)
             ),
         )
 

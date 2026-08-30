@@ -14,6 +14,8 @@ from transformers import (
 )
 
 from .head import (
+    GatedResidualFusionSequenceClassifier,
+    GatedResidualFusionSequenceClassifierConfig,
     HybridSequenceClassifier,
     HybridSequenceClassifierConfig,
     PoolingSequenceClassifier,
@@ -22,6 +24,8 @@ from .head import (
 from .nemotron import (
     NemotronAttentionConfig,
     NemotronAttentionSequenceClassifier,
+    NemotronGatedResidualFusionConfig,
+    NemotronGatedResidualFusionSequenceClassifier,
     NemotronTypedFusionConfig,
     NemotronTypedFusionSequenceClassifier,
 )
@@ -76,10 +80,14 @@ def load_trained_classifier(
     )
     if model_type == NemotronAttentionConfig.model_type:
         model = NemotronAttentionSequenceClassifier.from_artifact(directory)
+    elif model_type == NemotronGatedResidualFusionConfig.model_type:
+        model = NemotronGatedResidualFusionSequenceClassifier.from_artifact(directory)
     elif model_type == NemotronTypedFusionConfig.model_type:
         model = NemotronTypedFusionSequenceClassifier.from_artifact(directory)
     elif model_type == HybridSequenceClassifierConfig.model_type:
         model = HybridSequenceClassifier.from_pretrained(directory)
+    elif model_type == GatedResidualFusionSequenceClassifierConfig.model_type:
+        model = GatedResidualFusionSequenceClassifier.from_pretrained(directory)
     elif model_type == PoolingSequenceClassifierConfig.model_type:
         model = PoolingSequenceClassifier.from_pretrained(directory)
     else:
@@ -90,6 +98,8 @@ def load_trained_classifier(
         )
     if attention_implementation != "auto" and model_type in {
         NemotronAttentionConfig.model_type,
+        NemotronGatedResidualFusionConfig.model_type,
+        GatedResidualFusionSequenceClassifierConfig.model_type,
         HybridSequenceClassifierConfig.model_type,
         PoolingSequenceClassifierConfig.model_type,
     }:

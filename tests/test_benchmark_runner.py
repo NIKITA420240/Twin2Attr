@@ -155,6 +155,10 @@ class ConfiguredBenchmarkRunnerTests(unittest.TestCase):
             self.config,
             suite.tests["typed_attribute_fusion"],
         )
+        gated = apply_benchmark_test(
+            self.config,
+            suite.tests["gated_residual_fusion"],
+        )
 
         self.assertEqual(native.model_description.transformer.head.type, "native")
         self.assertFalse(native.pair_features.typed_attributes.enabled)
@@ -167,6 +171,15 @@ class ConfiguredBenchmarkRunnerTests(unittest.TestCase):
             typed.model_description.transformer.profile,
             "prompted_binary_reranker",
         )
+        self.assertEqual(
+            gated.model_description.transformer.head.type,
+            "gated_residual_fusion",
+        )
+        self.assertEqual(
+            gated.model_description.transformer.head.poolings,
+            ("mean", "attention"),
+        )
+        self.assertTrue(gated.pair_features.typed_attributes.enabled)
 
 
 if __name__ == "__main__":

@@ -36,6 +36,7 @@ from .model import WeightedSequenceTrainer
 from .profile import (
     TransformerArtifactContract,
     TransformerRuntimeContract,
+    head_uses_typed_features,
     is_prompted_profile,
 )
 from .optimizer import LearningRateMultipliers
@@ -317,7 +318,7 @@ def train_sequence_classifier(
     )
     typed_feature_names: tuple[str, ...] = ()
     validation_typed_features = None
-    uses_typed_fusion = config.head_type == "typed_attribute_fusion"
+    uses_typed_fusion = head_uses_typed_features(config.head_type)
     if uses_typed_fusion:
         logger.info("Precomputing typed fusion features")
         typed_feature_names, train_typed_features = build_typed_feature_matrix(

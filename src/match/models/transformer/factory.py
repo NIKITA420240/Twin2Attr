@@ -145,7 +145,7 @@ def _model_input_names(
         and "token_type_ids" in getattr(tokenizer, "model_input_names", ())
     ):
         names.append("token_type_ids")
-    if classifier and contract.output.head_type == "typed_attribute_fusion":
+    if classifier and contract.typed_feature_names:
         names.append("typed_features")
     return tuple(names)
 

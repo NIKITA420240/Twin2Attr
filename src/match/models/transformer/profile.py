@@ -19,11 +19,25 @@ TRANSFORMER_PROFILES = frozenset(
 )
 
 PROFILE_HEAD_TYPES = {
-    SEQUENCE_CLASSIFIER_PROFILE: frozenset({"default", "pooling", "hybrid"}),
+    SEQUENCE_CLASSIFIER_PROFILE: frozenset(
+        {"default", "pooling", "hybrid", "gated_residual_fusion"}
+    ),
     PROMPTED_BINARY_RERANKER_PROFILE: frozenset(
-        {"native", "attention_pooling", "typed_attribute_fusion"}
+        {
+            "native",
+            "attention_pooling",
+            "typed_attribute_fusion",
+            "gated_residual_fusion",
+        }
     ),
 }
+TYPED_FEATURE_HEAD_TYPES = frozenset(
+    {"typed_attribute_fusion", "gated_residual_fusion"}
+)
+
+
+def head_uses_typed_features(head_type: str) -> bool:
+    return head_type.strip().lower() in TYPED_FEATURE_HEAD_TYPES
 
 
 def normalize_profile(value: str) -> str:
@@ -194,7 +208,7 @@ class TransformerRuntimeContract:
             raise ValueError(
                 "artifact max_attribute_value_tokens must be positive or None"
             )
-        uses_typed_fusion = self.output.head_type == "typed_attribute_fusion"
+        uses_typed_fusion = head_uses_typed_features(self.output.head_type)
         if uses_typed_fusion:
             if (
                 self.typed_attribute_options is None
@@ -309,6 +323,8 @@ __all__ = [
     "TRANSFORMER_PROFILES",
     "TransformerArtifactContract",
     "TransformerRuntimeContract",
+    "TYPED_FEATURE_HEAD_TYPES",
+    "head_uses_typed_features",
     "is_prompted_profile",
     "normalize_profile",
     "positive_probabilities",

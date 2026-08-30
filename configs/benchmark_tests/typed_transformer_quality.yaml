@@ -54,3 +54,29 @@ tests:
         value: false
       - path: pair_features.typed_attributes.enabled
         value: true
+
+  gated_residual_fusion:
+    name: nemotron_gated_residual_fusion_human_labels
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.augmentation_model
+        value: null
+      - path: training.data_model
+        value: base_dataset
+      - path: model_description.transformer.profile
+        value: prompted_binary_reranker
+      - path: model_description.transformer.pretrained_model_path
+        value: models/llama-nemotron-rerank-1b-v2
+      - path: model_description.transformer.pair_encoding.use_field_tokens
+        value: false
+      - path: model_description.transformer.pair_encoding.max_length
+        value: 128
+      - path: model_description.transformer.head.type
+        value: gated_residual_fusion
+      - path: model_description.transformer.head.poolings
+        value: [mean, attention]
+      - path: model_description.transformer.export.onnx.enabled
+        value: false
+      - path: pair_features.typed_attributes.enabled
+        value: true

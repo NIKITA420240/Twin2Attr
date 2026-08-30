@@ -63,6 +63,7 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
         if is_prompted_profile(parameters.profile) and parameters.head.type in {
             "attention_pooling",
             "typed_attribute_fusion",
+            "gated_residual_fusion",
         }:
             raise ValueError(
                 f"{parameters.head.type} contains trainable new parameters and "

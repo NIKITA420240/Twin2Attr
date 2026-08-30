@@ -38,6 +38,7 @@ class TransformerPoolingHead(nn.Module):
             config.attention_num_heads if name == "attention" else 1
             for name in config.poolings
         )
+        self.output_width = pooled_width
         dimensions = [pooled_width, *config.mlp_hidden_dims]
         layers: list[nn.Module] = [nn.Dropout(config.dropout)]
         for input_dim, output_dim in zip(dimensions, dimensions[1:]):
