@@ -45,7 +45,15 @@ SOURCE_ROOT = Path(__file__).resolve().parent / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-COMMANDS = {"train", "predict", "initialize", "analyze", "benchmark", "label"}
+COMMANDS = {
+    "train",
+    "predict",
+    "initialize",
+    "analyze",
+    "benchmark",
+    "label",
+    "rebuild-experiments",
+}
 DEFAULT_CONFIG = "configs/pipeline.yaml"
 DEFAULT_BENCHMARK_CONFIG = "configs/benchmark.yaml"
 POLARS_VERSION = "1.43.2"
@@ -462,6 +470,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_config_arguments(label)
 
+    rebuild_experiments = commands.add_parser(
+        "rebuild-experiments",
+        help="Rebuild experiments.csv from per-experiment JSON records",
+    )
+    rebuild_experiments.add_argument(
+        "--experiments-root",
+        default="experiments",
+        help="Directory containing <experiment_name>/experiment.json records",
+    )
+    rebuild_experiments.add_argument(
+        "--output",
+        default=None,
+        help="Output CSV path; defaults to <experiments-root>/experiments.csv",
+    )
+
     predict = commands.add_parser("predict", help="Create evaluator-compatible CSV")
     predict.add_argument(
         "--items_path",
@@ -556,14 +579,13 @@ def run_train(args: argparse.Namespace) -> None:
         args.config,
         args.overrides,
     )
-    config, experiment_dir, registry_path = configure_experiment(
+    config, experiment_dir = configure_experiment(
         config,
         experiment_name,
     )
     artifacts = train(
         config,
         experiment_name=experiment_name,
-        experiment_registry_path=registry_path,
     )
     print(
         f"Experiment {experiment_name!r} saved to {experiment_dir}; "
@@ -626,6 +648,17 @@ def run_label(args: argparse.Namespace) -> None:
     )
 
 
+def run_rebuild_experiments(args: argparse.Namespace) -> None:
+    """Rebuild the derived CSV registry from immutable experiment records."""
+    from match.experiments import rebuild_experiment_registry
+
+    registry_path, row_count = rebuild_experiment_registry(
+        args.experiments_root,
+        args.output,
+    )
+    print(f"Experiment registry saved to {registry_path}; rows={row_count}")
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
 
@@ -651,6 +684,10 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if args.command == "label":
         run_label(args)
+        return
+
+    if args.command == "rebuild-experiments":
+        run_rebuild_experiments(args)
         return
 
     raise ValueError(f"Unsupported command: {args.command!r}")

@@ -138,17 +138,32 @@ export EXPERIMENT_NAME=mmarco-l12-human-last3-special-tokens
 ```
 
 Все сгенерированные модели, checkpoints, resolved-конфиг, `solution.json`,
-`experiment.json` и лог сохраняются в `experiments/$EXPERIMENT_NAME/`. После
-успешного обучения строка добавляется в `experiments/experiments.csv`. Если имя
-использовать повторно, папка эксперимента будет перезаписана, а в CSV появится
-ещё одна строка — уникальность имени контролирует пользователь. В карточку
-эксперимента записываются размеры train/validation и стабильный hash точного
-набора validation-пар, поэтому одинаковость split можно проверить без сохранения
-отдельных parquet-файлов.
+`experiment.json` и лог сохраняются в `experiments/$EXPERIMENT_NAME/`.
+`experiment.json` является источником истины для одного запуска. Обучающие
+задачи не изменяют общий `experiments.csv`, поэтому параллельные запуски не могут
+перезаписать строки друг друга. Уникальность имени контролирует пользователь:
+повторное имя перезапишет папку этого эксперимента. В карточку записываются
+размеры train/validation и стабильный hash точного набора validation-пар, поэтому
+одинаковость split можно проверить без сохранения отдельных parquet-файлов.
+
+Общий CSV является производным артефактом. После завершения параллельных задач
+его нужно атомарно пересобрать из всех карточек:
+
+```bash
+uv run python run.py rebuild-experiments \
+  --experiments-root experiments \
+  --output experiments/experiments.csv
+```
+
+Для S3 предусмотрен `rebuild-experiments.ml-job-preset.yml`: он скачивает только
+`*/experiment.json`, пересобирает CSV и загружает обратно только итоговый файл.
 
 ```bash
 # Обучение
 uv run python run.py train
+
+# Пересобрать общий реестр после серии параллельных обучений
+uv run python run.py rebuild-experiments
 
 # Посчитать важность атрибутов по attention pooling обученного Transformer
 uv run python run.py analyze

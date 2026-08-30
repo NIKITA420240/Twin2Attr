@@ -208,6 +208,21 @@ class UnifiedCliTests(unittest.TestCase):
             ],
         )
 
+    def test_parses_rebuild_experiments_paths(self) -> None:
+        args = parse_args(
+            [
+                "rebuild-experiments",
+                "--experiments-root",
+                "downloaded-experiments",
+                "--output",
+                "registry/experiments.csv",
+            ]
+        )
+
+        self.assertEqual(args.command, "rebuild-experiments")
+        self.assertEqual(args.experiments_root, "downloaded-experiments")
+        self.assertEqual(args.output, "registry/experiments.csv")
+
     def test_bootstraps_bundled_polars_when_image_does_not_have_it(self) -> None:
         missing = ModuleNotFoundError("No module named 'polars'", name="polars")
         with (

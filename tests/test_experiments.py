@@ -9,8 +9,10 @@ import polars as pl
 
 from match.config import load_app_config_file
 from match.experiments import (
+    EXPERIMENT_REGISTRY_COLUMNS,
     _sample_weighting_summary,
     configure_experiment,
+    rebuild_experiment_registry,
     save_experiment_record,
     validate_experiment_name,
     validation_pairs_hash,
@@ -28,7 +30,7 @@ class ExperimentTrackingTests(unittest.TestCase):
     def test_configures_all_generated_paths_under_experiment(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            config, experiment_dir, registry_path = configure_experiment(
+            config, experiment_dir = configure_experiment(
                 self.config,
                 "mmarco-human-baseline",
                 experiments_root=root,
@@ -38,7 +40,6 @@ class ExperimentTrackingTests(unittest.TestCase):
                 experiment_dir,
                 root.resolve() / "mmarco-human-baseline",
             )
-            self.assertEqual(registry_path, root.resolve() / "experiments.csv")
             self.assertEqual(
                 config.model_description.transformer.artifact_dir,
                 experiment_dir / "models" / "twin2attr" / "transformer",
@@ -106,10 +107,10 @@ class ExperimentTrackingTests(unittest.TestCase):
         self.assertEqual(summary["target_counts"], {"0": 2, "1": 1})
         self.assertEqual(summary["vote_counts"], {"0": 1, "2": 1, "9": 1})
 
-    def test_saves_json_and_appends_csv(self) -> None:
+    def test_saves_self_contained_json_without_shared_csv(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            config, experiment_dir, registry_path = configure_experiment(
+            config, experiment_dir = configure_experiment(
                 self.config,
                 "mmarco-human-baseline",
                 experiments_root=root,
@@ -136,12 +137,11 @@ class ExperimentTrackingTests(unittest.TestCase):
                 metrics=(("transformer.validation_macro_pr_auc", 0.74),),
             )
 
-            record_path, saved_registry = save_experiment_record(
+            record_path = save_experiment_record(
                 config,
                 artifacts,
                 splits,
                 experiment_name="mmarco-human-baseline",
-                registry_path=registry_path,
             )
 
             record = json.loads(record_path.read_text(encoding="utf-8"))
@@ -154,48 +154,60 @@ class ExperimentTrackingTests(unittest.TestCase):
             self.assertEqual(record["split"]["train_rows"], 1)
             self.assertTrue(record["split"]["validation_pairs_hash"])
             self.assertEqual(record["sample_weighting"]["all"]["rows"], 1)
-            with saved_registry.open(encoding="utf-8", newline="") as source:
-                rows = list(csv.DictReader(source))
-            self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["experiment_name"], "mmarco-human-baseline")
-            self.assertEqual(
-                rows[0]["s3_path"],
-                "experiments/mmarco-human-baseline",
-            )
+            self.assertFalse((root / "experiments.csv").exists())
             self.assertTrue(experiment_dir.is_dir())
 
-    def test_rejects_registry_with_another_schema(self) -> None:
+    def test_rebuilds_registry_from_all_experiment_records(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            config, _, registry_path = configure_experiment(
-                self.config,
-                "baseline",
-                experiments_root=root,
+            records = [
+                {
+                    "experiment_name": "second",
+                    "created_at": "2026-08-30T02:00:00Z",
+                },
+                {
+                    "experiment_name": "first",
+                    "created_at": "2026-08-30T01:00:00Z",
+                },
+            ]
+            for record in records:
+                name = record["experiment_name"]
+                experiment_dir = root / name
+                experiment_dir.mkdir()
+                complete = {
+                    column: record.get(column, f"{column}-{name}")
+                    for column in EXPERIMENT_REGISTRY_COLUMNS[:18]
+                }
+                complete["schema_version"] = 1
+                (experiment_dir / "experiment.json").write_text(
+                    json.dumps(complete),
+                    encoding="utf-8",
+                )
+
+            registry_path, row_count = rebuild_experiment_registry(root)
+
+            self.assertEqual(row_count, 2)
+            with registry_path.open(encoding="utf-8", newline="") as source:
+                rows = list(csv.DictReader(source))
+            self.assertEqual(
+                [row["experiment_name"] for row in rows],
+                ["first", "second"],
             )
-            registry_path.write_text("model,score\nold,0.7\n", encoding="utf-8")
-            splits = SimpleNamespace(
-                train_matches=pl.DataFrame(
-                    {"id1": [1], "id2": [2], "target": [1]}
-                ),
-                validation_matches=pl.DataFrame(
-                    {"id1": [3], "id2": [4], "target": [0]}
-                ),
-            )
-            artifacts = TrainingArtifacts(
-                predictor="transformer",
-                transformer_dir=(
-                    config.model_description.transformer.artifact_dir
-                ),
+            self.assertEqual(rows[0]["registry_schema_version"], "1")
+            self.assertEqual(rows[0]["completed_epochs"], "")
+
+    def test_rebuild_rejects_incomplete_record(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            experiment_dir = root / "incomplete"
+            experiment_dir.mkdir()
+            (experiment_dir / "experiment.json").write_text(
+                json.dumps({"experiment_name": "incomplete"}),
+                encoding="utf-8",
             )
 
-            with self.assertRaisesRegex(ValueError, "unexpected schema"):
-                save_experiment_record(
-                    config,
-                    artifacts,
-                    splits,
-                    experiment_name="baseline",
-                    registry_path=registry_path,
-                )
+            with self.assertRaisesRegex(ValueError, "missing registry fields"):
+                rebuild_experiment_registry(root)
 
 if __name__ == "__main__":
     unittest.main()

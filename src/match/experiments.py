@@ -6,6 +6,7 @@ import csv
 import hashlib
 import json
 import re
+import tempfile
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
 
 
 _EXPERIMENT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-EXPERIMENT_REGISTRY_COLUMNS = (
+_REQUIRED_EXPERIMENT_REGISTRY_COLUMNS = (
     "experiment_name",
     "created_at",
     "model",
@@ -42,6 +43,35 @@ EXPERIMENT_REGISTRY_COLUMNS = (
     "validation_pairs_hash",
     "s3_path",
 )
+EXPERIMENT_REGISTRY_COLUMNS = (
+    *_REQUIRED_EXPERIMENT_REGISTRY_COLUMNS,
+    "registry_schema_version",
+    "completed_epochs",
+    "performance_epochs_observed",
+    "train_batch_size",
+    "gradient_accumulation_steps",
+    "effective_batch_size",
+    "max_length",
+    "avg_train_epoch_seconds",
+    "total_train_seconds",
+    "avg_examples_per_second",
+    "avg_real_tokens_per_second",
+    "avg_padding_efficiency",
+    "avg_train_peak_cuda_memory_gib",
+    "max_train_peak_cuda_memory_gib",
+    "gpu_name",
+    "gpu_count",
+    "precision",
+    "trainable_parameters",
+    "warmup_ratio",
+    "special_token_initialization",
+    "special_token_adaptation_mode",
+    "special_token_adaptation_max_optimizer_steps",
+    "special_token_adaptation_actual_optimizer_steps",
+    "special_token_adaptation_embeddings_lr",
+    "special_token_adaptation_full_model_backbone_lr",
+    "special_token_adaptation_seconds",
+)
 
 
 def validate_experiment_name(value: str) -> str:
@@ -60,7 +90,7 @@ def configure_experiment(
     experiment_name: str,
     *,
     experiments_root: Path | None = None,
-) -> tuple[AppConfig, Path, Path]:
+) -> tuple[AppConfig, Path]:
     """Redirect every generated artifact and log into one experiment folder."""
     name = validate_experiment_name(experiment_name)
     root = (experiments_root or PROJECT_ROOT / "experiments").resolve()
@@ -105,7 +135,7 @@ def configure_experiment(
             file=experiment_dir / "logs" / "pipeline.log",
         ),
     )
-    return configured, experiment_dir, root / "experiments.csv"
+    return configured, experiment_dir
 
 
 def _matches_hash(matches: pl.DataFrame, *, include_target: bool) -> str:
@@ -149,17 +179,6 @@ def _training_metadata(config: AppConfig) -> dict[str, Any]:
         return {}
     value = json.loads(path.read_text(encoding="utf-8"))
     return value if isinstance(value, dict) else {}
-
-
-def _validate_registry_schema(registry_path: Path) -> None:
-    if not registry_path.is_file() or registry_path.stat().st_size == 0:
-        return
-    with registry_path.open("r", encoding="utf-8", newline="") as source:
-        header = next(csv.reader(source), [])
-    if header != list(EXPERIMENT_REGISTRY_COLUMNS):
-        raise ValueError(
-            f"experiment registry has an unexpected schema: {registry_path}"
-        )
 
 
 def _head_description(config: AppConfig) -> str:
@@ -280,9 +299,8 @@ def save_experiment_record(
     splits: "LoadedTrainingSplits",
     *,
     experiment_name: str,
-    registry_path: Path,
-) -> tuple[Path, Path]:
-    """Persist experiment.json and append one successful run to the CSV registry."""
+) -> Path:
+    """Persist the self-contained record for one successful experiment."""
     name = validate_experiment_name(experiment_name)
     experiment_dir = config.training.solution_path.parent
     experiment_dir.mkdir(parents=True, exist_ok=True)
@@ -365,21 +383,87 @@ def save_experiment_record(
         json.dumps(record, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    return record_path
 
-    registry_path.parent.mkdir(parents=True, exist_ok=True)
-    _validate_registry_schema(registry_path)
-    write_header = not registry_path.is_file() or registry_path.stat().st_size == 0
-    with registry_path.open("a", encoding="utf-8", newline="") as output:
-        writer = csv.DictWriter(output, fieldnames=EXPERIMENT_REGISTRY_COLUMNS)
-        if write_header:
+
+def _load_experiment_row(record_path: Path) -> dict[str, Any]:
+    value = json.loads(record_path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"experiment record must contain an object: {record_path}")
+    missing = [
+        column
+        for column in _REQUIRED_EXPERIMENT_REGISTRY_COLUMNS
+        if column not in value
+    ]
+    if missing:
+        raise ValueError(
+            f"experiment record is missing registry fields {missing}: {record_path}"
+        )
+    name = validate_experiment_name(str(value["experiment_name"]))
+    if record_path.parent.name != name:
+        raise ValueError(
+            "experiment directory does not match experiment_name: "
+            f"{record_path.parent.name!r} != {name!r}"
+        )
+    row = {column: value.get(column, "") for column in EXPERIMENT_REGISTRY_COLUMNS}
+    if row["registry_schema_version"] == "":
+        row["registry_schema_version"] = value.get("schema_version", "")
+    return row
+
+
+def rebuild_experiment_registry(
+    experiments_root: str | Path,
+    registry_path: str | Path | None = None,
+) -> tuple[Path, int]:
+    """Atomically rebuild experiments.csv from independent experiment records."""
+    root = Path(experiments_root).expanduser().resolve()
+    record_paths = sorted(root.glob("*/experiment.json"))
+    if not record_paths:
+        raise ValueError(f"no experiment.json records found under {root}")
+
+    rows: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+    for record_path in record_paths:
+        row = _load_experiment_row(record_path)
+        name = str(row["experiment_name"])
+        if name in seen_names:
+            raise ValueError(f"duplicate experiment_name in registry input: {name}")
+        seen_names.add(name)
+        rows.append(row)
+    rows.sort(key=lambda row: (str(row["created_at"]), str(row["experiment_name"])))
+
+    target = (
+        Path(registry_path).expanduser().resolve()
+        if registry_path is not None
+        else root / "experiments.csv"
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            newline="",
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as output:
+            temporary_path = Path(output.name)
+            writer = csv.DictWriter(output, fieldnames=EXPERIMENT_REGISTRY_COLUMNS)
             writer.writeheader()
-        writer.writerow(row)
-    return record_path, registry_path
+            writer.writerows(rows)
+        temporary_path.replace(target)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+    return target, len(rows)
 
 
 __all__ = [
     "EXPERIMENT_REGISTRY_COLUMNS",
     "configure_experiment",
+    "rebuild_experiment_registry",
     "save_experiment_record",
     "validate_experiment_name",
     "validation_pairs_hash",

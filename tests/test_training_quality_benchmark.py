@@ -7,8 +7,12 @@ from unittest.mock import patch
 import polars as pl
 
 from match.benchmarks.suite import apply_benchmark_test, load_benchmark_suite
-from match.benchmarks.training_quality import run_training_quality_benchmark
+from match.benchmarks.training_quality import (
+    _run_case,
+    run_training_quality_benchmark,
+)
 from match.config import load_app_config_file
+from match.models.artifacts import TrainingArtifacts
 from match.paths import PROJECT_ROOT
 
 
@@ -51,6 +55,55 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
             / "benchmark_tests"
             / "neural_relabel_quality.yaml"
         )
+
+    def test_run_case_uses_current_experiment_tracking_contract(self) -> None:
+        typed_tests_path = (
+            PROJECT_ROOT
+            / "configs"
+            / "benchmark_tests"
+            / "typed_attribute_quality.yaml"
+        )
+        suite = load_benchmark_suite(
+            typed_tests_path,
+            allowed_test_types={"training_quality"},
+        )
+
+        def fake_train(config, *, experiment_name):
+            experiment_dir = config.training.solution_path.parent
+            experiment_dir.mkdir(parents=True)
+            (experiment_dir / "experiment.json").write_text(
+                json.dumps(
+                    {
+                        "split": {
+                            "validation_pairs_hash": "same-split",
+                            "train_rows": 10,
+                        },
+                        "sample_weighting": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(experiment_name, "typed_attributes_off-seed-42")
+            return TrainingArtifacts(
+                predictor="boosting",
+                boosting_dir=config.model_description.boosting.artifact_dir,
+                metrics=(("boosting.validation_macro_pr_auc", 0.7),),
+            )
+
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "match.benchmarks.training_quality.train",
+            side_effect=fake_train,
+        ):
+            row = _run_case(
+                self.config,
+                suite.tests["typed_attributes_off"],
+                42,
+                experiments_root=Path(directory),
+            )
+
+        self.assertEqual(row["status"], "completed")
+        self.assertEqual(row["validation_macro_pr_auc"], 0.7)
+        self.assertEqual(row["validation_pairs_hash"], "same-split")
 
     def test_hard_negative_suite_is_additive_three_epoch_ablation(self) -> None:
         suite = load_benchmark_suite(

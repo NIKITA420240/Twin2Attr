@@ -122,7 +122,7 @@ def _run_case(
             raise ValueError(
                 "training-quality benchmark requires a mixed training data model"
             )
-        configured, experiment_dir, registry_path = configure_experiment(
+        configured, experiment_dir = configure_experiment(
             configured,
             experiment_name,
             experiments_root=experiments_root,
@@ -130,7 +130,6 @@ def _run_case(
         artifacts = train(
             configured,
             experiment_name=experiment_name,
-            experiment_registry_path=registry_path,
         )
         record_path = experiment_dir / "experiment.json"
         record = json.loads(record_path.read_text(encoding="utf-8"))

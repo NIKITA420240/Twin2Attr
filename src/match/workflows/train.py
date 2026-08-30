@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from pathlib import Path
 
 from ..augmentations import apply_pair_augmentation
 from ..config import AppConfig, save_app_config
@@ -20,7 +19,6 @@ def train(
     config: AppConfig,
     *,
     experiment_name: str | None = None,
-    experiment_registry_path: Path | None = None,
 ) -> TrainingArtifacts:
     """Prepare data, train the selected model and persist its manifest."""
     with workflow_logging(config, workflow_name="train"):
@@ -77,16 +75,11 @@ def train(
             solution_path=solution_path,
         )
         if experiment_name is not None:
-            if experiment_registry_path is None:
-                raise ValueError(
-                    "experiment_registry_path is required with experiment_name"
-                )
             save_experiment_record(
                 config,
                 result,
                 splits,
                 experiment_name=experiment_name,
-                registry_path=experiment_registry_path,
             )
         return result
 

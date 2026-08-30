@@ -115,6 +115,7 @@ class ConfiguredBenchmarkRunnerTests(unittest.TestCase):
             actual = options.enabled_types if options.enabled else ()
             self.assertEqual(actual, enabled_types)
             self.assertEqual(configured.training.model, "boosting")
+            self.assertIsNone(configured.training.augmentation_model)
 
 
 if __name__ == "__main__":
