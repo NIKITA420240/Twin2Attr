@@ -416,6 +416,11 @@ class TrainingPerformanceLoggingSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class TrainingOptimizerSettings:
+    fused: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class TrainingTokenCacheSettings:
     enabled: bool = False
     directory: Path = Path(".cache/tokenized_pairs")
@@ -432,6 +437,7 @@ class TrainingTokenCacheSettings:
 @dataclass(frozen=True, slots=True)
 class TransformerTrainingRuntimeSettings:
     attention: AttentionSettings = AttentionSettings()
+    optimizer: TrainingOptimizerSettings = TrainingOptimizerSettings()
     length_bucketing: TrainingLengthBucketingSettings = (
         TrainingLengthBucketingSettings()
     )
@@ -2066,6 +2072,12 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             "config section 'transformer.training_runtime.attention' "
             "must be a mapping"
         )
+    training_optimizer_value = training_runtime_value.get("optimizer", {})
+    if not isinstance(training_optimizer_value, Mapping):
+        raise ValueError(
+            "config section 'transformer.training_runtime.optimizer' "
+            "must be a mapping"
+        )
     training_length_bucketing_value = training_runtime_value.get(
         "length_bucketing", {}
     )
@@ -2629,6 +2641,13 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                             training_attention_value.get(
                                 "implementation", "auto"
                             )
+                        )
+                    ),
+                    optimizer=TrainingOptimizerSettings(
+                        fused=_bool(
+                            training_optimizer_value.get("fused", False),
+                            "model_description.transformer.training_runtime."
+                            "optimizer.fused",
                         )
                     ),
                     length_bucketing=TrainingLengthBucketingSettings(

@@ -24,11 +24,12 @@ benchmark. Оценки ускорения являются ориентиров
 | `torch.compile` | Включено | 5–25% после прогрева | Нет |
 | Sharded token cache | Включено | До устранения почти всей повторной токенизации | Нет |
 | SDPA attention | Включено | 5–20% | Только численная погрешность |
-| Fused AdamW | Запланировано | 2–8% | Нет |
+| Fused AdamW | Включено на CUDA с fallback | 2–8% | Нет |
 | Кэш профиля batch size | Запланировано | Убирает повторный autotuning | Нет |
 | Throughput-based batch tuner | Запланировано | 5–20% | Нет при сохранении effective batch |
 | Batch size по length bucket для eval/inference | Запланировано | 10–40% eval/inference | Нет |
-| Оптимизация validation | Запланировано | 5–30% общего wall time | Нет |
+| Удаление дублирующего final validation | Включено | До стоимости одного validation pass | Нет |
+| Остальная оптимизация validation | Запланировано | 5–30% общего wall time | Нет |
 | Автоподбор padding buckets | Запланировано | 3–15% | Нет |
 | Кэшируемая аугментация | Запланировано | 5–25% при CPU bottleneck | Требует проверки |
 | Token-level augmentation | Запланировано | 10–30% при CPU bottleneck | Средний риск; нельзя повреждать prompt |
@@ -225,11 +226,9 @@ Inference переключатель сохраняется в `solution.json`:
 `real_tokens_per_second`. Итоговый PR-AUC проверяется отдельно, чтобы ускорение
 не скрывало ухудшение качества.
 
-## Очередь следующих оптимизаций
+### 9. Fused AdamW
 
-### P0. Fused AdamW
-
-Добавить конфигурацию:
+Включается конфигурацией:
 
 ```yaml
 training_runtime:
@@ -237,9 +236,21 @@ training_runtime:
     fused: true
 ```
 
-Реализация должна использовать `torch.optim.AdamW(..., fused=True)` и иметь
-явный fallback для неподдерживаемых устройств. Benchmark: обычный AdamW против
-fused AdamW при одинаковом seed, dataset и effective batch.
+На CUDA и при наличии аргумента `fused` в текущем PyTorch используется
+`torch.optim.AdamW(..., fused=True)`. На другом device или в старом PyTorch
+автоматически выбирается обычный AdamW. Остаётся выполнить GPU A/B
+при одинаковых seed, dataset и effective batch.
+
+### 10. Удаление дублирующего final validation
+
+`Trainer` уже выполняет validation после каждой эпохи, сохраняет
+`macro_pr_auc` лучшей checkpoint в `state.best_metric` и загружает эту
+модель при `load_best_model_at_end=True`. Поэтому повторный полный
+`trainer.evaluate()` после `trainer.train()` удалён. Если best metric нет,
+training завершается явной ошибкой вместо сохранения непроверенной
+модели.
+
+## Очередь следующих оптимизаций
 
 ### P0. Throughput-based batch tuner
 
@@ -300,10 +311,10 @@ FP8 имеет смысл только на поддерживаемом GPU п�
 ## Рекомендуемый порядок
 
 1. Замерить breakdown wall time: train, validation, tokenization, checkpoint I/O.
-2. Реализовать Fused AdamW с fallback.
+2. Выполнить GPU A/B обычного и Fused AdamW.
 3. Добавить кэш профиля и throughput-based batch tuner.
 4. Подобрать отдельный batch по length bucket для validation/inference.
-5. Убрать лишний full eval и ускорить validation через BF16 и streaming metrics.
+5. Ускорить validation через BF16, больший eval batch и streaming metrics.
 6. Автоматически подобрать padding buckets по квантилям token lengths.
 7. После профилирования решать, нужны ли async checkpoint, кэш аугментации или DDP.
 8. FP8, CUDA Graphs, уменьшение context и архитектурные изменения оставить
@@ -331,3 +342,5 @@ FP8 имеет смысл только на поддерживаемом GPU п�
 | 2026-08-30 | Sharded token cache по `data_source` | Unit tests, cache reuse test |
 | 2026-08-30 | SDPA для train/inference с `eager`-выключателем | 249 tests |
 | 2026-08-30 | Speed benchmark пересобран как eager vs SDPA | Configuration tests |
+| 2026-08-30 | Fused AdamW с CUDA/PyTorch fallback | Unit tests; GPU A/B ожидается |
+| 2026-08-30 | Удалён повторный full validation после train | Integration tests |

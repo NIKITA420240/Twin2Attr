@@ -115,6 +115,7 @@ class AppConfigTests(unittest.TestCase):
             self.config.inference.transformer.torch_compile.dynamic
         )
         training_runtime = self.config.model_description.transformer.training_runtime
+        self.assertTrue(training_runtime.optimizer.fused)
         self.assertTrue(training_runtime.length_bucketing.enabled)
         self.assertEqual(
             training_runtime.length_bucketing.mega_batch_multiplier,

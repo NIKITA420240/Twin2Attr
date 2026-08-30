@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 import torch
+from loguru import logger
 from torch import nn
 from transformers import PreTrainedModel
 
@@ -224,6 +226,7 @@ def build_transformer_optimizer(
     backbone_lr: float,
     multipliers: LearningRateMultipliers,
     weight_decay: float,
+    fused: bool = False,
 ) -> torch.optim.AdamW:
     """Create non-overlapping AdamW groups for embeddings/backbone/head."""
 
@@ -354,7 +357,19 @@ def build_transformer_optimizer(
             f"{len(assigned_ids - trainable_ids)} unexpected"
         )
 
-    optimizer = torch.optim.AdamW(groups)
+    optimizer_kwargs: dict[str, object] = {}
+    parameter_device = next(model.parameters()).device
+    fused_supported = "fused" in inspect.signature(torch.optim.AdamW).parameters
+    use_fused = fused and parameter_device.type == "cuda" and fused_supported
+    if fused and not use_fused:
+        logger.warning(
+            "Fused AdamW requested but unavailable on device={} with this "
+            "PyTorch build; falling back to standard AdamW",
+            parameter_device,
+        )
+    if use_fused:
+        optimizer_kwargs["fused"] = True
+    optimizer = torch.optim.AdamW(groups, **optimizer_kwargs)
     if trainable_token_ids is not None:
         _install_final_embedding_gradient_mask(
             optimizer,

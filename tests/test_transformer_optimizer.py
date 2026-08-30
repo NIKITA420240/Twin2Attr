@@ -1,4 +1,6 @@
+import inspect
 import unittest
+from unittest.mock import patch
 
 import torch
 from torch import nn
@@ -137,6 +139,42 @@ class TransformerOptimizerTests(unittest.TestCase):
         group_names = {group["group_name"] for group in optimizer.param_groups}
         self.assertIn("backbone.layer.0.decay", group_names)
         self.assertIn("backbone.layer.1.decay", group_names)
+
+    def test_fused_optimizer_falls_back_on_cpu(self) -> None:
+        optimizer = build_transformer_optimizer(
+            FakeModel(),
+            backbone_lr=1e-5,
+            multipliers=LearningRateMultipliers(),
+            weight_decay=0.01,
+            fused=True,
+        )
+
+        self.assertIsNot(optimizer.defaults.get("fused"), True)
+
+    def test_enables_fused_optimizer_for_cuda_parameters(self) -> None:
+        model = FakeModel()
+        adamw_signature = inspect.signature(torch.optim.AdamW)
+        with (
+            patch.object(
+                torch.nn.Parameter,
+                "device",
+                new_callable=lambda: property(lambda _self: torch.device("cuda")),
+            ),
+            patch("match.models.transformer.optimizer.torch.optim.AdamW") as adamw,
+            patch(
+                "match.models.transformer.optimizer.inspect.signature",
+                return_value=adamw_signature,
+            ),
+        ):
+            build_transformer_optimizer(
+                model,
+                backbone_lr=1e-5,
+                multipliers=LearningRateMultipliers(),
+                weight_decay=0.01,
+                fused=True,
+            )
+
+        self.assertTrue(adamw.call_args.kwargs["fused"])
 
     def test_updates_only_selected_word_embedding_rows(self) -> None:
         model = FakeModel()

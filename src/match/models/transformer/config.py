@@ -69,6 +69,7 @@ class SequenceClassifierConfig:
     token_cache_directory: Path = Path(".cache/tokenized_pairs")
     token_cache_build_chunk_size: int = 4_096
     attention_implementation: str = "auto"
+    optimizer_fused: bool = False
     torch_compile: bool = False
     torch_compile_mode: str = "reduce-overhead"
     onnx_export_enabled: bool = False
@@ -273,6 +274,7 @@ class ResolvedTrainingConfig:
     token_cache_enabled: bool
     token_cache_directory: str
     token_cache_build_chunk_size: int
+    optimizer_fused: bool
     torch_compile: bool
     torch_compile_mode: str
 

@@ -501,6 +501,9 @@ model_description:
       # eager explicitly disables SDPA; auto delegates to Transformers.
       attention:
         implementation: sdpa
+      optimizer:
+        # Uses the fused CUDA AdamW kernel when supported and falls back safely.
+        fused: true
       length_bucketing:
         enabled: true
         # Shuffle globally, then sort only inside megabatches of this many
