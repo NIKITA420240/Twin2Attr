@@ -408,12 +408,16 @@ model_description:
     early_stopping_patience: 2
     auto_find_batch_size: true
     head:
-      # default keeps the Hugging Face CLS head; pooling builds the branches below.
+      # default keeps the Hugging Face CLS head; pooling and
+      # typed_attribute_fusion build the branches below. Typed fusion is PyTorch-only.
       type: pooling
       # Supported values: cls, mean, max, attention. Their outputs are concatenated.
       poolings: [cls, attention]
       # Empty list gives a single linear classifier after pooling.
       mlp_hidden_dims: [384]
+      # Encoder for the 52 deterministic typed-attribute aggregates.
+      typed_hidden_dims: [128, 64]
+      typed_layer_norm: true
       dropout: 0.15
       attention_hidden_dim: 192
       # Independent learned token-importance distributions, concatenated before MLP.

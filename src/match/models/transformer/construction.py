@@ -40,6 +40,7 @@ def _build_classifier(
     profile: str,
     head_type: str,
     head_config: PoolingHeadConfig | None,
+    typed_feature_count: int,
 ) -> PreTrainedModel:
     if is_prompted_profile(profile) and head_type == "native":
         model = AutoModelForSequenceClassification.from_pretrained(
@@ -65,13 +66,15 @@ def _build_classifier(
             id2label={0: "different", 1: "match"},
             label2id={"different": 0, "match": 1},
         )
-    if head_type == "pooling":
+    if head_type in {"pooling", "typed_attribute_fusion"}:
         return PoolingSequenceClassifier.from_backbone_pretrained(
             model_path,
             head_config=head_config or PoolingHeadConfig(),
             num_labels=2,
             id2label={0: "different", 1: "match"},
             label2id={"different": 0, "match": 1},
+            head_type=head_type,
+            typed_feature_count=typed_feature_count,
         )
     if head_type == "default":
         return AutoModelForSequenceClassification.from_pretrained(
@@ -96,6 +99,7 @@ def model_factory(
     train_last_n_layers: int | None = None,
     head_type: str = "default",
     head_config: PoolingHeadConfig | None = None,
+    typed_feature_count: int = 0,
     profile: str = SEQUENCE_CLASSIFIER_PROFILE,
 ):
     """Return the callback expected by Hugging Face ``Trainer.model_init``."""
@@ -108,6 +112,7 @@ def model_factory(
             profile=profile,
             head_type=head_type,
             head_config=head_config,
+            typed_feature_count=typed_feature_count,
         )
         contract = TransformerArtifactContract.for_training(
             profile=profile,

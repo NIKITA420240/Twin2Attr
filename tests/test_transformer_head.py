@@ -1,5 +1,6 @@
 import unittest
 import tempfile
+import gc
 from pathlib import Path
 
 import torch
@@ -13,14 +14,91 @@ from transformers import (
 from match.models.transformer.head import (
     HybridSequenceClassifier,
     HybridSequenceClassifierConfig,
+    PoolingSequenceClassifier,
+    PoolingSequenceClassifierConfig,
     PoolingHeadConfig,
     TransformerPoolingHead,
+    TypedAttributeFusionHead,
 )
 from match.models.transformer.model import model_factory
 from match.models.transformer.predictor import load_trained_classifier
 
 
 class TransformerPoolingHeadTests(unittest.TestCase):
+    def test_typed_fusion_head_validates_and_combines_inputs(self) -> None:
+        head = TypedAttributeFusionHead(
+            hidden_size=4,
+            typed_feature_count=3,
+            num_labels=2,
+            config=PoolingHeadConfig(
+                poolings=("cls", "mean"),
+                mlp_hidden_dims=(5,),
+                typed_hidden_dims=(2,),
+                dropout=0.0,
+            ),
+        )
+        hidden_states = torch.randn(2, 3, 4)
+        attention_mask = torch.ones(2, 3, dtype=torch.long)
+
+        logits = head(
+            hidden_states,
+            attention_mask,
+            torch.randn(2, 3),
+        )
+
+        self.assertEqual(tuple(logits.shape), (2, 2))
+        self.assertTrue(torch.isfinite(logits).all())
+        with self.assertRaisesRegex(ValueError, "expected 3"):
+            head(hidden_states, attention_mask, torch.randn(2, 2))
+
+    def test_typed_classifier_requires_features_and_survives_save_load(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            model = PoolingSequenceClassifier(
+                PoolingSequenceClassifierConfig(
+                    backbone_config=BertConfig(
+                        vocab_size=16,
+                        hidden_size=8,
+                        num_hidden_layers=1,
+                        num_attention_heads=2,
+                        intermediate_size=16,
+                        max_position_embeddings=32,
+                    ).to_dict(),
+                    head_config=PoolingHeadConfig(
+                        poolings=("cls",),
+                        mlp_hidden_dims=(),
+                        typed_hidden_dims=(4,),
+                        dropout=0.0,
+                    ).to_dict(),
+                    head_type="typed_attribute_fusion",
+                    typed_feature_count=3,
+                    num_labels=2,
+                )
+            ).eval()
+            inputs = {
+                "input_ids": torch.tensor([[1, 2, 3]]),
+                "attention_mask": torch.ones(1, 3, dtype=torch.long),
+                "typed_features": torch.tensor([[0.1, 0.2, 0.3]]),
+            }
+            expected = model(**inputs).logits
+            with self.assertRaisesRegex(ValueError, "requires typed_features"):
+                model(
+                    input_ids=inputs["input_ids"],
+                    attention_mask=inputs["attention_mask"],
+                )
+
+            model.save_pretrained(root, safe_serialization=False)
+            restored = PoolingSequenceClassifier.from_pretrained(root).eval()
+
+            self.assertEqual(
+                restored.config.match_head_type,
+                "typed_attribute_fusion",
+            )
+            self.assertEqual(restored.config.typed_feature_count, 3)
+            torch.testing.assert_close(restored(**inputs).logits, expected)
+            del restored, model
+            gc.collect()
+
     def test_combines_selected_poolings_and_ignores_padding(self) -> None:
         head = TransformerPoolingHead(
             hidden_size=2,
@@ -181,7 +259,10 @@ class TransformerPoolingHeadTests(unittest.TestCase):
         torch.testing.assert_close(logits[:, :1], torch.zeros_like(expected_native))
 
     def test_factory_model_survives_save_and_load(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_directory:
+        # Transformers may keep checkpoint files memory-mapped briefly on Windows.
+        with tempfile.TemporaryDirectory(
+            ignore_cleanup_errors=True
+        ) as temporary_directory:
             root = Path(temporary_directory)
             checkpoint = root / "checkpoint"
             trained = root / "trained"
@@ -247,6 +328,8 @@ class TransformerPoolingHeadTests(unittest.TestCase):
             self.assertEqual(restored.config.head_config["attention_num_heads"], 2)
             torch.testing.assert_close(restored(**inputs).logits, expected)
             self.assertIsInstance(restored(**inputs, return_dict=False), tuple)
+            del restored, model, default_model
+            gc.collect()
 
 
 if __name__ == "__main__":

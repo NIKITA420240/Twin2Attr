@@ -1,0 +1,40 @@
+# Human-label paired comparison for the Transformer typed-fusion head.
+# ONNX is disabled because the first implementation deliberately targets
+# PyTorch training and inference only.
+test_type: training_quality
+reference_test: pooling_baseline
+
+# One screening seed first; use [42, 43, 44] before accepting a quality gain.
+seeds:
+  - 42
+
+tests:
+  pooling_baseline:
+    name: transformer_pooling_human_labels
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.augmentation_model
+        value: null
+      - path: training.data_model
+        value: base_dataset
+      - path: model_description.transformer.head.type
+        value: pooling
+      - path: model_description.transformer.export.onnx.enabled
+        value: false
+
+  typed_attribute_fusion:
+    name: transformer_typed_attribute_fusion_human_labels
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.augmentation_model
+        value: null
+      - path: training.data_model
+        value: base_dataset
+      - path: model_description.transformer.head.type
+        value: typed_attribute_fusion
+      - path: model_description.transformer.export.onnx.enabled
+        value: false
+      - path: pair_features.typed_attributes.enabled
+        value: true

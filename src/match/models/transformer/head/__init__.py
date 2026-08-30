@@ -7,7 +7,7 @@ from .classifier import (
     PoolingSequenceClassifier,
     PoolingSequenceClassifierConfig,
 )
-from .model import TransformerPoolingHead
+from .model import TransformerPoolingHead, TypedAttributeFusionHead
 
 __all__ = [
     "PoolingHeadConfig",
@@ -16,4 +16,5 @@ __all__ = [
     "HybridSequenceClassifier",
     "HybridSequenceClassifierConfig",
     "TransformerPoolingHead",
+    "TypedAttributeFusionHead",
 ]

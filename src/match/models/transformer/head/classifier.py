@@ -17,7 +17,7 @@ from transformers import (
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 from .config import PoolingHeadConfig
-from .model import TransformerPoolingHead
+from .model import TransformerPoolingHead, TypedAttributeFusionHead
 
 
 def _restore_backbone_config(values: dict[str, Any]) -> PretrainedConfig:
@@ -37,18 +37,35 @@ class PoolingSequenceClassifierConfig(PretrainedConfig):
         *,
         backbone_config: dict[str, Any] | None = None,
         head_config: dict[str, Any] | None = None,
+        head_type: str | None = None,
+        typed_feature_count: int = 0,
         **kwargs: Any,
     ) -> None:
+        persisted_head_type = kwargs.pop("match_head_type", None)
         super().__init__(**kwargs)
         self.backbone_config = dict(backbone_config or {})
         self.head_config = dict(head_config or PoolingHeadConfig().to_dict())
+        self.match_head_type = str(
+            head_type or persisted_head_type or "pooling"
+        ).strip().lower()
+        if self.match_head_type not in {
+            "pooling",
+            "hybrid",
+            "typed_attribute_fusion",
+        }:
+            raise ValueError("invalid project pooling classifier head type")
+        self.typed_feature_count = int(typed_feature_count)
+        if self.match_head_type == "typed_attribute_fusion":
+            if self.typed_feature_count < 1:
+                raise ValueError("typed fusion config requires typed features")
+        elif self.typed_feature_count != 0:
+            raise ValueError("pooling head must not define typed features")
         self.hidden_size = 0
         if self.backbone_config:
             restored_config = _restore_backbone_config(self.backbone_config)
             self.hidden_size = int(getattr(restored_config, "hidden_size", 0))
             if self.hidden_size < 1:
                 raise ValueError("backbone config must expose a hidden size")
-        self.match_head_type = "pooling"
 
 
 class PoolingSequenceClassifier(PreTrainedModel):
@@ -59,11 +76,20 @@ class PoolingSequenceClassifier(PreTrainedModel):
         super().__init__(config)
         backbone_config = _restore_backbone_config(config.backbone_config)
         self.backbone = AutoModel.from_config(backbone_config)
-        self.head = TransformerPoolingHead(
-            hidden_size=config.hidden_size,
-            num_labels=config.num_labels,
-            config=PoolingHeadConfig.from_dict(config.head_config),
-        )
+        head_config = PoolingHeadConfig.from_dict(config.head_config)
+        if config.match_head_type == "typed_attribute_fusion":
+            self.head = TypedAttributeFusionHead(
+                hidden_size=config.hidden_size,
+                typed_feature_count=config.typed_feature_count,
+                num_labels=config.num_labels,
+                config=head_config,
+            )
+        else:
+            self.head = TransformerPoolingHead(
+                hidden_size=config.hidden_size,
+                num_labels=config.num_labels,
+                config=head_config,
+            )
         self.post_init()
 
     @classmethod
@@ -75,11 +101,15 @@ class PoolingSequenceClassifier(PreTrainedModel):
         num_labels: int,
         id2label: dict[int, str],
         label2id: dict[str, int],
+        head_type: str = "pooling",
+        typed_feature_count: int = 0,
     ) -> PoolingSequenceClassifier:
         backbone_config = AutoConfig.from_pretrained(model_path)
         config = PoolingSequenceClassifierConfig(
             backbone_config=backbone_config.to_dict(),
             head_config=head_config.to_dict(),
+            head_type=head_type,
+            typed_feature_count=typed_feature_count,
             num_labels=num_labels,
             id2label=id2label,
             label2id=label2id,
@@ -125,6 +155,7 @@ class PoolingSequenceClassifier(PreTrainedModel):
         input_ids: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
         token_type_ids: torch.Tensor | None = None,
+        typed_features: torch.Tensor | None = None,
         labels: torch.Tensor | None = None,
         return_dict: bool | None = None,
         **kwargs: Any,
@@ -146,7 +177,22 @@ class PoolingSequenceClassifier(PreTrainedModel):
             return_dict=True,
             **backbone_kwargs,
         )
-        logits = self.head(outputs.last_hidden_state, attention_mask)
+        if self.config.match_head_type == "typed_attribute_fusion":
+            if typed_features is None:
+                raise ValueError("typed fusion classifier requires typed_features")
+            if not isinstance(self.head, TypedAttributeFusionHead):
+                raise RuntimeError("typed fusion artifact restored an invalid head")
+            logits = self.head(
+                outputs.last_hidden_state,
+                attention_mask,
+                typed_features,
+            )
+        else:
+            if typed_features is not None:
+                raise ValueError("pooling classifier does not accept typed_features")
+            if not isinstance(self.head, TransformerPoolingHead):
+                raise RuntimeError("pooling artifact restored an invalid head")
+            logits = self.head(outputs.last_hidden_state, attention_mask)
         loss = None
         if labels is not None:
             loss = torch.nn.functional.cross_entropy(logits, labels)

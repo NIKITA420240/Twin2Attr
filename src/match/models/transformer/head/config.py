@@ -20,6 +20,8 @@ class PoolingHeadConfig:
     native_logit_weight: float = 1.0
     attention_logit_weight: float = 0.0
     train_logit_weights: bool = True
+    typed_hidden_dims: tuple[int, ...] = (128, 64)
+    typed_layer_norm: bool = True
 
     def __post_init__(self) -> None:
         normalized = tuple(pooling.strip().lower() for pooling in self.poolings)
@@ -35,6 +37,8 @@ class PoolingHeadConfig:
             raise ValueError("Transformer head poolings must be unique")
         if any(dimension < 1 for dimension in self.mlp_hidden_dims):
             raise ValueError("Transformer head MLP dimensions must be positive")
+        if any(dimension < 1 for dimension in self.typed_hidden_dims):
+            raise ValueError("typed fusion dimensions must be positive")
         if not 0.0 <= self.dropout < 1.0:
             raise ValueError("Transformer head dropout must be in [0, 1)")
         if self.attention_hidden_dim is not None and self.attention_hidden_dim < 1:
@@ -57,6 +61,8 @@ class PoolingHeadConfig:
             "native_logit_weight": self.native_logit_weight,
             "attention_logit_weight": self.attention_logit_weight,
             "train_logit_weights": self.train_logit_weights,
+            "typed_hidden_dims": list(self.typed_hidden_dims),
+            "typed_layer_norm": self.typed_layer_norm,
         }
 
     @classmethod
@@ -76,6 +82,10 @@ class PoolingHeadConfig:
             native_logit_weight=float(values.get("native_logit_weight", 1.0)),
             attention_logit_weight=float(values.get("attention_logit_weight", 0.0)),
             train_logit_weights=bool(values.get("train_logit_weights", True)),
+            typed_hidden_dims=tuple(
+                int(value) for value in values.get("typed_hidden_dims", (128, 64))
+            ),
+            typed_layer_norm=bool(values.get("typed_layer_norm", True)),
         )
 
 

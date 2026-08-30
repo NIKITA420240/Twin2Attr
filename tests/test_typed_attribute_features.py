@@ -8,6 +8,7 @@ from match.pair_features import (
     aggregate_typed_attribute_features,
 )
 from match.prepare_data import PreparedCard, PreparedPair
+from match.models.transformer.typed_fusion import build_typed_feature_matrix
 
 
 def _pair(
@@ -117,6 +118,20 @@ class TypedAttributeFeatureTests(unittest.TestCase):
     def test_options_manifest_round_trip(self) -> None:
         restored = TypedAttributeOptions.from_dict(self.options.to_dict())
         self.assertEqual(restored, self.options)
+
+    def test_transformer_matrix_has_stable_finite_schema(self) -> None:
+        pair = _pair(
+            (("Артикул", "AB-123"), ("Вес, г", "1000")),
+            (("Артикул", "AB123"), ("Вес, кг", "1")),
+        )
+
+        names, matrix = build_typed_feature_matrix([pair, pair], self.options)
+
+        self.assertEqual(len(names), 52)
+        self.assertEqual(matrix.shape, (2, 52))
+        self.assertEqual(matrix.dtype, np.float32)
+        self.assertTrue(np.isfinite(matrix).all())
+        np.testing.assert_array_equal(matrix[0], matrix[1])
 
 
 if __name__ == "__main__":

@@ -36,8 +36,16 @@ benchmark:
     # Intentionally disabled until the typed-feature implementation is reviewed.
     typed_attribute_quality:
       type: training_quality
-      enabled: false
+      enabled: true
       tests_path: configs/benchmark_tests/typed_attribute_quality.yaml
+      selected_tests: null
+
+    # Paired human-label Transformer fit: pooling baseline versus the same
+    # text branch fused with all 52 deterministic typed attributes.
+    typed_transformer_quality:
+      type: training_quality
+      enabled: true
+      tests_path: configs/benchmark_tests/typed_transformer_quality.yaml
       selected_tests: null
 
     # Retrains two paired Transformers with the same 750,000-row
@@ -67,6 +75,6 @@ benchmark:
     # soft-label/confidence-weighting variants.
     soft_label_confidence_quality:
       type: training_quality
-      enabled: true
+      enabled: false
       tests_path: configs/benchmark_tests/soft_label_confidence_quality.yaml
       selected_tests: null

@@ -15,8 +15,10 @@ tests:
     overrides:
       - path: training.model
         value: boosting
+      - path: training.augmentation_model
+        value: null
       - path: training.data_model
-        value: mix_dataset
+        value: base_dataset
       - path: pair_features.typed_attributes.enabled
         value: false
 
@@ -25,8 +27,10 @@ tests:
     overrides:
       - path: training.model
         value: boosting
+      - path: training.augmentation_model
+        value: null
       - path: training.data_model
-        value: mix_dataset
+        value: base_dataset
       - path: pair_features.typed_attributes.enabled
         value: true
       - path: pair_features.typed_attributes.types.code
@@ -45,8 +49,10 @@ tests:
     overrides:
       - path: training.model
         value: boosting
+      - path: training.augmentation_model
+        value: null
       - path: training.data_model
-        value: mix_dataset
+        value: base_dataset
       - path: pair_features.typed_attributes.enabled
         value: true
       - path: pair_features.typed_attributes.types.code
@@ -65,8 +71,10 @@ tests:
     overrides:
       - path: training.model
         value: boosting
+      - path: training.augmentation_model
+        value: null
       - path: training.data_model
-        value: mix_dataset
+        value: base_dataset
       - path: pair_features.typed_attributes.enabled
         value: true
       - path: pair_features.typed_attributes.types.code
@@ -85,8 +93,10 @@ tests:
     overrides:
       - path: training.model
         value: boosting
+      - path: training.augmentation_model
+        value: null
       - path: training.data_model
-        value: mix_dataset
+        value: base_dataset
       - path: pair_features.typed_attributes.enabled
         value: true
       - path: pair_features.typed_attributes.types.code

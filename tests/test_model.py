@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+import gc
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,8 +15,11 @@ from match.models.transformer import (
     compute_pr_auc,
     train_sequence_classifier,
 )
+from match.models.transformer.head import PoolingHeadConfig
+from match.models.transformer.profile import TransformerRuntimeContract
 from match.models.transformer.onnx_export import _ClassifierGraph, _EncoderGraph
 from match.models.transformer.predictor import (
+    TransformerPredictor,
     _length_bucket_order,
     _restore_original_order,
     predict_logit_margins,
@@ -26,6 +30,7 @@ from match.pair_encoding import (
     encode_prepared_pair,
     infer_pair_max_length,
 )
+from match.pair_features import TypedAttributeOptions
 from match.prepare_data import PreparedCard, PreparedPair
 
 
@@ -467,6 +472,51 @@ class SequenceClassifierModelTests(unittest.TestCase):
             )
             self.assertEqual(saved_config["match_max_attribute_value_chars"], 256)
             self.assertTrue(np.isfinite(result.validation_macro_pr_auc))
+
+            typed_output = directory / "typed-trained"
+            typed_result = train_sequence_classifier(
+                train_pairs,
+                validation_pairs,
+                SequenceClassifierConfig(
+                    str(checkpoint),
+                    max_epochs=1,
+                    hpo_trials=1,
+                    seed=7,
+                    max_attribute_value_chars=256,
+                    head_type="typed_attribute_fusion",
+                    head_config=PoolingHeadConfig(
+                        poolings=("cls",),
+                        mlp_hidden_dims=(),
+                        typed_hidden_dims=(4,),
+                        dropout=0.0,
+                    ),
+                    typed_attribute_options=TypedAttributeOptions(enabled=True),
+                ),
+                output_dir=typed_output,
+            )
+            typed_config = json.loads(
+                (typed_output / "config.json").read_text(encoding="utf-8")
+            )
+            typed_contract = TransformerRuntimeContract.from_config(typed_config)
+
+            self.assertEqual(
+                typed_contract.output.head_type,
+                "typed_attribute_fusion",
+            )
+            self.assertEqual(len(typed_contract.typed_feature_names), 52)
+            self.assertEqual(typed_contract.typed_feature_schema_version, 1)
+            self.assertTrue(np.isfinite(typed_result.validation_macro_pr_auc))
+            typed_predictor = TransformerPredictor.load(
+                typed_output,
+                device="cpu",
+                batch_size=2,
+                pin_memory=False,
+            )
+            typed_logits = typed_predictor.predict_pair_logits(validation_pairs)
+            self.assertEqual(typed_logits.shape, (2, 2))
+            self.assertTrue(np.isfinite(typed_logits).all())
+            del typed_predictor
+            gc.collect()
 
 
 if __name__ == "__main__":

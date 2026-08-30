@@ -294,6 +294,12 @@ def _build_onnx_predictor(
     artifacts = _mapping(solution.get("onnx_artifacts", {}), "onnx_artifacts")
     if tokenizer is None or model_config is None:
         tokenizer, model_config = _load_components(model_directory)
+    if TransformerRuntimeContract.from_config(
+        model_config
+    ).output.head_type == "typed_attribute_fusion":
+        raise ValueError(
+            "typed_attribute_fusion currently supports the PyTorch backend only"
+        )
     provider = provider_override or str(runtime.get("provider", "cuda")).lower()
     fallback = (
         bool(runtime.get("fallback_to_pytorch", True))
@@ -375,6 +381,12 @@ def _build_native_tensorrt_predictor(
     runtime = _mapping(solution.get("tensorrt", {}), "tensorrt")
     artifacts = _mapping(solution.get("onnx_artifacts", {}), "onnx_artifacts")
     tokenizer, model_config = _load_components(model_directory)
+    if TransformerRuntimeContract.from_config(
+        model_config
+    ).output.head_type == "typed_attribute_fusion":
+        raise ValueError(
+            "typed_attribute_fusion currently supports the PyTorch backend only"
+        )
     options = _native_tensorrt_options(
         runtime, artifacts, model_directory, tokenizer
     )

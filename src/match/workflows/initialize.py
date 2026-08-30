@@ -47,6 +47,11 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
         )
 
     parameters = config.model_description.transformer
+    if parameters.head.type == "typed_attribute_fusion":
+        raise ValueError(
+            "typed_attribute_fusion requires train so its typed branch and "
+            "fusion classifier can be fitted"
+        )
     encoding = parameters.pair_encoding
     max_length = _initialization_max_length(config)
     head_config = PoolingHeadConfig(
@@ -55,6 +60,8 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
         dropout=parameters.head.dropout,
         attention_hidden_dim=parameters.head.attention_hidden_dim,
         attention_num_heads=parameters.head.attention_num_heads,
+        typed_hidden_dims=parameters.head.typed_hidden_dims,
+        typed_layer_norm=parameters.head.typed_layer_norm,
     )
 
     with workflow_logging(config, workflow_name="initialize"):

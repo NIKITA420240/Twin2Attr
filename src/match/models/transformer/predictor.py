@@ -227,6 +227,7 @@ class TransformerPredictor:
         operation: Callable[..., np.ndarray],
         output_width: int,
         max_length: int | None = None,
+        require_typed_features: bool = False,
     ) -> np.ndarray:
         if not pairs:
             return np.empty((0, output_width), dtype=np.float32)
@@ -240,6 +241,16 @@ class TransformerPredictor:
             if self.max_attribute_value_tokens is not None
             else self.executor.max_attribute_value_tokens
         )
+        runtime_contract = getattr(self.executor, "runtime_contract", None)
+        typed_options = None
+        typed_names: tuple[str, ...] = ()
+        if require_typed_features:
+            if runtime_contract is None:
+                raise RuntimeError("typed fusion executor has no runtime contract")
+            typed_options = runtime_contract.typed_attribute_options
+            typed_names = runtime_contract.typed_feature_names
+            if typed_options is None:
+                raise RuntimeError("typed fusion artifact has no feature options")
         collator = self._batching.collator(
             self.tokenizer,
             max_length=self._resolved_max_length(pairs, max_length),
@@ -247,6 +258,8 @@ class TransformerPredictor:
             max_attribute_value_chars=value_chars,
             max_attribute_value_tokens=value_tokens,
             profile=self._output_contract.profile,
+            typed_attribute_options=typed_options,
+            typed_feature_names=typed_names,
         )
         dataset, order = inference_dataset(
             pairs,
@@ -305,6 +318,9 @@ class TransformerPredictor:
             operation=self.executor.predict_logits,
             output_width=self._output_contract.num_logits,
             max_length=max_length,
+            require_typed_features=(
+                self._output_contract.head_type == "typed_attribute_fusion"
+            ),
         )
 
     def encode_pairs(
@@ -319,6 +335,7 @@ class TransformerPredictor:
             operation=operation,
             output_width=self.output_dim,
             max_length=max_length,
+            require_typed_features=False,
         )
 
     def encode(self, batch: PredictionBatch) -> np.ndarray:

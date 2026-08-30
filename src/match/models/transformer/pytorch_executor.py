@@ -181,6 +181,7 @@ class PyTorchTransformerExecutor:
     ) -> np.ndarray:
         try:
             inputs = self._inputs(batch, non_blocking=non_blocking)
+            inputs.pop("typed_features", None)
             with torch.inference_mode(), autocast_context(self.device, self.dtype):
                 backbone = (
                     self.backbone_model

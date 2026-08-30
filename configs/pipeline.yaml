@@ -447,12 +447,15 @@ model_description:
         enabled: false
         mode: reduce-overhead
     head:
-      # default keeps the Hugging Face CLS head; pooling builds the branches below.
+      # Typed fusion is available for sequence_classifier profiles as
+      # type: typed_attribute_fusion; this prompted profile keeps its native head.
       type: native
       # Supported values: cls, mean, max, attention. Their outputs are concatenated.
       poolings: [cls, attention]
       # Empty list gives a single linear classifier after pooling.
       mlp_hidden_dims: [384]
+      typed_hidden_dims: [128, 64]
+      typed_layer_norm: true
       dropout: 0.15
       attention_hidden_dim: 192
       # Independent learned token-importance distributions, concatenated before MLP.
@@ -546,7 +549,8 @@ features:
     chunk_size: 10000
 
 # Pair-level features are computed only after both cards are available. They do
-# not modify the serialized Transformer input; CatBoost/stacking consume them.
+# not modify serialized text; CatBoost/stacking and typed Transformer fusion can
+# consume their deterministic aggregate tensor.
 pair_features:
   typed_attributes:
     enabled: true

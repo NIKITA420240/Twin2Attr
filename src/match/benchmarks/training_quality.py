@@ -112,12 +112,13 @@ def _run_case(
     try:
         configured = apply_benchmark_test(base_config, _seeded_test(test, seed))
         if configured.training.data_model not in {
+            "base_dataset",
             "mix_dataset",
             "mix_dataset_codex",
             "mix_dataset_neural_review",
         }:
             raise ValueError(
-                "training-quality benchmark requires a mixed training data model"
+                "training-quality benchmark requires a supported training data model"
             )
         configured, experiment_dir, registry_path = configure_experiment(
             configured,
