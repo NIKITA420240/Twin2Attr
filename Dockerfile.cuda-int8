@@ -1,0 +1,15 @@
+FROM odsai/ecup26-matching-baseline:1.0
+
+RUN python -m pip install \
+    --disable-pip-version-check \
+    --break-system-packages \
+    --no-cache-dir \
+    --upgrade \
+    "polars==1.43.2" \
+    "pymorphy3==2.0.6" \
+    "joblib==1.5.3" \
+    "loguru==0.7.3" \
+    "pint==0.25.3" \
+    "orjson==3.11.9"
+
+RUN python -c "import accelerate, joblib, loguru, orjson, pint, polars, pymorphy3, safetensors, torch, transformers; assert torch.version.cuda is not None; print('PyTorch:', torch.__version__); print('CUDA build:', torch.version.cuda); print('Transformers:', transformers.__version__); print('Accelerate:', accelerate.__version__); print('Safetensors:', safetensors.__version__)"

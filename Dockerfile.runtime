@@ -5,6 +5,7 @@ ARG TENSORRT_VERSION=10.9.0.34
 
 RUN python -m pip install \
     --disable-pip-version-check \
+    --break-system-packages \
     --no-cache-dir \
     --upgrade \
     "polars==1.43.2" \

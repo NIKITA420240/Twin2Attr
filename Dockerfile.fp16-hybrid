@@ -1,0 +1,19 @@
+FROM c0ffee103/twin2attr-runtime:qwen3-trt10.9-ort1.23.2
+
+COPY models/twin2attr/qwen3-reranker-4b-fp16/onnx/ /opt/twin2attr/fp16-weights/
+COPY build_submission/fp16_image_weights_manifest.json /opt/twin2attr/fp16-weights-manifest.json
+
+RUN python - <<'PY'
+import json
+from pathlib import Path
+
+manifest = json.loads(
+    Path("/opt/twin2attr/fp16-weights-manifest.json").read_text(encoding="utf-8")
+)
+root = Path(manifest["image_directory"])
+for entry in manifest["files"]:
+    path = root / entry["name"]
+    if not path.is_file() or path.stat().st_size != entry["size"]:
+        raise SystemExit(f"invalid hybrid FP16 image weight: {path}")
+print(f"Validated {len(manifest['files'])} hybrid FP16 image weights")
+PY
