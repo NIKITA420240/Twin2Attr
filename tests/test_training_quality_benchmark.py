@@ -303,6 +303,7 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
                 "total_train_rows": 100,
                 "human_train_rows": 20,
                 "llm_train_rows": 80,
+                "hard_negative_train_rows": 0,
                 "codex_reviewed_train_rows": 0,
                 "llm_mean_weight_multiplier": 0.8,
                 "llm_downweighted_fraction": 0.2,
@@ -349,6 +350,12 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
             .get_column("mean_llm_train_rows")
             .item(),
             80.0,
+        )
+        self.assertEqual(
+            aggregates.filter(pl.col("test") == "transitivity_on")
+            .get_column("mean_hard_negative_train_rows")
+            .item(),
+            0.0,
         )
         self.assertGreaterEqual(report["total_elapsed_seconds"], 0.0)
         self.assertEqual(report["reference_test"], "transitivity_off")

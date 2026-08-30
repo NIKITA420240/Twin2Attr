@@ -48,6 +48,7 @@ def _seeded_test(test: BenchmarkTest, seed: int) -> BenchmarkTest:
             "runtime.seed",
             "data_model_description.base_dataset.seed",
             "data_model_description.mix_dataset.seed",
+            "data_model_description.mix_dataset_hard_negative.seed",
             "data_model_description.mix_dataset_codex.seed",
             "data_model_description.mix_dataset_neural_review.seed",
             "augmentation_models.attribute_shuffle.seed",
@@ -92,6 +93,7 @@ def _run_case(
         "total_train_rows": None,
         "human_train_rows": None,
         "llm_train_rows": None,
+        "hard_negative_train_rows": None,
         "codex_reviewed_train_rows": None,
         "neural_review_train_rows": None,
         "neural_review_negative_rows": None,
@@ -113,6 +115,7 @@ def _run_case(
         configured = apply_benchmark_test(base_config, _seeded_test(test, seed))
         if configured.training.data_model not in {
             "mix_dataset",
+            "mix_dataset_hard_negative",
             "mix_dataset_codex",
             "mix_dataset_neural_review",
         }:
@@ -134,6 +137,7 @@ def _run_case(
         weighting = record.get("sample_weighting", {})
         llm_weighting = weighting.get("llm", {})
         human_weighting = weighting.get("human", {})
+        hard_negative_weighting = weighting.get("hard_negative", {})
         codex_weighting = weighting.get("codex_reviewed", {})
         neural_weighting = weighting.get("neural_review", {})
         neural_targets = neural_weighting.get("target_counts", {})
@@ -150,6 +154,10 @@ def _run_case(
                 "total_train_rows": record["split"]["train_rows"],
                 "human_train_rows": human_weighting.get("rows"),
                 "llm_train_rows": llm_weighting.get("rows"),
+                "hard_negative_train_rows": hard_negative_weighting.get(
+                    "rows",
+                    0,
+                ),
                 "codex_reviewed_train_rows": codex_weighting.get("rows", 0),
                 "neural_review_train_rows": neural_weighting.get("rows", 0),
                 "neural_review_negative_rows": neural_targets.get("0", 0),
@@ -270,6 +278,7 @@ def _aggregate(
                 "total_train_rows",
                 "human_train_rows",
                 "llm_train_rows",
+                "hard_negative_train_rows",
                 "codex_reviewed_train_rows",
                 "neural_review_train_rows",
                 "neural_review_negative_rows",
