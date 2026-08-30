@@ -501,11 +501,10 @@ analysis_models:
 
 model_description:
   transformer:
-    # sequence_classifier keeps the existing BGE/RuBERT two-logit behavior.
-    # prompted_binary_reranker enables Nemotron prompting and one-logit scoring.
-    profile: prompted_binary_reranker
-    pretrained_model_path: models/llama-nemotron-rerank-1b-v2
-    artifact_dir: models/twin2attr/nemotron-typed-fusion
+    # Final BGE reranker with text-conditioned typed-attribute residuals.
+    profile: sequence_classifier
+    pretrained_model_path: models/bge-reranker-v2-m3
+    artifact_dir: models/twin2attr/bge-reranker-v2-m3-gated-residual-fusion
     tokenizer:
       batch_fields:
         enabled: true
@@ -518,19 +517,19 @@ model_description:
         dynamic_batch: true
         dynamic_sequence_length: true
         export_classifier: true
-        export_encoder: false
+        export_encoder: true
     pair_encoding:
-      use_field_tokens: false
+      use_field_tokens: true
       # null disables the pre-tokenization character hard cap.
       max_attribute_value_chars: 256
       # null disables per-attribute value truncation.
       max_attribute_value_tokens: 16
       # null lets the training data determine the limit.
-      max_length: 128
+      max_length: 512
       quantile: 0.95
       sample_size: 10000
       hard_cap: 512
-    max_epochs: 2
+    max_epochs: 8
     hpo_trials: 1
     # Used directly when hpo_trials=1; otherwise these are initial values.
     # Base LR for Transformer encoder layers and the value tuned by HPO.
@@ -539,31 +538,30 @@ model_description:
     # train_new_token_embeddings_only=true.
     embeddings_learning_rate: null
     train_new_token_embeddings_only: false
-    # null: full fine-tune; N: freeze embeddings and all but the top N encoder
-    # layers. P0 starts with top-3 plus the classifier head.
-    train_last_n_layers: 3
+    # Train the complete 24-layer encoder while keeping embeddings frozen.
+    train_last_n_layers: 24
     # Seed the new [KEY]/[VAL] rows from meaningful existing BGE subwords before
     # freezing them. These texts are tokenized; they are not vocabulary ids.
     special_token_initialization:
-      enabled: false
+      enabled: true
       key_seed_texts: [key, attribute, ключ, поле]
       value_seed_texts: [value, значение, характеристика]
     head_learning_rate: 1.0e-4
-    layerwise_lr_decay: 0.9
+    layerwise_lr_decay: 1.0
     weight_decay: 0.01
     hpo_learning_rate_min: 0.000001
     hpo_learning_rate_max: 0.00005
     hpo_weight_decay_min: 0.0
     hpo_weight_decay_max: 0.1
-    train_batch_size: 256
-    # Eval has no backward pass; use a larger batch independently of train.
-    eval_batch_size: 256
-    gradient_accumulation_steps: 1
+    # Keep the effective batch at 256 while fitting max_length=512 on H100.
+    train_batch_size: 64
+    eval_batch_size: 128
+    gradient_accumulation_steps: 4
     warmup_ratio: 0.06
     # Supported values: linear, cosine.
     lr_scheduler_type: cosine
     max_grad_norm: 1.0
-    early_stopping_patience: 2
+    early_stopping_patience: 3
     auto_find_batch_size: true
     validation:
       # A fixed human-validation sample for progress diagnostics during a long
@@ -601,20 +599,14 @@ model_description:
         enabled: false
         mode: reduce-overhead
     head:
-      # Preserve Nemotron's native logit and learn a residual correction from
-      # deterministic CODE/PHYSICAL/NUMERIC/SET/TEXT pair features.
-      type: typed_attribute_fusion
-      # Supported values: cls, mean, max, attention. Their outputs are concatenated.
+      # native_score + text_delta + sigmoid(gate) * typed_delta.
+      # Both residual outputs start at zero, preserving native BGE initially.
+      type: gated_residual_fusion
       poolings: [cls, attention]
-      # Empty list gives a single linear classifier after pooling.
-      mlp_hidden_dims: [384]
+      mlp_hidden_dims: [512]
       dropout: 0.15
-      attention_hidden_dim: 192
-      # Independent learned token-importance distributions, concatenated before MLP.
-      attention_num_heads: 1
-      native_logit_weight: 1.0
-      attention_logit_weight: 0.0
-      train_logit_weights: false
+      attention_hidden_dim: 1024
+      attention_num_heads: 3
       typed_hidden_dims: [128, 64]
       typed_layer_norm: true
 
