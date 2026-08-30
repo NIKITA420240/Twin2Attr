@@ -22,12 +22,19 @@ from match.models.transformer.head import PoolingHeadConfig
 from match.models.transformer.nemotron import (
     NemotronAttentionConfig,
     NemotronAttentionSequenceClassifier,
+    NemotronTypedFusionSequenceClassifier,
+)
+from match.models.transformer.profile import (
+    TransformerArtifactContract,
+    TransformerRuntimeContract,
 )
 from match.models.transformer.training import train_sequence_classifier
+from match.models.transformer.predictor import TransformerPredictor
 from match.models.transformer.onnx_export import export_transformer_to_onnx
 from match.pair_encoding import PairEncodingCollator, serialize_prompted_pair
 from match.paths import PROJECT_ROOT
 from match.prepare_data import PreparedCard, PreparedPair
+from match.pair_features import TypedAttributeOptions, typed_attribute_feature_names
 from match.submission import create_submission
 from match.workflows.initialize import initialize
 
@@ -280,6 +287,151 @@ TinyBidirectionalForSequenceClassification.register_for_auto_class(
                     actual = restored(**inputs).logits
 
         torch.testing.assert_close(actual, expected)
+
+    def test_typed_fusion_starts_as_native_and_round_trips(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self._tiny_remote_checkpoint(root)
+            options = TypedAttributeOptions(enabled=True)
+            feature_names = typed_attribute_feature_names(
+                enabled_types=options.enabled_types
+            )
+            with patch(
+                "transformers.dynamic_module_utils.HF_MODULES_CACHE",
+                str(root / "modules_cache"),
+            ):
+                model = NemotronTypedFusionSequenceClassifier.from_backbone_pretrained(
+                    str(source),
+                    head_config=PoolingHeadConfig(
+                        typed_hidden_dims=(8, 4),
+                        dropout=0.0,
+                    ),
+                    typed_feature_count=len(feature_names),
+                ).eval()
+                inputs = {
+                    "input_ids": torch.tensor([[1, 2, 3], [4, 5, 0]]),
+                    "attention_mask": torch.tensor([[1, 1, 1], [1, 1, 0]]),
+                }
+                typed_features = torch.randn(2, len(feature_names))
+                with torch.inference_mode():
+                    native = model.native_model(**inputs).logits
+                    expected = model(
+                        **inputs,
+                        typed_features=typed_features,
+                    ).logits
+                torch.testing.assert_close(expected, native)
+
+                TransformerRuntimeContract(
+                    output=TransformerArtifactContract.for_training(
+                        profile="prompted_binary_reranker",
+                        head_type="typed_attribute_fusion",
+                        num_logits=1,
+                    ),
+                    hidden_size=8,
+                    max_length=24,
+                    use_field_tokens=False,
+                    max_attribute_value_chars=256,
+                    max_attribute_value_tokens=16,
+                    typed_attribute_options=options,
+                    typed_feature_names=feature_names,
+                    typed_feature_schema_version=1,
+                ).apply_encoding_to(model.config)
+                artifact = root / "typed_artifact"
+                model.save_pretrained(artifact)
+                restored = NemotronTypedFusionSequenceClassifier.from_artifact(
+                    artifact
+                ).eval()
+                with torch.inference_mode():
+                    actual = restored(
+                        **inputs,
+                        typed_features=typed_features,
+                    ).logits
+
+        torch.testing.assert_close(actual, expected)
+
+    def test_typed_fusion_trains_with_token_cache_and_predicts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self._tiny_remote_checkpoint(root)
+            artifact = root / "typed_trained"
+            pairs = [
+                PreparedPair(
+                    PreparedCard(1, "red chair", "chair", (("модель", "A1"),)),
+                    PreparedCard(2, "red chair", "chair", (("модель", "A1"),)),
+                    1,
+                    "chair",
+                ),
+                PreparedPair(
+                    PreparedCard(3, "phone", "phone", (("модель", "P1"),)),
+                    PreparedCard(4, "chair", "chair", (("модель", "C9"),)),
+                    0,
+                    "phone",
+                ),
+                PreparedPair(
+                    PreparedCard(5, "chair", "chair", (("цвет", "red"),)),
+                    PreparedCard(6, "red chair", "chair", (("цвет", "red"),)),
+                    1,
+                    "chair",
+                ),
+                PreparedPair(
+                    PreparedCard(7, "phone", "phone", (("вес", "1 kg"),)),
+                    PreparedCard(8, "chair", "chair", (("вес", "8 kg"),)),
+                    0,
+                    "phone",
+                ),
+            ]
+            validation = [
+                PreparedPair(
+                    PreparedCard(9, "chair", "chair", (("модель", "A1"),)),
+                    PreparedCard(10, "chair", "chair", (("модель", "A1"),)),
+                    1,
+                    "chair",
+                ),
+                PreparedPair(
+                    PreparedCard(11, "phone", "phone", (("цвет", "black"),)),
+                    PreparedCard(12, "chair", "chair", (("цвет", "red"),)),
+                    0,
+                    "chair",
+                ),
+            ]
+            cache = root / "modules_cache"
+            with patch(
+                "transformers.dynamic_module_utils.HF_MODULES_CACHE",
+                str(cache),
+            ):
+                train_sequence_classifier(
+                    pairs,
+                    validation,
+                    SequenceClassifierConfig(
+                        str(source),
+                        profile="prompted_binary_reranker",
+                        head_type="typed_attribute_fusion",
+                        head_config=PoolingHeadConfig(
+                            typed_hidden_dims=(8, 4),
+                            dropout=0.0,
+                        ),
+                        typed_attribute_options=TypedAttributeOptions(enabled=True),
+                        use_field_tokens=False,
+                        max_epochs=1,
+                        hpo_trials=1,
+                        train_batch_size=2,
+                        eval_batch_size=2,
+                        max_length=24,
+                        token_cache_enabled=True,
+                        token_cache_directory=root / "token_cache",
+                    ),
+                    output_dir=artifact,
+                )
+                predictor = TransformerPredictor.load(
+                    artifact,
+                    batch_size=2,
+                    pin_memory=False,
+                    device="cpu",
+                )
+                logits = predictor.predict_pair_logits(validation)
+
+        self.assertEqual(logits.shape, (2, 1))
+        self.assertTrue(np.isfinite(logits).all())
 
     def test_attention_train_onnx_and_submission_path(self) -> None:
         if not all(

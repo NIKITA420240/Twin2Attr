@@ -225,7 +225,7 @@ class AppConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             self.config.model_description.transformer.artifact_dir,
-            PROJECT_ROOT / "models" / "twin2attr" / "nemotron-native",
+            PROJECT_ROOT / "models" / "twin2attr" / "nemotron-typed-fusion",
         )
         self.assertEqual(
             self.config.model_description.stacking.artifact_dir,
@@ -431,7 +431,7 @@ class AppConfigTests(unittest.TestCase):
     def test_loads_composable_transformer_head(self) -> None:
         head = self.config.model_description.transformer.head
 
-        self.assertEqual(head.type, "native")
+        self.assertEqual(head.type, "typed_attribute_fusion")
         self.assertEqual(head.poolings, ("cls", "attention"))
         self.assertEqual(head.mlp_hidden_dims, (384,))
         self.assertEqual(head.attention_hidden_dim, 192)
@@ -439,6 +439,8 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(head.native_logit_weight, 1.0)
         self.assertEqual(head.attention_logit_weight, 0.0)
         self.assertFalse(head.train_logit_weights)
+        self.assertEqual(head.typed_hidden_dims, (128, 64))
+        self.assertTrue(head.typed_layer_norm)
 
     def test_can_select_original_transformer_head(self) -> None:
         config = load_app_config_file(

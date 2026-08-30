@@ -55,16 +55,18 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
         dropout=parameters.head.dropout,
         attention_hidden_dim=parameters.head.attention_hidden_dim,
         attention_num_heads=parameters.head.attention_num_heads,
+        typed_hidden_dims=parameters.head.typed_hidden_dims,
+        typed_layer_norm=parameters.head.typed_layer_norm,
     )
 
     with workflow_logging(config, workflow_name="initialize"):
-        if (
-            is_prompted_profile(parameters.profile)
-            and parameters.head.type == "attention_pooling"
-        ):
+        if is_prompted_profile(parameters.profile) and parameters.head.type in {
+            "attention_pooling",
+            "typed_attribute_fusion",
+        }:
             raise ValueError(
-                "attention_pooling is randomly initialized and requires train; "
-                "initialize supports only the native Nemotron head"
+                f"{parameters.head.type} contains trainable new parameters and "
+                "requires train; initialize supports only the native Nemotron head"
             )
         if is_prompted_profile(parameters.profile):
             logger.info("Preserving the pretrained native Nemotron score head")

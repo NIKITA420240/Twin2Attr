@@ -203,8 +203,6 @@ class NemotronTypedFusionConfig(PretrainedConfig):
         self.head_config = dict(head_config or {})
         self.hidden_size = int(hidden_size)
         self.typed_feature_count = int(typed_feature_count)
-        if self.typed_feature_count < 1:
-            raise ValueError("Nemotron typed fusion requires typed features")
         TransformerArtifactContract.for_training(
             profile=PROMPTED_BINARY_RERANKER_PROFILE,
             head_type="typed_attribute_fusion",
@@ -257,6 +255,8 @@ class NemotronTypedFusionSequenceClassifier(PreTrainedModel):
         native_model: PreTrainedModel,
     ) -> None:
         super().__init__(config)
+        if config.typed_feature_count < 1:
+            raise ValueError("Nemotron typed fusion requires typed features")
         self.native_model = native_model
         self.typed_head = _TypedResidualHead(
             config.typed_feature_count,

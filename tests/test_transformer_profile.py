@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from match.pair_features import TypedAttributeOptions, typed_attribute_feature_names
 from match.models.transformer.profile import (
     PROMPTED_BINARY_RERANKER_PROFILE,
     SEQUENCE_CLASSIFIER_PROFILE,
@@ -68,6 +69,32 @@ class TransformerArtifactContractTests(unittest.TestCase):
         self.assertEqual(contract.max_length, 128)
         self.assertTrue(contract.use_field_tokens)
         self.assertEqual(contract.max_attribute_value_tokens, 32)
+
+    def test_typed_fusion_runtime_contract_round_trip(self) -> None:
+        options = TypedAttributeOptions(enabled=True)
+        names = typed_attribute_feature_names(enabled_types=options.enabled_types)
+        config = SimpleNamespace()
+        output = TransformerArtifactContract.for_training(
+            profile=PROMPTED_BINARY_RERANKER_PROFILE,
+            head_type="typed_attribute_fusion",
+            num_logits=1,
+        )
+        output.apply_to(config)
+        config.hidden_size = 24
+        contract = TransformerRuntimeContract(
+            output=output,
+            hidden_size=24,
+            max_length=128,
+            use_field_tokens=False,
+            max_attribute_value_chars=256,
+            max_attribute_value_tokens=16,
+            typed_attribute_options=options,
+            typed_feature_names=names,
+            typed_feature_schema_version=1,
+        )
+        contract.apply_encoding_to(config)
+
+        self.assertEqual(TransformerRuntimeContract.from_config(config), contract)
 
 
 if __name__ == "__main__":
