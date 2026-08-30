@@ -133,6 +133,11 @@ def build_solution_manifest(
                 "chunk_size": batch_fields.chunk_size,
             }
         }
+        solution["attention"] = {
+            "implementation": (
+                config.inference.transformer.attention.implementation
+            )
+        }
         length_bucketing = config.inference.transformer.length_bucketing
         solution["length_bucketing"] = {
             "enabled": length_bucketing.enabled,

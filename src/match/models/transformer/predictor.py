@@ -143,12 +143,14 @@ class TransformerPredictor:
         compile_enabled: bool = False,
         compile_mode: str = "reduce-overhead",
         compile_dynamic: bool = True,
+        attention_implementation: str = "auto",
         device: str | None = None,
     ) -> TransformerPredictor:
         tokenizer, model = load_trained_classifier(
             model_directory,
             device=device,
             dtype=dtype,
+            attention_implementation=attention_implementation,
         )
         executor = PyTorchTransformerExecutor(
             model,

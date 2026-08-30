@@ -40,11 +40,18 @@ def _build_classifier(
     profile: str,
     head_type: str,
     head_config: PoolingHeadConfig | None,
+    attention_implementation: str,
 ) -> PreTrainedModel:
+    attention_kwargs = (
+        {}
+        if attention_implementation == "auto"
+        else {"attn_implementation": attention_implementation}
+    )
     if is_prompted_profile(profile) and head_type == "native":
         model = AutoModelForSequenceClassification.from_pretrained(
             model_path,
             trust_remote_code=True,
+            **attention_kwargs,
         )
         if int(model.config.num_labels) != 1:
             raise ValueError(
@@ -56,6 +63,7 @@ def _build_classifier(
             model_path,
             head_config=head_config
             or PoolingHeadConfig(poolings=("mean", "attention")),
+            attention_implementation=attention_implementation,
         )
     if head_type == "hybrid":
         return HybridSequenceClassifier.from_backbone_pretrained(
@@ -64,6 +72,7 @@ def _build_classifier(
             or PoolingHeadConfig(poolings=("attention",)),
             id2label={0: "different", 1: "match"},
             label2id={"different": 0, "match": 1},
+            attention_implementation=attention_implementation,
         )
     if head_type == "pooling":
         return PoolingSequenceClassifier.from_backbone_pretrained(
@@ -72,6 +81,7 @@ def _build_classifier(
             num_labels=2,
             id2label={0: "different", 1: "match"},
             label2id={"different": 0, "match": 1},
+            attention_implementation=attention_implementation,
         )
     if head_type == "default":
         return AutoModelForSequenceClassification.from_pretrained(
@@ -80,6 +90,7 @@ def _build_classifier(
             id2label={0: "different", 1: "match"},
             label2id={"different": 0, "match": 1},
             ignore_mismatched_sizes=True,
+            **attention_kwargs,
         )
     raise AssertionError("unreachable Transformer head type")
 
@@ -97,6 +108,7 @@ def model_factory(
     head_type: str = "default",
     head_config: PoolingHeadConfig | None = None,
     profile: str = SEQUENCE_CLASSIFIER_PROFILE,
+    attention_implementation: str = "auto",
 ):
     """Return the callback expected by Hugging Face ``Trainer.model_init``."""
     profile, head_type = validate_profile_head(profile, head_type)
@@ -108,6 +120,7 @@ def model_factory(
             profile=profile,
             head_type=head_type,
             head_config=head_config,
+            attention_implementation=attention_implementation,
         )
         contract = TransformerArtifactContract.for_training(
             profile=profile,

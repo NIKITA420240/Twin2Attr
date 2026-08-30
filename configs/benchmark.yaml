@@ -15,7 +15,8 @@ benchmark:
 
     speed_optimizations:
       type: inference
-      enabled: false
+      # First benchmark in the rebuilt speed suite: eager attention vs SDPA.
+      enabled: true
       tests_path: configs/benchmark_tests/speed_optimizations.yaml
       selected_tests: null
 
@@ -60,7 +61,7 @@ benchmark:
     # negatives. Use configs/benchmark_attribute_word_dropout.yaml to run it.
     attribute_word_dropout_quality:
       type: training_quality
-      enabled: true
+      enabled: false
       tests_path: configs/benchmark_tests/attribute_word_dropout_quality.yaml
       selected_tests: null
 

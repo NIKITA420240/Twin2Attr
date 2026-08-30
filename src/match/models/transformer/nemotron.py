@@ -71,10 +71,17 @@ class NemotronAttentionSequenceClassifier(PreTrainedModel):
         model_path: str,
         *,
         head_config: PoolingHeadConfig,
+        attention_implementation: str = "auto",
     ) -> NemotronAttentionSequenceClassifier:
+        attention_kwargs = (
+            {}
+            if attention_implementation == "auto"
+            else {"attn_implementation": attention_implementation}
+        )
         native = AutoModelForSequenceClassification.from_pretrained(
             model_path,
             trust_remote_code=True,
+            **attention_kwargs,
         )
         if int(native.config.num_labels) != 1 or not hasattr(native, "model"):
             raise ValueError(

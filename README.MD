@@ -212,7 +212,7 @@ benchmark:
 
 ```text
 configs/benchmark_tests/backends.yaml              # четыре backend-а
-configs/benchmark_tests/speed_optimizations.yaml   # технические ускорения
+configs/benchmark_tests/speed_optimizations.yaml   # eager против SDPA
 configs/benchmark_tests/quality_optimizations.yaml # сокращение входа/precision
 configs/benchmark_tests/transitivity_quality.yaml  # влияние весов на обучение
 configs/benchmark_tests/codex_annotation_quality.yaml # ценность Codex-разметки
@@ -238,10 +238,11 @@ manifest обученного CatBoost-артефакта, поэтому traini
 `typed_attribute_quality` в `configs/benchmark.yaml`; после screening на seed 42
 лучший вариант следует подтвердить на seed `42`, `43` и `44`.
 
-Inference benchmark использует один и тот же checkpoint
-`weights/cross-encoder-ms-marco-l12-v3`. Fallback между backend-ами отключается,
-чтобы тест ONNX или TensorRT не измерил PyTorch незаметно. Speed-suite требует
-эквивалентности reference-предсказаниям: максимальная
+Inference benchmark использует один и тот же checkpoint. Fallback между
+backend-ами отключается, чтобы тест другого backend-а не измерил PyTorch
+незаметно. Старый speed-suite удалён; новый начинается с изолированного A/B
+теста PyTorch `eager` против `sdpa`. Он требует эквивалентности
+reference-предсказаниям: максимальная
 разница вероятностей не больше `1e-3` и ни один класс при пороге `0.5` не должен
 измениться. Quality-suite считает `PR-AUC`, `ROC-AUC`, accuracy, precision,
 recall и F1 вместе с дельтами относительно своего reference-теста.
@@ -719,6 +720,7 @@ sampler и неблокирующую передачу батчей на GPU. Sa
 - четыре worker'а DataLoader, prefetch, persistent workers и pinned memory;
 - `non_blocking_transfer=true`;
 - дисковый кэш unpadded token IDs в `.cache/tokenized_pairs`;
+- PyTorch SDPA attention;
 - `torch_compile` в режиме `reduce-overhead`;
 - эпоховое performance-логирование.
 
@@ -737,6 +739,8 @@ uv run python run.py train \
 model_description:
   transformer:
     training_runtime:
+      attention:
+        implementation: sdpa
       length_bucketing:
         # Ограничивает число форм тензоров; последний bucket равен max_length.
         padding_length_buckets: [32, 64, 96, 128]
@@ -792,6 +796,22 @@ uv run python run.py train \
 `null` сохраняет обычный динамический padding.
 `torch_compile` включает оптимизированный PyTorch-граф; если compilation backend
 не поддерживает операцию, predictor автоматически продолжает в eager mode.
+`attention.implementation` выбирается при создании PyTorch-модели и действует
+одинаково в train и inference: `sdpa` явно включает PyTorch Scaled Dot Product
+Attention, `eager` полностью его отключает, а `auto` оставляет выбор библиотеке
+Transformers. Для A/B без SDPA используйте:
+
+```bash
+uv run python run.py train \
+  model_description.transformer.training_runtime.attention.implementation=eager
+```
+
+Для будущего inference-manifest переключатель находится в
+`inference.transformer.attention.implementation`: train/initialize сохраняет
+его в `solution.json`. Непосредственный `predict` читает уже созданный
+`solution.json`, поэтому для существующего артефакта режим меняется в поле
+`attention.implementation` самого manifest. ONNX Runtime и TensorRT эту
+настройку игнорируют, поскольку используют собственные kernels.
 
 Готовый Transformer можно дополнительно экспортировать в два ONNX-графа:
 `onnx/classifier.onnx` возвращает logits, а `onnx/encoder.onnx` — CLS embedding
@@ -991,6 +1011,9 @@ OmegaConf используется только на границе загруз
   "model_directory": "models/twin2attr/transformer",
   "batch_size": 512,
   "dtype": "bfloat16",
+  "attention": {
+    "implementation": "sdpa"
+  },
   "torch_compile": {
     "enabled": true,
     "mode": "reduce-overhead",

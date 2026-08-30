@@ -68,6 +68,7 @@ class SequenceClassifierConfig:
     token_cache_enabled: bool = False
     token_cache_directory: Path = Path(".cache/tokenized_pairs")
     token_cache_build_chunk_size: int = 4_096
+    attention_implementation: str = "auto"
     torch_compile: bool = False
     torch_compile_mode: str = "reduce-overhead"
     onnx_export_enabled: bool = False
@@ -132,6 +133,8 @@ class SequenceClassifierConfig:
             raise ValueError("dataloader_prefetch_factor must be positive")
         if self.token_cache_build_chunk_size < 1:
             raise ValueError("token_cache_build_chunk_size must be positive")
+        if self.attention_implementation not in {"auto", "eager", "sdpa"}:
+            raise ValueError("unsupported attention_implementation")
         if self.dataloader_num_workers == 0 and self.dataloader_persistent_workers:
             raise ValueError(
                 "dataloader_persistent_workers requires dataloader_num_workers > 0"

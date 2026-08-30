@@ -298,6 +298,9 @@ inference:
     prefetch_factor: 2
     pin_memory: true
     non_blocking_transfer: true
+    # auto lets Transformers choose; eager explicitly disables SDPA.
+    attention:
+      implementation: sdpa
     # Group similarly sized pairs and limit the tensor shapes seen by the GPU.
     length_bucketing:
       enabled: false
@@ -495,6 +498,9 @@ model_description:
     # Train-time throughput settings. Safe optimizations are enabled by default;
     # compilation and fixed padding shapes remain opt-in.
     training_runtime:
+      # eager explicitly disables SDPA; auto delegates to Transformers.
+      attention:
+        implementation: sdpa
       length_bucketing:
         enabled: true
         # Shuffle globally, then sort only inside megabatches of this many

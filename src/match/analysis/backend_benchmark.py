@@ -110,6 +110,7 @@ def _runtime_solution(base: dict[str, Any], config: AppConfig) -> dict[str, Any]
         "prefetch_factor",
         "pin_memory",
         "non_blocking_transfer",
+        "attention",
         "length_bucketing",
         "torch_compile",
         "onnxruntime",

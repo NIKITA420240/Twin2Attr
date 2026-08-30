@@ -254,6 +254,20 @@ def _build_pytorch_predictor(
     torch_compile = solution.get("torch_compile", {})
     if not isinstance(torch_compile, Mapping):
         raise ValueError("solution field 'torch_compile' must be an object")
+    attention = solution.get("attention")
+    if attention is None:
+        attention = {}
+    if not isinstance(attention, Mapping):
+        raise ValueError("solution field 'attention' must be an object")
+    attention_kwargs = (
+        {}
+        if "attention" not in solution
+        else {
+            "attention_implementation": str(
+                attention.get("implementation", "auto")
+            )
+        }
+    )
     predictor = TransformerPredictor.load(
         model_directory,
         **batching,
@@ -262,6 +276,7 @@ def _build_pytorch_predictor(
         compile_mode=str(torch_compile.get("mode", "reduce-overhead")),
         compile_dynamic=bool(torch_compile.get("dynamic", True)),
         device=solution.get("device"),
+        **attention_kwargs,
     )
     return predictor
 
