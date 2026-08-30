@@ -186,10 +186,6 @@ class SequenceClassifierConfig:
                 raise ValueError(
                     "typed_attribute_fusion requires enabled typed attributes"
                 )
-            if self.onnx_export_enabled:
-                raise ValueError(
-                    "typed_attribute_fusion currently supports PyTorch export only"
-                )
         if (
             is_prompted_profile(self.profile)
             and self.head_type == "attention_pooling"

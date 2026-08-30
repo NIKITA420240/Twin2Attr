@@ -30,6 +30,7 @@ from match.models.transformer.profile import (
 )
 from match.models.transformer.training import train_sequence_classifier
 from match.models.transformer.predictor import TransformerPredictor
+from match.models.transformer.onnx_runtime import OnnxRuntimeTransformerExecutor
 from match.models.transformer.onnx_export import export_transformer_to_onnx
 from match.pair_encoding import PairEncodingCollator, serialize_prompted_pair
 from match.paths import PROJECT_ROOT
@@ -350,6 +351,11 @@ TinyBidirectionalForSequenceClassification.register_for_auto_class(
         torch.testing.assert_close(actual, expected)
 
     def test_typed_fusion_trains_with_token_cache_and_predicts(self) -> None:
+        if not all(
+            importlib.util.find_spec(name) is not None
+            for name in ("onnx", "onnxruntime")
+        ):
+            self.skipTest("optional ONNX dependencies are not installed")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = self._tiny_remote_checkpoint(root)
@@ -419,6 +425,8 @@ TinyBidirectionalForSequenceClassification.register_for_auto_class(
                         max_length=24,
                         token_cache_enabled=True,
                         token_cache_directory=root / "token_cache",
+                        onnx_export_enabled=True,
+                        onnx_precision="float32",
                     ),
                     output_dir=artifact,
                 )
@@ -428,10 +436,36 @@ TinyBidirectionalForSequenceClassification.register_for_auto_class(
                     pin_memory=False,
                     device="cpu",
                 )
-                logits = predictor.predict_pair_logits(validation)
+                torch_logits = predictor.predict_pair_logits(validation)
+                model_config = json.loads(
+                    (artifact / "config.json").read_text(encoding="utf-8")
+                )
+                onnx_metadata = json.loads(
+                    (artifact / "onnx" / "metadata.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                onnx_predictor = TransformerPredictor(
+                    predictor.tokenizer,
+                    OnnxRuntimeTransformerExecutor(
+                        model_directory=artifact,
+                        model_config=model_config,
+                        provider="cpu",
+                        io_binding=False,
+                    ),
+                    batch_size=2,
+                    pin_memory=False,
+                )
+                onnx_logits = onnx_predictor.predict_pair_logits(validation)
 
-        self.assertEqual(logits.shape, (2, 1))
-        self.assertTrue(np.isfinite(logits).all())
+        self.assertEqual(onnx_logits.shape, (2, 1))
+        self.assertTrue(np.isfinite(onnx_logits).all())
+        self.assertEqual(
+            onnx_metadata["classifier_input_names"],
+            ["input_ids", "attention_mask", "typed_features"],
+        )
+        self.assertEqual(onnx_metadata["typed_feature_count"], 52)
+        np.testing.assert_allclose(onnx_logits, torch_logits, atol=1e-5, rtol=1e-5)
 
     def test_attention_train_onnx_and_submission_path(self) -> None:
         if not all(

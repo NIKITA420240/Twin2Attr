@@ -12,6 +12,7 @@ from match.models.transformer.onnx_runtime import (
     OrtTensorRTProviderOptions,
 )
 from match.models.transformer.tensorrt_common import TensorRTProfile
+from match.pair_features import TypedAttributeOptions, typed_attribute_feature_names
 
 
 class _FakeSessionOptions:
@@ -183,6 +184,68 @@ class OnnxRuntimePredictorTests(unittest.TestCase):
         )
         self.assertTrue(engine_cache_exists)
         self.assertTrue(timing_cache_exists)
+
+    def test_tensorrt_profile_keeps_typed_feature_width_fixed(self) -> None:
+        typed_options = TypedAttributeOptions(enabled=True)
+        typed_names = typed_attribute_feature_names(
+            enabled_types=typed_options.enabled_types
+        )
+        model_config = {
+            "hidden_size": 16,
+            "num_labels": 1,
+            "match_profile": "prompted_binary_reranker",
+            "match_head_type": "typed_attribute_fusion",
+            "match_num_logits": 1,
+            "match_probability_transform": "sigmoid",
+            "match_typed_attribute_options": typed_options.to_dict(),
+            "match_typed_feature_names": list(typed_names),
+            "match_typed_feature_schema_version": 1,
+        }
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "match.models.transformer.onnx_runtime._require_onnxruntime",
+                return_value=_FakeTensorRtOrt,
+            ),
+            patch(
+                "match.models.transformer.onnx_runtime.torch.cuda.current_stream",
+                return_value=SimpleNamespace(cuda_stream=123),
+            ),
+        ):
+            executor = OnnxRuntimeTransformerExecutor(
+                model_directory=Path(directory),
+                model_config=model_config,
+                provider="tensorrt",
+                tensorrt=OrtTensorRTProviderOptions(
+                    profile=TensorRTProfile(
+                        min_batch_size=1,
+                        opt_batch_size=8,
+                        max_batch_size=16,
+                        min_sequence_length=64,
+                        opt_sequence_length=96,
+                        max_sequence_length=128,
+                        input_names=(
+                            "input_ids",
+                            "attention_mask",
+                            "typed_features",
+                        ),
+                    )
+                ),
+            )
+
+        _, provider_options = executor._providers[0]
+        self.assertEqual(
+            provider_options["trt_profile_min_shapes"],
+            "input_ids:1x64,attention_mask:1x64,typed_features:1x52",
+        )
+        self.assertEqual(
+            provider_options["trt_profile_opt_shapes"],
+            "input_ids:8x96,attention_mask:8x96,typed_features:8x52",
+        )
+        self.assertEqual(
+            provider_options["trt_profile_max_shapes"],
+            "input_ids:16x128,attention_mask:16x128,typed_features:16x52",
+        )
 
 
 if __name__ == "__main__":

@@ -186,8 +186,10 @@ class OnnxRuntimeTransformerExecutor:
             return {}
 
         def shapes(batch_size: int, sequence_length: int) -> str:
+            typed_width = len(self.runtime_contract.typed_feature_names)
             return ",".join(
-                f"{name}:{batch_size}x{sequence_length}"
+                f"{name}:{batch_size}x"
+                f"{typed_width if name == 'typed_features' else sequence_length}"
                 for name in profile.input_names
             )
 

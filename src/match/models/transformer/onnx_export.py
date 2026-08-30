@@ -35,19 +35,32 @@ class OnnxExportResult:
 
 
 class _ClassifierGraph(nn.Module):
-    def __init__(self, model: nn.Module, *, token_type_ids: bool) -> None:
+    def __init__(
+        self,
+        model: nn.Module,
+        *,
+        token_type_ids: bool,
+        typed_features: bool = False,
+    ) -> None:
         super().__init__()
+        if token_type_ids and typed_features:
+            raise ValueError(
+                "classifier ONNX wrapper supports one auxiliary input"
+            )
         self.model = model
         self.token_type_ids = token_type_ids
+        self.typed_features = typed_features
 
-    def forward(self, input_ids, attention_mask, token_type_ids=None):
+    def forward(self, input_ids, attention_mask, auxiliary_input=None):
         inputs = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "return_dict": True,
         }
         if self.token_type_ids:
-            inputs["token_type_ids"] = token_type_ids
+            inputs["token_type_ids"] = auxiliary_input
+        if self.typed_features:
+            inputs["typed_features"] = auxiliary_input
         return self.model(**inputs).logits
 
 
@@ -175,12 +188,15 @@ def _export_graph(
     *,
     max_length: int,
     use_token_type_ids: bool,
+    typed_feature_count: int = 0,
     opset: int,
     precision: str,
     dynamic_batch: bool,
     dynamic_sequence_length: bool,
     output_name: str,
 ) -> None:
+    if use_token_type_ids and typed_feature_count:
+        raise ValueError("ONNX graph cannot combine segment ids and typed features")
     input_ids = torch.ones((2, max_length), dtype=torch.long)
     attention_mask = torch.ones_like(input_ids)
     args: tuple[torch.Tensor, ...]
@@ -188,15 +204,23 @@ def _export_graph(
     if use_token_type_ids:
         args = (input_ids, attention_mask, torch.zeros_like(input_ids))
         input_names.append("token_type_ids")
+    elif typed_feature_count:
+        args = (
+            input_ids,
+            attention_mask,
+            torch.zeros((2, typed_feature_count), dtype=torch.float32),
+        )
+        input_names.append("typed_features")
     else:
         args = (input_ids, attention_mask)
 
     dynamic_axes: dict[str, dict[int, str]] = {}
+    sequence_inputs = {"input_ids", "attention_mask", "token_type_ids"}
     for name in (*input_names, output_name):
         axes: dict[int, str] = {}
         if dynamic_batch:
             axes[0] = "batch_size"
-        if dynamic_sequence_length and name in input_names:
+        if dynamic_sequence_length and name in sequence_inputs:
             axes[1] = "sequence_length"
         if axes:
             dynamic_axes[name] = axes
@@ -265,6 +289,7 @@ def export_transformer_to_onnx(
     use_token_type_ids = (
         not prompted and "token_type_ids" in tokenizer.model_input_names
     )
+    typed_feature_count = len(runtime_contract.typed_feature_names)
 
     common = {
         "max_length": max_length,
@@ -278,9 +303,14 @@ def export_transformer_to_onnx(
     encoder_path = output_dir / ENCODER_ONNX_NAME if export_encoder else None
     if classifier_path is not None:
         _export_graph(
-            _ClassifierGraph(model, token_type_ids=use_token_type_ids),
+            _ClassifierGraph(
+                model,
+                token_type_ids=use_token_type_ids,
+                typed_features=bool(typed_feature_count),
+            ),
             classifier_path,
             output_name="logits",
+            typed_feature_count=typed_feature_count,
             **common,
         )
     if encoder_path is not None:
@@ -292,6 +322,7 @@ def export_transformer_to_onnx(
             ),
             encoder_path,
             output_name="cls_embedding",
+            typed_feature_count=0,
             **common,
         )
 
@@ -314,7 +345,20 @@ def export_transformer_to_onnx(
             "input_ids",
             "attention_mask",
             *(["token_type_ids"] if use_token_type_ids else []),
+            *(["typed_features"] if typed_feature_count else []),
         ],
+        "classifier_input_names": [
+            "input_ids",
+            "attention_mask",
+            *(["token_type_ids"] if use_token_type_ids else []),
+            *(["typed_features"] if typed_feature_count else []),
+        ],
+        "encoder_input_names": [
+            "input_ids",
+            "attention_mask",
+            *(["token_type_ids"] if use_token_type_ids else []),
+        ],
+        "typed_feature_count": typed_feature_count,
         "profile": contract.profile,
         "head_type": contract.head_type,
         "num_logits": contract.num_logits,

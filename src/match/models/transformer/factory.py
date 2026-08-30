@@ -132,10 +132,21 @@ def _profile(
         raise ValueError(f"invalid solution field '{name}': {error}") from error
 
 
-def _model_input_names(tokenizer: Any) -> tuple[str, ...]:
+def _model_input_names(
+    tokenizer: Any,
+    model_config: Mapping[str, Any],
+    *,
+    classifier: bool,
+) -> tuple[str, ...]:
     names = ["input_ids", "attention_mask"]
-    if "token_type_ids" in getattr(tokenizer, "model_input_names", ()):
+    contract = TransformerRuntimeContract.from_config(model_config)
+    if (
+        not contract.output.uses_prompted_pairs
+        and "token_type_ids" in getattr(tokenizer, "model_input_names", ())
+    ):
         names.append("token_type_ids")
+    if classifier and contract.output.head_type == "typed_attribute_fusion":
+        names.append("typed_features")
     return tuple(names)
 
 
@@ -144,6 +155,9 @@ def _ort_tensorrt_options(
     artifacts: Mapping[str, Any],
     model_directory: Path,
     tokenizer: Any,
+    model_config: Mapping[str, Any],
+    *,
+    classifier: bool,
 ) -> OrtTensorRTProviderOptions:
     value = runtime.get("tensorrt")
     if value is None:
@@ -172,7 +186,11 @@ def _ort_tensorrt_options(
             profiles,
             default_batch_size=2048,
             default_lengths=(64, 96, 128),
-            input_names=_model_input_names(tokenizer),
+            input_names=_model_input_names(
+                tokenizer,
+                model_config,
+                classifier=classifier,
+            ),
             name="onnxruntime.tensorrt.profiles",
         ),
         fp16_enabled=str(artifacts.get("precision", "float32")) == "float16",
@@ -294,12 +312,6 @@ def _build_onnx_predictor(
     artifacts = _mapping(solution.get("onnx_artifacts", {}), "onnx_artifacts")
     if tokenizer is None or model_config is None:
         tokenizer, model_config = _load_components(model_directory)
-    if TransformerRuntimeContract.from_config(
-        model_config
-    ).output.head_type == "typed_attribute_fusion":
-        raise ValueError(
-            "typed_attribute_fusion currently supports the PyTorch backend only"
-        )
     provider = provider_override or str(runtime.get("provider", "cuda")).lower()
     fallback = (
         bool(runtime.get("fallback_to_pytorch", True))
@@ -308,7 +320,12 @@ def _build_onnx_predictor(
     )
     try:
         tensorrt = _ort_tensorrt_options(
-            runtime, artifacts, model_directory, tokenizer
+            runtime,
+            artifacts,
+            model_directory,
+            tokenizer,
+            model_config,
+            classifier=usage == "classifier",
         )
         if provider == "tensorrt":
             _validate_tensorrt_profile(tensorrt.profile, batching, model_config)
@@ -345,6 +362,9 @@ def _native_tensorrt_options(
     artifacts: Mapping[str, Any],
     model_directory: Path,
     tokenizer: Any,
+    model_config: Mapping[str, Any],
+    *,
+    classifier: bool,
 ) -> TensorRTEngineOptions:
     engine_cache = _mapping(value.get("engine_cache", {}), "tensorrt.engine_cache")
     timing_cache = _mapping(value.get("timing_cache", {}), "tensorrt.timing_cache")
@@ -364,7 +384,11 @@ def _native_tensorrt_options(
             profiles,
             default_batch_size=512,
             default_lengths=(1, 256, 472),
-            input_names=_model_input_names(tokenizer),
+            input_names=_model_input_names(
+                tokenizer,
+                model_config,
+                classifier=classifier,
+            ),
             name="tensorrt.profiles",
         ),
         fp16_enabled=str(artifacts.get("precision", "float32")) == "float16",
@@ -381,14 +405,13 @@ def _build_native_tensorrt_predictor(
     runtime = _mapping(solution.get("tensorrt", {}), "tensorrt")
     artifacts = _mapping(solution.get("onnx_artifacts", {}), "onnx_artifacts")
     tokenizer, model_config = _load_components(model_directory)
-    if TransformerRuntimeContract.from_config(
-        model_config
-    ).output.head_type == "typed_attribute_fusion":
-        raise ValueError(
-            "typed_attribute_fusion currently supports the PyTorch backend only"
-        )
     options = _native_tensorrt_options(
-        runtime, artifacts, model_directory, tokenizer
+        runtime,
+        artifacts,
+        model_directory,
+        tokenizer,
+        model_config,
+        classifier=usage == "classifier",
     )
     _validate_tensorrt_profile(options.profile, batching, model_config)
     try:
