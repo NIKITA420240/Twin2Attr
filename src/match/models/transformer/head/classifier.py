@@ -338,8 +338,6 @@ class GatedResidualFusionSequenceClassifierConfig(PoolingSequenceClassifierConfi
         super().__init__(**kwargs)
         self.match_head_type = "gated_residual_fusion"
         self.typed_feature_count = int(typed_feature_count)
-        if self.typed_feature_count < 1:
-            raise ValueError("gated residual fusion config requires typed features")
 
 
 class GatedResidualFusionSequenceClassifier(PreTrainedModel):
@@ -350,6 +348,8 @@ class GatedResidualFusionSequenceClassifier(PreTrainedModel):
 
     def __init__(self, config: GatedResidualFusionSequenceClassifierConfig) -> None:
         super().__init__(config)
+        if config.typed_feature_count < 1:
+            raise ValueError("gated residual fusion model requires typed features")
         backbone_config = _restore_backbone_config(config.backbone_config)
         self.backbone = AutoModel.from_config(backbone_config)
         native_model = AutoModelForSequenceClassification.from_config(backbone_config)

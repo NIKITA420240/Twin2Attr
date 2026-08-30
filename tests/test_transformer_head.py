@@ -24,6 +24,38 @@ from match.models.transformer.predictor import load_trained_classifier
 
 
 class TransformerPoolingHeadTests(unittest.TestCase):
+    def test_gated_residual_model_survives_save_and_load(self) -> None:
+        backbone = XLMRobertaConfig(
+            vocab_size=32,
+            hidden_size=8,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            intermediate_size=16,
+            max_position_embeddings=32,
+            num_labels=1,
+        )
+        model = GatedResidualFusionSequenceClassifier(
+            GatedResidualFusionSequenceClassifierConfig(
+                backbone_config=backbone.to_dict(),
+                head_config=PoolingHeadConfig(
+                    poolings=("mean", "attention"),
+                    typed_hidden_dims=(4,),
+                    dropout=0.0,
+                ).to_dict(),
+                typed_feature_count=6,
+                num_labels=2,
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            model.save_pretrained(directory)
+            restored = GatedResidualFusionSequenceClassifier.from_pretrained(
+                directory
+            )
+
+        self.assertEqual(restored.config.typed_feature_count, 6)
+        self.assertEqual(restored.config.match_head_type, "gated_residual_fusion")
+
     def test_gated_residual_head_is_exact_noop_after_reset(self) -> None:
         head = GatedResidualFusionHead(
             hidden_size=4,
