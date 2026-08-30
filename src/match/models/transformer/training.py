@@ -54,6 +54,14 @@ from .typed_fusion import (
 )
 
 
+def _select_fast_dev_typed_features(
+    features: np.ndarray,
+    indices: Sequence[int],
+) -> np.ndarray:
+    """Select matrix rows without NumPy interpreting a tuple as axis indices."""
+    return features[np.asarray(indices, dtype=np.intp)]
+
+
 def _training_arguments(
     output_dir: Path,
     config: SequenceClassifierConfig,
@@ -410,7 +418,10 @@ def train_sequence_classifier(
                 raise RuntimeError("typed validation features are unavailable")
             fast_dev_dataset = TypedFeatureDataset(
                 fast_dev_dataset,
-                validation_typed_features[fast_dev_indices],
+                _select_fast_dev_typed_features(
+                    validation_typed_features,
+                    fast_dev_indices,
+                ),
             )
         fast_dev_metric = partial(
             compute_macro_pr_auc,

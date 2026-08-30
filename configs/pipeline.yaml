@@ -344,8 +344,8 @@ data_model_description:
 
       llm:
         matches: data/matches_llm.parquet
-        weight: 1.0
-        max_rows: null
+        weight: 0.7
+        max_rows: 1500000
         sampling_strategy: category_target_balanced
         confidence_weighting:
           enabled: false
@@ -501,7 +501,7 @@ analysis_models:
 
 model_description:
   transformer:
-    # Final BGE reranker with text-conditioned typed-attribute residuals.
+    # BGE reranker with text-conditioned typed-attribute residuals.
     profile: sequence_classifier
     pretrained_model_path: models/bge-reranker-v2-m3
     artifact_dir: models/twin2attr/bge-reranker-v2-m3-gated-residual-fusion
@@ -538,7 +538,7 @@ model_description:
     # train_new_token_embeddings_only=true.
     embeddings_learning_rate: null
     train_new_token_embeddings_only: false
-    # Train the complete 24-layer encoder while keeping embeddings frozen.
+    # Fine-tune all 24 BGE encoder layers while keeping embeddings frozen.
     train_last_n_layers: 24
     # Seed the new [KEY]/[VAL] rows from meaningful existing BGE subwords before
     # freezing them. These texts are tokenized; they are not vocabulary ids.
@@ -599,8 +599,8 @@ model_description:
         enabled: false
         mode: reduce-overhead
     head:
-      # native_score + text_delta + sigmoid(gate) * typed_delta.
-      # Both residual outputs start at zero, preserving native BGE initially.
+      # native_score + text_delta + sigmoid(gate) * typed_delta. Both residual
+      # outputs start at zero, preserving the native BGE score initially.
       type: gated_residual_fusion
       poolings: [cls, attention]
       mlp_hidden_dims: [512]

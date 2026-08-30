@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import Mock
 
+import numpy as np
 import torch
 
 from match.models.transformer.train_runtime import (
@@ -10,7 +11,10 @@ from match.models.transformer.train_runtime import (
 )
 from match.models.transformer.model import WeightedSequenceTrainer
 from match.models.transformer.config import SequenceClassifierConfig
-from match.models.transformer.training import _training_arguments
+from match.models.transformer.training import (
+    _select_fast_dev_typed_features,
+    _training_arguments,
+)
 
 
 class LengthAwareSamplerTests(unittest.TestCase):
@@ -65,6 +69,13 @@ class EpochPerformanceTrackerTests(unittest.TestCase):
 
 
 class FastDevSamplingTests(unittest.TestCase):
+    def test_tuple_indices_select_rows_from_typed_feature_matrix(self) -> None:
+        features = np.arange(20, dtype=np.float32).reshape(5, 4)
+
+        selected = _select_fast_dev_typed_features(features, (3, 1))
+
+        np.testing.assert_array_equal(selected, features[[3, 1]])
+
     def test_is_deterministic_class_stratified_and_bounded(self) -> None:
         labels = [0] * 80 + [1] * 20
 
