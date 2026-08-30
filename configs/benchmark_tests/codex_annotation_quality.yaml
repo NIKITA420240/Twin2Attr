@@ -1,4 +1,4 @@
-# Paired training ablation for the 29,378 Codex-reviewed ambiguous LLM pairs.
+# Paired training ablation for the 30,378 Codex-reviewed ambiguous LLM pairs.
 # All cases use the same human validation split and Transformer settings.
 test_type: training_quality
 reference_test: human_llm
@@ -28,9 +28,9 @@ tests:
         value: transformer
       - path: training.data_model
         value: mix_dataset_codex
-      # Replace 29,378 of the 750,000 LLM rows with the Codex-reviewed rows.
+      # Replace 30,378 of the 750,000 LLM rows with the Codex-reviewed rows.
       - path: data_model_description.mix_dataset_codex.sources.llm.max_rows
-        value: 720622
+        value: 719622
       - path: model_description.transformer.hpo_trials
         value: 1
       - path: model_description.transformer.export.onnx.enabled

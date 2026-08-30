@@ -254,6 +254,7 @@ configs/benchmark_tests/speed_optimizations.yaml   # eager против SDPA
 configs/benchmark_tests/quality_optimizations.yaml # сокращение входа/precision
 configs/benchmark_tests/transitivity_quality.yaml  # влияние весов на обучение
 configs/benchmark_tests/codex_annotation_quality.yaml # ценность Codex-разметки
+configs/benchmark_tests/all_annotations_quality.yaml # все источники при фиксированном бюджете
 configs/benchmark_tests/neural_relabel_quality.yaml # старая и новая разметка 5/9-пар
 configs/benchmark_tests/llm_vote_sampling_quality.yaml # выбор по уверенности LLM
 configs/benchmark_tests/soft_label_confidence_quality.yaml # target × loss weight
@@ -320,7 +321,7 @@ uv run python run.py benchmark \
 
 Полезность Codex-разметки проверяет `codex_annotation_quality`. Он сравнивает
 `human + 750000 LLM` с таким же бюджетом псевдоразметки:
-`human + 720622 LLM + 29378 Codex`. В обоих случаях validation строится только
+`human + 719622 LLM + 30378 Codex`. В обоих случаях validation строится только
 из human-разметки и проверяется по хэшу. `results.parquet` дополнительно содержит
 `total_train_rows`,
 `human_train_rows`, `llm_train_rows` и `codex_reviewed_train_rows`.
@@ -607,7 +608,7 @@ confidence_weighting:
 использует weighted BCE/soft cross-entropy; остальные модели продолжают
 обучаться по hard `target`.
 
-`mix_dataset_codex` дополнительно добавляет все 29 378 бинарно переразмеченных
+`mix_dataset_codex` дополнительно добавляет все 30 378 бинарно переразмеченных
 пар из `data/matches_llm_ambiguous_reviewed.parquet`. Для них используется новая
 колонка `target`; `original_target`, `confidence` и `reason` остаются
 диагностическими и не подаются модели:
@@ -620,6 +621,13 @@ uv run python run.py train \
 
 Обе смешанные модели строят validation из human-источника с тем же seed, поэтому
 их можно использовать для парного сравнения полезности Codex-разметки.
+
+Активный `mix_dataset_all_annotations` объединяет Human, Codex review,
+neural review и уверенную LLM-разметку. Приоритет пересечений равен
+`[human, codex_reviewed, neural_review, llm]`; Codex-примеры имеют вес `1.5`,
+Human — `3.0`, остальные — `1.0`. Чтобы сохранить прежний бюджет в 750 000
+псевдометок, используются 30 378 Codex, 100 337 neural-review и не более
+619 285 LLM-строк. Validation по-прежнему строится только из Human.
 
 Настройки источников, пороги голосов и ограничение размера LLM-выборки находятся
 в `data_model_description.mix_dataset.sources`.

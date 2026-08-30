@@ -149,7 +149,7 @@ class ExperimentTrackingTests(unittest.TestCase):
             self.assertEqual(record["macro_pr_auc_human"], 0.74)
             self.assertEqual(
                 record["train_data"],
-                "Human + Neural Review + LLM",
+                "Human + Codex Reviewed + Neural Review + LLM",
             )
             self.assertEqual(record["split"]["train_rows"], 1)
             self.assertTrue(record["split"]["validation_pairs_hash"])

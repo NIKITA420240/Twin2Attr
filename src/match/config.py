@@ -253,6 +253,7 @@ class DataModelDescriptionSettings:
     mix_dataset_hard_negative: MixedDatasetSettings
     mix_dataset_codex: MixedDatasetSettings
     mix_dataset_neural_review: MixedDatasetSettings
+    mix_dataset_all_annotations: MixedDatasetSettings
 
 
 def _validate_data_split_settings(
@@ -309,11 +310,12 @@ class TrainingSettings:
             "mix_dataset_hard_negative",
             "mix_dataset_codex",
             "mix_dataset_neural_review",
+            "mix_dataset_all_annotations",
         }:
             raise ValueError(
                 "training.data_model must be one of: base_dataset, mix_dataset, "
                 "mix_dataset_hard_negative, mix_dataset_codex, "
-                "mix_dataset_neural_review"
+                "mix_dataset_neural_review, mix_dataset_all_annotations"
             )
         if self.model == "stacking" and self.data_model != "base_dataset":
             raise ValueError("stacking training currently requires base_dataset")
@@ -729,11 +731,12 @@ class AnalysisSettings:
             "mix_dataset_hard_negative",
             "mix_dataset_codex",
             "mix_dataset_neural_review",
+            "mix_dataset_all_annotations",
         }:
             raise ValueError(
                 "analysis.data_model must be one of: base_dataset, mix_dataset, "
                 "mix_dataset_hard_negative, mix_dataset_codex, "
-                "mix_dataset_neural_review"
+                "mix_dataset_neural_review, mix_dataset_all_annotations"
             )
 
 
@@ -1944,6 +1947,10 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         data_model_description,
         "mix_dataset_neural_review",
     )
+    mix_dataset_all_annotations = _section(
+        data_model_description,
+        "mix_dataset_all_annotations",
+    )
     inference_value = resolved.get("inference", training)
     if not isinstance(inference_value, Mapping):
         raise ValueError("config section 'inference' must be a mapping")
@@ -2238,6 +2245,11 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             mix_dataset_neural_review=_mixed_dataset_settings(
                 mix_dataset_neural_review,
                 dataset_name="mix_dataset_neural_review",
+                runtime_seed=int(_required(runtime, "seed")),
+            ),
+            mix_dataset_all_annotations=_mixed_dataset_settings(
+                mix_dataset_all_annotations,
+                dataset_name="mix_dataset_all_annotations",
                 runtime_seed=int(_required(runtime, "seed")),
             ),
         ),

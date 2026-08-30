@@ -81,6 +81,14 @@ benchmark:
       tests_path: configs/benchmark_tests/neural_relabel_quality.yaml
       selected_tests: null
 
+    # Same 750,000-row pseudo-label budget: neural review versus the unified
+    # recipe with Codex review at weight 1.5.
+    all_annotations_quality:
+      type: training_quality
+      enabled: false
+      tests_path: configs/benchmark_tests/all_annotations_quality.yaml
+      selected_tests: null
+
     # Three paired fits over the same 2/7 LLM pool and 750,000-row budget.
     llm_vote_sampling_quality:
       type: training_quality

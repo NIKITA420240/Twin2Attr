@@ -38,6 +38,7 @@ class ConfiguredBenchmarkRunnerTests(unittest.TestCase):
                 "hard_negative_quality",
                 "attribute_word_dropout_quality",
                 "neural_relabel_quality",
+                "all_annotations_quality",
                 "llm_vote_sampling_quality",
                 "soft_label_confidence_quality",
             ],
@@ -180,6 +181,40 @@ class ConfiguredBenchmarkRunnerTests(unittest.TestCase):
             ("mean", "attention"),
         )
         self.assertTrue(gated.pair_features.typed_attributes.enabled)
+
+    def test_all_annotations_suite_preserves_fixed_budget_and_codex_weight(self) -> None:
+        suite = load_benchmark_suite(
+            PROJECT_ROOT
+            / "configs"
+            / "benchmark_tests"
+            / "all_annotations_quality.yaml",
+            allowed_test_types={"training_quality"},
+        )
+        baseline = apply_benchmark_test(
+            self.config,
+            suite.tests["neural_review_only"],
+        )
+        unified = apply_benchmark_test(
+            self.config,
+            suite.tests["all_annotations"],
+        )
+        sources = {
+            source.name: source
+            for source in unified.data_model_description
+            .mix_dataset_all_annotations.sources
+        }
+
+        self.assertEqual(suite.reference_test, "neural_review_only")
+        self.assertEqual(
+            baseline.training.data_model,
+            "mix_dataset_neural_review",
+        )
+        self.assertEqual(
+            unified.training.data_model,
+            "mix_dataset_all_annotations",
+        )
+        self.assertEqual(sources["codex_reviewed"].weight, 1.5)
+        self.assertEqual(sources["llm"].max_rows, 619_285)
 
 
 if __name__ == "__main__":

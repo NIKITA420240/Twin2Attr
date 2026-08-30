@@ -392,6 +392,23 @@ class DataModelTests(unittest.TestCase):
             [source.name for source in neural_model.settings.sources],
             ["human", "neural_review", "llm"],
         )
+        all_annotations_model = build_data_model(config)
+        self.assertIsInstance(all_annotations_model, MixedDatasetModel)
+        self.assertEqual(
+            [
+                source.name
+                for source in all_annotations_model.settings.sources
+            ],
+            ["human", "codex_reviewed", "neural_review", "llm"],
+        )
+        self.assertEqual(
+            next(
+                source
+                for source in all_annotations_model.settings.sources
+                if source.name == "codex_reviewed"
+            ).weight,
+            1.5,
+        )
 
     def test_converts_vote_scores_and_applies_source_weight(self) -> None:
         items = pl.DataFrame(

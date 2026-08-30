@@ -1,7 +1,7 @@
 # transformer | maxpooling | fusion | boosting | stacking
 training:
   model: transformer
-  data_model: mix_dataset_neural_review
+  data_model: mix_dataset_all_annotations
   augmentation_model: null
   data_postprocessing_model: null
   resolved_config_path: models/twin2attr/pipeline_config.yaml
@@ -265,6 +265,87 @@ data_model_description:
         matches: data/matches_llm.parquet
         weight: 1.0
         max_rows: 649663
+        sampling_strategy: category_target_balanced
+        confidence_weighting:
+          enabled: false
+        weight_model:
+          type: constant
+          enabled: false
+        splitter:
+          splitter_type: binary
+          score_type: votes
+          target_mode: soft
+          total_votes: 9
+          negative_threshold: 2
+          positive_threshold: 7
+          uncertain_action: drop
+
+  # Unified annotation recipe. Human labels remain the only validation source;
+  # reviewed annotations replace lower-priority labels for the same pair.
+  mix_dataset_all_annotations:
+    items: data/items.parquet
+    validation_source: human
+    validation_fraction: 0.2
+    leakage_scope: pair
+    candidate_splits: 128
+    seed: ${runtime.seed}
+
+    overlap_resolution:
+      enabled: true
+      source_priority:
+        - human
+        - codex_reviewed
+        - neural_review
+        - llm
+
+    sources:
+      human:
+        matches: data/matches.parquet
+        weight: 3.0
+        max_rows: null
+        sampling_strategy: random
+        weight_model:
+          type: constant
+          enabled: false
+        splitter:
+          splitter_type: binary
+          score_type: label
+
+      codex_reviewed:
+        matches: data/matches_llm_ambiguous_reviewed.parquet
+        weight: 1.5
+        max_rows: null
+        sampling_strategy: random
+        weight_model:
+          type: constant
+          enabled: false
+        splitter:
+          splitter_type: binary
+          score_type: label
+
+      neural_review:
+        matches: data/matches_llm_neural_review.parquet
+        target_column: llm_score
+        weight: 1.0
+        max_rows: null
+        sampling_strategy: random
+        confidence_weighting:
+          enabled: false
+        weight_model:
+          type: constant
+          enabled: false
+        splitter:
+          splitter_type: binary
+          score_type: probability
+          target_mode: soft
+          negative_threshold: 0.5
+          positive_threshold: 0.5
+          uncertain_action: keep
+
+      llm:
+        matches: data/matches_llm.parquet
+        weight: 1.0
+        max_rows: 619285
         sampling_strategy: category_target_balanced
         confidence_weighting:
           enabled: false

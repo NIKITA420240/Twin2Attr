@@ -30,6 +30,8 @@ def build_data_model(
         return MixedDatasetModel(descriptions.mix_dataset_codex)
     if selected_name == "mix_dataset_neural_review":
         return MixedDatasetModel(descriptions.mix_dataset_neural_review)
+    if selected_name == "mix_dataset_all_annotations":
+        return MixedDatasetModel(descriptions.mix_dataset_all_annotations)
     raise ValueError(f"Unsupported data model: {selected_name!r}")
 
 

@@ -66,7 +66,7 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(self.config.training.model, "transformer")
         self.assertEqual(
             self.config.training.data_model,
-            "mix_dataset_neural_review",
+            "mix_dataset_all_annotations",
         )
         self.assertIsNone(self.config.training.augmentation_model)
         self.assertIsNone(self.config.training.data_postprocessing_model)
@@ -392,6 +392,33 @@ class AppConfigTests(unittest.TestCase):
         llm = sources["llm"]
         self.assertEqual(llm.max_rows, 649_663)
         self.assertEqual(llm.splitter.target_mode, "soft")
+
+    def test_loads_all_annotations_mixed_dataset(self) -> None:
+        mixed = self.config.data_model_description.mix_dataset_all_annotations
+        sources = {source.name: source for source in mixed.sources}
+
+        self.assertEqual(
+            list(sources),
+            ["human", "codex_reviewed", "neural_review", "llm"],
+        )
+        self.assertEqual(
+            mixed.overlap_resolution.source_priority,
+            ("human", "codex_reviewed", "neural_review", "llm"),
+        )
+        self.assertEqual(sources["human"].weight, 3.0)
+        self.assertEqual(sources["codex_reviewed"].weight, 1.5)
+        self.assertEqual(
+            sources["codex_reviewed"].matches,
+            PROJECT_ROOT / "data" / "matches_llm_ambiguous_reviewed.parquet",
+        )
+        self.assertEqual(sources["neural_review"].target_column, "llm_score")
+        self.assertEqual(sources["neural_review"].splitter.target_mode, "soft")
+        self.assertEqual(sources["llm"].max_rows, 619_285)
+        self.assertEqual(sources["llm"].splitter.target_mode, "soft")
+        self.assertEqual(
+            30_378 + 100_337 + sources["llm"].max_rows,
+            750_000,
+        )
 
     def test_rejects_fractional_vote_threshold(self) -> None:
         with self.assertRaisesRegex(ValueError, "whole vote counts"):

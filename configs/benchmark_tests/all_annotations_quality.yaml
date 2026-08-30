@@ -1,0 +1,33 @@
+# Paired comparison of the current neural-review recipe against the unified
+# Human + Codex + neural-review + LLM recipe at the same pseudo-label budget.
+test_type: training_quality
+reference_test: neural_review_only
+
+# One screening seed first; use [42, 43, 44] before accepting a small gain.
+seeds:
+  - 42
+
+tests:
+  neural_review_only:
+    name: human_neural_review_llm_fixed_budget
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.data_model
+        value: mix_dataset_neural_review
+      - path: model_description.transformer.hpo_trials
+        value: 1
+      - path: model_description.transformer.export.onnx.enabled
+        value: false
+
+  all_annotations:
+    name: human_codex_neural_review_llm_fixed_budget
+    overrides:
+      - path: training.model
+        value: transformer
+      - path: training.data_model
+        value: mix_dataset_all_annotations
+      - path: model_description.transformer.hpo_trials
+        value: 1
+      - path: model_description.transformer.export.onnx.enabled
+        value: false
