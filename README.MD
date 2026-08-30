@@ -704,6 +704,9 @@ uv run python run.py train \
 
 ### Скорость обучения Transformer
 
+Полный журнал реализованных и запланированных ускорений находится в
+[`docs/TRAINING_OPTIMIZATIONS.md`](docs/TRAINING_OPTIMIZATIONS.md).
+
 Без дополнительных флагов train использует динамический padding, length-aware
 sampler и неблокирующую передачу батчей на GPU. Sampler сначала случайно
 перемешивает примеры, затем упорядочивает только внутри `mega-batch`; поэтому
