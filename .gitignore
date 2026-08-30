@@ -1,6 +1,7 @@
 /data/*
 !/data/synonyms.parquet
 !/data/unique_attributes.parquet
+!/data/matches_llm_ambiguous_reviewed.tsv
 /models/*
 !/models/ner/
 !/models/ner/**
