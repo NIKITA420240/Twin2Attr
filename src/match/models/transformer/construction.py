@@ -21,7 +21,10 @@ from .head import (
     PoolingHeadConfig,
     PoolingSequenceClassifier,
 )
-from .nemotron import NemotronAttentionSequenceClassifier
+from .nemotron import (
+    NemotronAttentionSequenceClassifier,
+    NemotronTypedFusionSequenceClassifier,
+)
 from .optimizer import (
     freeze_backbone_except_last_layers,
     restrict_word_embedding_updates,
@@ -40,6 +43,7 @@ def _build_classifier(
     profile: str,
     head_type: str,
     head_config: PoolingHeadConfig | None,
+    typed_feature_count: int,
 ) -> PreTrainedModel:
     if is_prompted_profile(profile) and head_type == "native":
         model = AutoModelForSequenceClassification.from_pretrained(
@@ -56,6 +60,12 @@ def _build_classifier(
             model_path,
             head_config=head_config
             or PoolingHeadConfig(poolings=("mean", "attention")),
+        )
+    if is_prompted_profile(profile) and head_type == "typed_attribute_fusion":
+        return NemotronTypedFusionSequenceClassifier.from_backbone_pretrained(
+            model_path,
+            head_config=head_config or PoolingHeadConfig(),
+            typed_feature_count=typed_feature_count,
         )
     if head_type == "hybrid":
         return HybridSequenceClassifier.from_backbone_pretrained(
@@ -96,6 +106,7 @@ def model_factory(
     train_last_n_layers: int | None = None,
     head_type: str = "default",
     head_config: PoolingHeadConfig | None = None,
+    typed_feature_count: int = 0,
     profile: str = SEQUENCE_CLASSIFIER_PROFILE,
 ):
     """Return the callback expected by Hugging Face ``Trainer.model_init``."""
@@ -108,6 +119,7 @@ def model_factory(
             profile=profile,
             head_type=head_type,
             head_config=head_config,
+            typed_feature_count=typed_feature_count,
         )
         contract = TransformerArtifactContract.for_training(
             profile=profile,

@@ -928,6 +928,8 @@ class TransformerHeadParameters:
     native_logit_weight: float = 1.0
     attention_logit_weight: float = 0.0
     train_logit_weights: bool = True
+    typed_hidden_dims: tuple[int, ...] = (128, 64)
+    typed_layer_norm: bool = True
 
     def __post_init__(self) -> None:
         normalized_type = self.type.strip().lower()
@@ -937,11 +939,12 @@ class TransformerHeadParameters:
             "hybrid",
             "native",
             "attention_pooling",
+            "typed_attribute_fusion",
         }
         if normalized_type not in supported_types:
             raise ValueError(
                 "transformer.head.type must be one of: default, pooling, hybrid, "
-                "native, attention_pooling"
+                "native, attention_pooling, typed_attribute_fusion"
             )
         normalized_poolings = tuple(
             pooling.strip().lower() for pooling in self.poolings
@@ -958,6 +961,8 @@ class TransformerHeadParameters:
             raise ValueError("transformer.head.poolings must be unique")
         if any(dimension < 1 for dimension in self.mlp_hidden_dims):
             raise ValueError("transformer.head.mlp_hidden_dims must be positive")
+        if any(dimension < 1 for dimension in self.typed_hidden_dims):
+            raise ValueError("transformer.head.typed_hidden_dims must be positive")
         if not 0.0 <= self.dropout < 1.0:
             raise ValueError("transformer.head.dropout must be in [0, 1)")
         if self.attention_hidden_dim is not None and self.attention_hidden_dim < 1:
@@ -2741,6 +2746,16 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                      train_logit_weights=_bool(
                          transformer_head.get("train_logit_weights", True),
                          "model_description.transformer.head.train_logit_weights",
+                     ),
+                     typed_hidden_dims=tuple(
+                         int(value)
+                         for value in transformer_head.get(
+                             "typed_hidden_dims", (128, 64)
+                         )
+                     ),
+                     typed_layer_norm=_bool(
+                         transformer_head.get("typed_layer_norm", True),
+                         "model_description.transformer.head.typed_layer_norm",
                      ),
                 ),
             ),

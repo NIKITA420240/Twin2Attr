@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from ...pair_features import TypedAttributeOptions
 from ...pair_encoding import DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS
 from .head import PoolingHeadConfig
 from .profile import (
@@ -50,6 +51,7 @@ class SequenceClassifierConfig:
     max_length_hard_cap: int = 512
     head_type: str = "default"
     head_config: PoolingHeadConfig = PoolingHeadConfig()
+    typed_attribute_options: TypedAttributeOptions = TypedAttributeOptions()
     embeddings_learning_rate: float | None = None
     train_new_token_embeddings_only: bool = False
     train_last_n_layers: int | None = None
@@ -179,6 +181,15 @@ class SequenceClassifierConfig:
         if self.max_length_hard_cap < 8:
             raise ValueError("max_length_hard_cap must be at least 8")
         validate_profile_head(self.profile, self.head_type)
+        if self.head_type == "typed_attribute_fusion":
+            if not self.typed_attribute_options.enabled:
+                raise ValueError(
+                    "typed_attribute_fusion requires enabled typed attributes"
+                )
+            if self.onnx_export_enabled:
+                raise ValueError(
+                    "typed_attribute_fusion currently supports PyTorch export only"
+                )
         if (
             is_prompted_profile(self.profile)
             and self.head_type == "attention_pooling"

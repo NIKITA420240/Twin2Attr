@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 
+from ...pair_features import TypedAttributeOptions, typed_attribute_feature_names
 from ...pair_serialization import DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS
 
 
@@ -19,7 +20,9 @@ TRANSFORMER_PROFILES = frozenset(
 
 PROFILE_HEAD_TYPES = {
     SEQUENCE_CLASSIFIER_PROFILE: frozenset({"default", "pooling", "hybrid"}),
-    PROMPTED_BINARY_RERANKER_PROFILE: frozenset({"native", "attention_pooling"}),
+    PROMPTED_BINARY_RERANKER_PROFILE: frozenset(
+        {"native", "attention_pooling", "typed_attribute_fusion"}
+    ),
 }
 
 
@@ -168,6 +171,9 @@ class TransformerRuntimeContract:
     use_field_tokens: bool
     max_attribute_value_chars: int | None
     max_attribute_value_tokens: int | None
+    typed_attribute_options: TypedAttributeOptions | None = None
+    typed_feature_names: tuple[str, ...] = ()
+    typed_feature_schema_version: int | None = None
 
     def __post_init__(self) -> None:
         if self.hidden_size < 1:
@@ -188,6 +194,28 @@ class TransformerRuntimeContract:
             raise ValueError(
                 "artifact max_attribute_value_tokens must be positive or None"
             )
+        uses_typed_fusion = self.output.head_type == "typed_attribute_fusion"
+        if uses_typed_fusion:
+            if (
+                self.typed_attribute_options is None
+                or not self.typed_attribute_options.enabled
+            ):
+                raise ValueError("typed fusion artifact is missing enabled options")
+            expected_names = typed_attribute_feature_names(
+                enabled_types=self.typed_attribute_options.enabled_types
+            )
+            if self.typed_feature_names != expected_names:
+                raise ValueError("typed fusion artifact feature schema is invalid")
+            if self.typed_feature_schema_version != 1:
+                raise ValueError(
+                    "typed fusion artifact requires feature schema version 1"
+                )
+        elif (
+            self.typed_attribute_options is not None
+            or self.typed_feature_names
+            or self.typed_feature_schema_version is not None
+        ):
+            raise ValueError("non-fusion Transformer must not define typed inputs")
 
     @classmethod
     def from_config(
@@ -205,6 +233,18 @@ class TransformerRuntimeContract:
             "match_max_attribute_value_tokens",
             DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS,
         )
+        typed_options_value = _read(config, "match_typed_attribute_options", None)
+        typed_options = (
+            None
+            if typed_options_value is None
+            else TypedAttributeOptions.from_dict(typed_options_value)
+        )
+        typed_names_value = _read(config, "match_typed_feature_names", ())
+        typed_schema_version = _read(
+            config,
+            "match_typed_feature_schema_version",
+            None,
+        )
         return cls(
             output=TransformerArtifactContract.from_config(config),
             hidden_size=int(hidden_size or 0),
@@ -218,6 +258,11 @@ class TransformerRuntimeContract:
             max_attribute_value_tokens=(
                 None if max_tokens is None else int(max_tokens)
             ),
+            typed_attribute_options=typed_options,
+            typed_feature_names=tuple(str(name) for name in typed_names_value),
+            typed_feature_schema_version=(
+                None if typed_schema_version is None else int(typed_schema_version)
+            ),
         )
 
     def apply_encoding_to(self, config: Any) -> None:
@@ -225,6 +270,10 @@ class TransformerRuntimeContract:
         config.match_use_field_tokens = self.use_field_tokens
         config.match_max_attribute_value_chars = self.max_attribute_value_chars
         config.match_max_attribute_value_tokens = self.max_attribute_value_tokens
+        if self.typed_attribute_options is not None:
+            config.match_typed_attribute_options = self.typed_attribute_options.to_dict()
+            config.match_typed_feature_names = list(self.typed_feature_names)
+            config.match_typed_feature_schema_version = self.typed_feature_schema_version
 
     @property
     def profile(self) -> str:

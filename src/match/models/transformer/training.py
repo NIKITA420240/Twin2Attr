@@ -45,6 +45,12 @@ from .train_runtime import (
     stratified_sample_indices,
 )
 from .token_cache import load_or_build_sharded_token_cache
+from .typed_fusion import (
+    TYPED_FUSION_SCHEMA_VERSION,
+    TypedFeatureDataset,
+    TypedPairEncodingCollator,
+    build_typed_feature_matrix,
+)
 
 
 def _training_arguments(
@@ -287,7 +293,7 @@ def train_sequence_classifier(
         config.torch_compile,
     )
 
-    collator = PairEncodingCollator(
+    base_collator = PairEncodingCollator(
         tokenizer,
         max_length,
         use_field_tokens=config.use_field_tokens,
@@ -302,12 +308,44 @@ def train_sequence_classifier(
         train_pairs,
         validation_pairs,
         tokenizer,
-        collator,
+        base_collator,
         config,
         train_pair_transform=train_pair_transform,
         train_cache_shards=train_cache_shards,
         validation_cache_shards=validation_cache_shards,
     )
+    typed_feature_names: tuple[str, ...] = ()
+    validation_typed_features = None
+    uses_typed_fusion = config.head_type == "typed_attribute_fusion"
+    if uses_typed_fusion:
+        logger.info("Precomputing typed fusion features")
+        typed_feature_names, train_typed_features = build_typed_feature_matrix(
+            train_pairs,
+            config.typed_attribute_options,
+        )
+        validation_names, validation_typed_features = build_typed_feature_matrix(
+            validation_pairs,
+            config.typed_attribute_options,
+        )
+        if validation_names != typed_feature_names:
+            raise RuntimeError("train and validation typed schemas differ")
+        train_dataset = TypedFeatureDataset(train_dataset, train_typed_features)
+        validation_dataset = TypedFeatureDataset(
+            validation_dataset,
+            validation_typed_features,
+        )
+        collator = TypedPairEncodingCollator(
+            base_collator,
+            options=config.typed_attribute_options,
+            feature_names=typed_feature_names,
+        )
+        logger.info(
+            "Typed fusion schema: version={}, features={}",
+            TYPED_FUSION_SCHEMA_VERSION,
+            len(typed_feature_names),
+        )
+    else:
+        collator = base_collator
     initialize_model = model_factory(
         config.model_path,
         tokenizer,
@@ -321,6 +359,7 @@ def train_sequence_classifier(
         train_last_n_layers=config.train_last_n_layers,
         head_type=config.head_type,
         head_config=config.head_config,
+        typed_feature_count=len(typed_feature_names),
         profile=config.profile,
     )
     best_hyperparameters = {
@@ -355,7 +394,7 @@ def train_sequence_classifier(
                     else ("validation",) * len(fast_dev_pairs)
                 ),
                 tokenizer,
-                collator,
+                base_collator,
                 config.token_cache_directory,
                 split_name="fast-dev",
                 chunk_size=config.token_cache_build_chunk_size,
@@ -363,6 +402,13 @@ def train_sequence_classifier(
             if config.token_cache_enabled
             else PreparedPairDataset(fast_dev_pairs)
         )
+        if uses_typed_fusion:
+            if validation_typed_features is None:
+                raise RuntimeError("typed validation features are unavailable")
+            fast_dev_dataset = TypedFeatureDataset(
+                fast_dev_dataset,
+                validation_typed_features[fast_dev_indices],
+            )
         fast_dev_metric = partial(
             compute_macro_pr_auc,
             categories=[pair.category for pair in fast_dev_pairs],
@@ -460,6 +506,13 @@ def train_sequence_classifier(
         use_field_tokens=config.use_field_tokens,
         max_attribute_value_chars=config.max_attribute_value_chars,
         max_attribute_value_tokens=config.max_attribute_value_tokens,
+        typed_attribute_options=(
+            config.typed_attribute_options if uses_typed_fusion else None
+        ),
+        typed_feature_names=typed_feature_names,
+        typed_feature_schema_version=(
+            TYPED_FUSION_SCHEMA_VERSION if uses_typed_fusion else None
+        ),
     ).apply_encoding_to(trainer.model.config)
     trainer.save_model(str(output_path))
     tokenizer.save_pretrained(output_path)
@@ -540,6 +593,15 @@ def train_sequence_classifier(
         "profile": config.profile,
         "head_type": config.head_type,
         "head_config": config.head_config.to_dict(),
+        "typed_fusion": (
+            {
+                "schema_version": TYPED_FUSION_SCHEMA_VERSION,
+                "feature_names": list(typed_feature_names),
+                "options": config.typed_attribute_options.to_dict(),
+            }
+            if uses_typed_fusion
+            else None
+        ),
         "num_logits": int(trainer.model.config.num_labels),
         "probability_transform": (
             "sigmoid" if int(trainer.model.config.num_labels) == 1 else "softmax"
@@ -644,7 +706,10 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
             native_logit_weight=parameters.head.native_logit_weight,
             attention_logit_weight=parameters.head.attention_logit_weight,
             train_logit_weights=parameters.head.train_logit_weights,
+            typed_hidden_dims=parameters.head.typed_hidden_dims,
+            typed_layer_norm=parameters.head.typed_layer_norm,
         ),
+        typed_attribute_options=config.pair_features.typed_attributes,
         onnx_export_enabled=onnx_export.enabled,
         onnx_opset=onnx_export.opset,
         onnx_precision=onnx_export.precision,

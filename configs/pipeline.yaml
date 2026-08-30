@@ -212,9 +212,8 @@ data_model_description:
           positive_threshold: 7
           uncertain_action: drop
 
-  # Fair three-arm benchmark for the 100,337 neural-reviewed 5/9 pairs.
-  # The suite switches only neural_review.target_column between source_score
-  # and llm_score while keeping pair ids, budgets and weights fixed.
+  # Final mixed recipe with neural-reviewed 5/9 pairs. Both pseudo-label
+  # sources preserve their probability/vote scores as soft training targets.
   mix_dataset_neural_review:
     items: data/items.parquet
     validation_source: human
@@ -244,8 +243,8 @@ data_model_description:
           score_type: label
 
       neural_review:
-        matches: data/llm_annotations/annotations.parquet
-        target_column: source_score
+        matches: data/matches_llm_neural_review.parquet
+        target_column: llm_score
         weight: 1.0
         max_rows: null
         sampling_strategy: random
@@ -257,7 +256,7 @@ data_model_description:
         splitter:
           splitter_type: binary
           score_type: probability
-          target_mode: hard
+          target_mode: soft
           negative_threshold: 0.5
           positive_threshold: 0.5
           uncertain_action: keep
@@ -275,7 +274,7 @@ data_model_description:
         splitter:
           splitter_type: binary
           score_type: votes
-          target_mode: hard
+          target_mode: soft
           total_votes: 9
           negative_threshold: 2
           positive_threshold: 7
@@ -425,7 +424,7 @@ model_description:
     # prompted_binary_reranker enables Nemotron prompting and one-logit scoring.
     profile: prompted_binary_reranker
     pretrained_model_path: models/llama-nemotron-rerank-1b-v2
-    artifact_dir: models/twin2attr/nemotron-native
+    artifact_dir: models/twin2attr/nemotron-typed-fusion
     tokenizer:
       batch_fields:
         enabled: true
@@ -521,8 +520,9 @@ model_description:
         enabled: false
         mode: reduce-overhead
     head:
-      # default keeps the Hugging Face CLS head; pooling builds the branches below.
-      type: native
+      # Preserve Nemotron's native logit and learn a residual correction from
+      # deterministic CODE/PHYSICAL/NUMERIC/SET/TEXT pair features.
+      type: typed_attribute_fusion
       # Supported values: cls, mean, max, attention. Their outputs are concatenated.
       poolings: [cls, attention]
       # Empty list gives a single linear classifier after pooling.
@@ -534,6 +534,8 @@ model_description:
       native_logit_weight: 1.0
       attention_logit_weight: 0.0
       train_logit_weights: false
+      typed_hidden_dims: [128, 64]
+      typed_layer_norm: true
 
   maxpooling:
     artifact_path: models/twin2attr/maxpooling.joblib

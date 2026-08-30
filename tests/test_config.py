@@ -66,7 +66,7 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(self.config.training.model, "transformer")
         self.assertEqual(
             self.config.training.data_model,
-            "mix_dataset_hard_negative",
+            "mix_dataset_neural_review",
         )
         self.assertIsNone(self.config.training.augmentation_model)
         self.assertIsNone(self.config.training.data_postprocessing_model)
@@ -372,14 +372,20 @@ class AppConfigTests(unittest.TestCase):
             ("human", "neural_review", "llm"),
         )
         review = sources["neural_review"]
-        self.assertEqual(review.target_column, "source_score")
+        self.assertEqual(
+            review.matches,
+            PROJECT_ROOT / "data" / "matches_llm_neural_review.parquet",
+        )
+        self.assertEqual(review.target_column, "llm_score")
         self.assertEqual(review.splitter.score_type, "probability")
         self.assertEqual(review.splitter.negative_threshold, 0.5)
         self.assertEqual(review.splitter.positive_threshold, 0.5)
-        self.assertEqual(review.splitter.target_mode, "hard")
+        self.assertEqual(review.splitter.target_mode, "soft")
         self.assertFalse(review.confidence_weighting.enabled)
         self.assertFalse(review.weight_model.enabled)
-        self.assertEqual(sources["llm"].max_rows, 649_663)
+        llm = sources["llm"]
+        self.assertEqual(llm.max_rows, 649_663)
+        self.assertEqual(llm.splitter.target_mode, "soft")
 
     def test_rejects_fractional_vote_threshold(self) -> None:
         with self.assertRaisesRegex(ValueError, "whole vote counts"):

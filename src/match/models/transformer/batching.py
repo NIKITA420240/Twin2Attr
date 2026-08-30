@@ -11,8 +11,10 @@ from torch.utils.data import DataLoader, Dataset
 from transformers import PreTrainedTokenizerBase
 
 from ...pair_encoding import PairEncodingCollator, PreparedPairDataset
+from ...pair_features import TypedAttributeOptions
 from ...prepare_data import PreparedCard, PreparedPair
 from .profile import SEQUENCE_CLASSIFIER_PROFILE
+from .typed_fusion import TypedPairEncodingCollator
 
 
 def _estimated_card_length(
@@ -176,8 +178,10 @@ class TransformerBatchingSettings:
         max_attribute_value_chars: int | None,
         max_attribute_value_tokens: int | None,
         profile: str = SEQUENCE_CLASSIFIER_PROFILE,
-    ) -> PairEncodingCollator:
-        return PairEncodingCollator(
+        typed_attribute_options: TypedAttributeOptions | None = None,
+        typed_feature_names: Sequence[str] = (),
+    ) -> PairEncodingCollator | TypedPairEncodingCollator:
+        base = PairEncodingCollator(
             tokenizer,
             max_length,
             use_field_tokens=use_field_tokens,
@@ -190,6 +194,15 @@ class TransformerBatchingSettings:
             batch_fields=self.batch_fields,
             field_chunk_size=self.field_chunk_size,
             profile=profile,
+        )
+        if typed_attribute_options is None:
+            if typed_feature_names:
+                raise ValueError("typed feature names require typed options")
+            return base
+        return TypedPairEncodingCollator(
+            base,
+            options=typed_attribute_options,
+            feature_names=typed_feature_names,
         )
 
 

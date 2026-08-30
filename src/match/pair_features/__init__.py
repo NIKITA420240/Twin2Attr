@@ -6,6 +6,7 @@ from .typed_attributes import (
     TypedAttributeComparator,
     TypedAttributeOptions,
     aggregate_typed_attribute_features,
+    typed_attribute_feature_names,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "TypedAttributeComparator",
     "TypedAttributeOptions",
     "aggregate_typed_attribute_features",
+    "typed_attribute_feature_names",
 ]

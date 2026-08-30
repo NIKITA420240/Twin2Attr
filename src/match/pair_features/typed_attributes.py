@@ -448,10 +448,24 @@ def aggregate_typed_attribute_features(
     return result
 
 
+def typed_attribute_feature_names(
+    *,
+    enabled_types: Sequence[str] = ATTRIBUTE_TYPES,
+) -> tuple[str, ...]:
+    """Return the deterministic aggregate schema for the selected types."""
+    return tuple(
+        aggregate_typed_attribute_features(
+            (),
+            enabled_types=enabled_types,
+        )
+    )
+
+
 __all__ = [
     "ATTRIBUTE_TYPES",
     "TypedAttributeComparison",
     "TypedAttributeComparator",
     "TypedAttributeOptions",
     "aggregate_typed_attribute_features",
+    "typed_attribute_feature_names",
 ]
