@@ -13,6 +13,7 @@
 /dist/
 /build/
 /.venv/
+/build_submission/tensorrt_runtime/tensorrt-runtime-10.9.0.34-linux-x86_64.tar.zst
 
 *.egg-info/
 *.joblib
