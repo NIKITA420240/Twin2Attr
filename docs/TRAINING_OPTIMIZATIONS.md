@@ -25,13 +25,24 @@ benchmark. Оценки ускорения являются ориентиров
 | Sharded token cache | Включено | До устранения почти всей повторной токенизации | Нет |
 | SDPA attention | Включено | 5–20% | Только численная погрешность |
 | Fused AdamW | Запланировано | 2–8% | Нет |
+| Кэш профиля batch size | Запланировано | Убирает повторный autotuning | Нет |
 | Throughput-based batch tuner | Запланировано | 5–20% | Нет при сохранении effective batch |
+| Batch size по length bucket для eval/inference | Запланировано | 10–40% eval/inference | Нет |
 | Оптимизация validation | Запланировано | 5–30% общего wall time | Нет |
 | Автоподбор padding buckets | Запланировано | 3–15% | Нет |
 | Кэшируемая аугментация | Запланировано | 5–25% при CPU bottleneck | Требует проверки |
+| Token-level augmentation | Запланировано | 10–30% при CPU bottleneck | Средний риск; нельзя повреждать prompt |
+| Асинхронное сохранение checkpoint | Запланировано | 1–10% общего wall time | Нет |
 | Multi-GPU DDP | Запланировано | Около 1.7–1.9× на двух GPU | Нет |
+| FP8 training | Эксперимент | 10–40% на H100/новее | Требует проверки стабильности |
+| 8-bit optimizer states | Условно | 0–10%; может замедлить | Низкий–средний риск |
+| Gradient checkpointing | Только при OOM | Сам замедляет | Нет |
 | Уменьшение `max_length` | Эксперимент | 10–30% | Может снизить качество |
 | Top-1/top-2 fine-tuning | Эксперимент | 10–25% | Может снизить качество |
+| Progressive unfreezing | Эксперимент | 5–20% wall time | Требует проверки |
+| `torch.compile` mode autotuning | Эксперимент | 0–15% поверх текущего | Нет |
+| CUDA Graphs | Долгосрочно | 3–15% | Нет |
+| FSDP/ZeRO, LoRA/QLoRA | Только при нехватке VRAM | Ускорение не гарантировано | LoRA требует quality ablation |
 | Distillation | Долгосрочно | 2–5× | Может снизить качество |
 
 ## Реализованные оптимизации
@@ -236,6 +247,16 @@ fused AdamW при одинаковом seed, dataset и effective batch.
 throughput. Планируется короткий прогрев нескольких размеров, например
 `64, 128, 192, 256, 320`, с выбором максимального `real_tokens_per_second`.
 
+Результат нужно кэшировать по fingerprint окружения, модели и runtime:
+GPU/VRAM, PyTorch/CUDA/Transformers, checkpoint, число обучаемых слоёв,
+precision, SDPA, compile, optimizer, `max_length`, buckets, micro/effective batch.
+Хранить следует `best_batch_size` и `safe_batch_size` с 10–15% запасом
+VRAM. При точном совпадении fingerprint поиск можно пропустить.
+
+Для validation и inference можно профилировать отдельный batch size для
+каждого length bucket: короткие последовательности позволяют безопасно
+увеличить batch и лучше загрузить GPU.
+
 ### P1. Оптимизация validation
 
 Кандидаты:
@@ -267,6 +288,27 @@ throughput. Планируется короткий прогрев нескол�
 checkpointing рассматривать только при нехватке памяти: они не являются
 безусловными оптимизациями скорости.
 
+### P2. Асинхронные checkpoint и FP8
+
+Если профиль показывает паузы GPU на записи checkpoint, можно снимать
+CPU snapshot и записывать его асинхронно. Это требует запаса CPU RAM и
+атомарной финализации файла.
+
+FP8 имеет смысл только на поддерживаемом GPU после исчерпания безопасных BF16
+оптимизаций. Он требует отдельной проверки convergence и PR-AUC.
+
+## Рекомендуемый порядок
+
+1. Замерить breakdown wall time: train, validation, tokenization, checkpoint I/O.
+2. Реализовать Fused AdamW с fallback.
+3. Добавить кэш профиля и throughput-based batch tuner.
+4. Подобрать отдельный batch по length bucket для validation/inference.
+5. Убрать лишний full eval и ускорить validation через BF16 и streaming metrics.
+6. Автоматически подобрать padding buckets по квантилям token lengths.
+7. После профилирования решать, нужны ли async checkpoint, кэш аугментации или DDP.
+8. FP8, CUDA Graphs, уменьшение context и архитектурные изменения оставить
+   на отдельные quality ablation.
+
 ## Правила benchmark
 
 Каждая новая runtime-оптимизация должна сравниваться с изолированным reference:
@@ -289,4 +331,3 @@ checkpointing рассматривать только при нехватке п
 | 2026-08-30 | Sharded token cache по `data_source` | Unit tests, cache reuse test |
 | 2026-08-30 | SDPA для train/inference с `eager`-выключателем | 249 tests |
 | 2026-08-30 | Speed benchmark пересобран как eager vs SDPA | Configuration tests |
-
