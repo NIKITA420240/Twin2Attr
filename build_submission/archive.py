@@ -49,7 +49,6 @@ _STORED_SUFFIXES = {
     ".cbm",
     ".joblib",
     ".pt",
-    ".safetensors",
     ".whl",
 }
 _TRANSFORMER_WEIGHT_PATTERNS = (
@@ -236,6 +235,7 @@ def _validate_transformer_artifact(
             tokenizer = AutoTokenizer.from_pretrained(
                 directory,
                 local_files_only=True,
+                fix_mistral_regex=False,
             )
             _require_pair_special_tokens(tokenizer)
         except (OSError, ValueError) as error:

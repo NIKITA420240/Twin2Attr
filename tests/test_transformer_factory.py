@@ -34,6 +34,7 @@ class TransformerFactoryContractTests(unittest.TestCase):
         load_tokenizer.assert_called_once_with(
             model_directory,
             use_fast=True,
+            fix_mistral_regex=False,
             trust_remote_code=True,
         )
 

@@ -190,6 +190,7 @@ def train_sequence_classifier(
     output_path.mkdir(parents=True, exist_ok=True)
     tokenizer = AutoTokenizer.from_pretrained(
         config.model_path,
+        fix_mistral_regex=False,
         trust_remote_code=is_prompted_profile(config.profile),
     )
     if config.use_field_tokens:

@@ -82,6 +82,7 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
             )
         tokenizer = AutoTokenizer.from_pretrained(
             parameters.pretrained_model_path,
+            fix_mistral_regex=False,
             trust_remote_code=is_prompted_profile(parameters.profile),
         )
         model = model_factory(

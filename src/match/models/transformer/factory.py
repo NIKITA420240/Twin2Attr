@@ -274,6 +274,7 @@ def _load_components(model_directory: Path) -> tuple[Any, dict[str, Any]]:
     tokenizer = AutoTokenizer.from_pretrained(
         model_directory,
         use_fast=True,
+        fix_mistral_regex=False,
         trust_remote_code=runtime_contract.output.uses_prompted_pairs,
     )
     return tokenizer, model_config

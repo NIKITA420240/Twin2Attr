@@ -2,14 +2,19 @@
   "predictor": "transformer",
   "augmentation_model": null,
   "data_postprocessing_model": null,
-  "model_directory": "models\\twin2attr\\nemotron-native",
-  "transformer_profile": "prompted_binary_reranker",
+  "model_directory": "models/bge-reranker-v2-m3-finetune",
+  "transformer_profile": "sequence_classifier",
   "transformer_head": {
-    "type": "native"
+    "type": "hybrid"
   },
   "backend": "pytorch",
-  "batch_size": 1,
+  "batch_size": 512,
   "dtype": "bfloat16",
+  "pair_encoding": {
+    "max_length": 256,
+    "max_attribute_value_chars": 256,
+    "max_attribute_value_tokens": 16
+  },
   "num_workers": 8,
   "prefetch_factor": 2,
   "pin_memory": true,
@@ -106,8 +111,8 @@
     "normalization": {
       "enabled": true,
       "output_column": "normalized_attributes",
-      "synonyms_path": "data\\synonyms.parquet",
-      "unique_attributes_path": "data\\unique_attributes.parquet",
+      "synonyms_path": "data/synonyms.parquet",
+      "unique_attributes_path": "data/unique_attributes.parquet",
       "n_jobs": 8,
       "chunk_size": 5000
     }

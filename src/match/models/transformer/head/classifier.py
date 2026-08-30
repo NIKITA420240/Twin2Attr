@@ -104,7 +104,17 @@ class PoolingSequenceClassifier(PreTrainedModel):
         head_type: str = "pooling",
         typed_feature_count: int = 0,
     ) -> PoolingSequenceClassifier:
-        backbone_config = AutoConfig.from_pretrained(model_path)
+        config_values, _ = PretrainedConfig.get_config_dict(model_path)
+        project_model_type = str(config_values.get("model_type", ""))
+        source_model: PreTrainedModel | None = None
+        if project_model_type == HybridSequenceClassifierConfig.model_type:
+            source_model = HybridSequenceClassifier.from_pretrained(model_path)
+            backbone_config = source_model.backbone.config
+        elif project_model_type == PoolingSequenceClassifierConfig.model_type:
+            source_model = cls.from_pretrained(model_path)
+            backbone_config = source_model.backbone.config
+        else:
+            backbone_config = AutoConfig.from_pretrained(model_path)
         config = PoolingSequenceClassifierConfig(
             backbone_config=backbone_config.to_dict(),
             head_config=head_config.to_dict(),
@@ -115,10 +125,13 @@ class PoolingSequenceClassifier(PreTrainedModel):
             label2id=label2id,
         )
         model = cls(config)
-        model.backbone = AutoModel.from_pretrained(
-            model_path,
-            config=backbone_config,
-        )
+        if source_model is not None:
+            model.backbone = source_model.backbone
+        else:
+            model.backbone = AutoModel.from_pretrained(
+                model_path,
+                config=backbone_config,
+            )
         return model
 
     def get_input_embeddings(self) -> nn.Module:

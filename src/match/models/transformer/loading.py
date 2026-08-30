@@ -60,6 +60,7 @@ def load_trained_classifier(
     tokenizer = AutoTokenizer.from_pretrained(
         directory,
         use_fast=True,
+        fix_mistral_regex=False,
         trust_remote_code=contract.uses_prompted_pairs,
     )
     model_type = config_values.get("model_type")

@@ -18,6 +18,8 @@ tests:
         value: null
       - path: training.data_model
         value: base_dataset
+      - path: model_description.transformer.pretrained_model_path
+        value: models/bge-reranker-v2-m3-finetune
       - path: model_description.transformer.head.type
         value: pooling
       - path: model_description.transformer.export.onnx.enabled
@@ -32,6 +34,8 @@ tests:
         value: null
       - path: training.data_model
         value: base_dataset
+      - path: model_description.transformer.pretrained_model_path
+        value: models/bge-reranker-v2-m3-finetune
       - path: model_description.transformer.head.type
         value: typed_attribute_fusion
       - path: model_description.transformer.export.onnx.enabled
