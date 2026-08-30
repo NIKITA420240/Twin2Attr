@@ -529,7 +529,7 @@ model_description:
       quantile: 0.95
       sample_size: 10000
       hard_cap: 512
-    max_epochs: 8
+    max_epochs: 6
     hpo_trials: 1
     # Used directly when hpo_trials=1; otherwise these are initial values.
     # Base LR for Transformer encoder layers and the value tuned by HPO.
