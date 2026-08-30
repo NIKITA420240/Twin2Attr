@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,12 +20,62 @@ from match.models.transformer.tensorrt_common import TensorRTInitializationError
 
 
 class _FakeTensorRT:
+    class TensorIOMode:
+        INPUT = "input"
+
     @staticmethod
     def nptype(value):
         return value
 
 
 class NativeTensorRTRuntimeTests(unittest.TestCase):
+    def test_warmup_uses_small_optimal_profile_shape(self) -> None:
+        executor = object.__new__(TensorRTTransformerExecutor)
+        object.__setattr__(
+            executor,
+            "options",
+            TensorRTEngineOptions(
+                profile=TensorRTProfile(
+                    min_batch_size=1,
+                    opt_batch_size=256,
+                    max_batch_size=256,
+                    min_sequence_length=32,
+                    opt_sequence_length=96,
+                    max_sequence_length=128,
+                )
+            ),
+        )
+        object.__setattr__(executor, "_trt", _FakeTensorRT)
+        engine = Mock()
+        engine.num_io_tensors = 2
+        engine.get_tensor_name.side_effect = ["input_ids", "attention_mask"]
+        engine.get_tensor_mode.return_value = _FakeTensorRT.TensorIOMode.INPUT
+        engine.get_tensor_shape.return_value = (-1, -1)
+        engine.get_tensor_dtype.return_value = np.int32
+        object.__setattr__(
+            executor,
+            "_states",
+            {"classifier": SimpleNamespace(engine=engine, context=object())},
+        )
+        observed = {}
+
+        def execute(instance, kind, batch, *, non_blocking):
+            self.assertIs(instance, executor)
+            observed.update({name: tuple(value.shape) for name, value in batch.items()})
+
+        with patch.object(
+            TensorRTTransformerExecutor,
+            "_execute",
+            autospec=True,
+            side_effect=execute,
+        ):
+            executor._warmup_kind("classifier")
+
+        self.assertEqual(
+            observed,
+            {"input_ids": (8, 96), "attention_mask": (8, 96)},
+        )
+
     def test_profile_replaces_only_dynamic_batch_and_sequence_dimensions(self) -> None:
         profile = TensorRTProfile(
             min_batch_size=1,

@@ -66,10 +66,11 @@ inference:
   data_postprocessing_model: null
   solution_path: ${training.solution_path}
   transformer:
-    # Keep PyTorch as the default until the exported ONNX graphs pass the
-    # accuracy and end-to-end H100 benchmark gates.
-    backend: tensorrt
-    batch_size: 128
+    # Run every evaluator stage through ONNX Runtime with TensorRT EP.
+    backend: onnxruntime
+    batch_size: 256
+    # Keep the verified fixed batch and fail fast on a genuine inference OOM.
+    retry_on_oom: false
     dtype: bfloat16
     # Prepare and prefetch batches in parallel while the GPU runs the model.
     num_workers: 8
@@ -85,7 +86,7 @@ inference:
       mode: reduce-overhead
       dynamic: true
     onnxruntime:
-      provider: cuda
+      provider: tensorrt
       device_id: 0
       io_binding: true
       graph_optimization: all
@@ -99,8 +100,8 @@ inference:
           enabled: true
         profiles:
           min_batch_size: 1
-          opt_batch_size: 128
-          max_batch_size: 128
+          opt_batch_size: 256
+          max_batch_size: 256
           sequence_lengths:
             - 32
             - 96
@@ -120,8 +121,8 @@ inference:
         path: onnx/native_trt_cache/timing.cache
       profiles:
         min_batch_size: 1
-        opt_batch_size: 128
-        max_batch_size: 128
+        opt_batch_size: 256
+        max_batch_size: 256
         sequence_lengths:
           - 32
           - 96
@@ -328,6 +329,11 @@ logging:
 
 submission:
   output_path: dist/twin2attr_submission.zip
+  # One switch controls both metadata.json and bundled runtime dependencies.
+  use_custom_image: false
+  baseline_image: odsai/ecup26-matching-baseline:1.0
+  custom_image: ghcr.io/nikita420240/twin2attr-runtime:qwen3-trt10.9-ort1.23.2
+  entry_point: python -u run.py
 
 hydra:
   job:

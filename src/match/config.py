@@ -418,6 +418,8 @@ class TransformerInferenceSettings:
     batch_size: int
     dtype: str
     backend: str = "pytorch"
+    adaptive_pair_threshold: int = 10_000
+    retry_on_oom: bool = True
     num_workers: int = 0
     prefetch_factor: int = 2
     pin_memory: bool = True
@@ -443,10 +445,14 @@ class TransformerInferenceSettings:
                 "inference.transformer.dtype must be one of: float32, float16, "
                 "bfloat16"
             )
-        if self.backend not in {"pytorch", "onnxruntime", "tensorrt"}:
+        if self.backend not in {"pytorch", "onnxruntime", "tensorrt", "adaptive"}:
             raise ValueError(
                 "inference.transformer.backend must be one of: pytorch, "
-                "onnxruntime, tensorrt"
+                "onnxruntime, tensorrt, adaptive"
+            )
+        if self.adaptive_pair_threshold < 1:
+            raise ValueError(
+                "inference.transformer.adaptive_pair_threshold must be positive"
             )
 
 
@@ -1025,6 +1031,30 @@ class LoggingSettings:
 @dataclass(frozen=True, slots=True)
 class SubmissionSettings:
     output_path: Path
+    use_custom_image: bool = False
+    baseline_image: str = "odsai/ecup26-matching-baseline:1.0"
+    custom_image: str | None = None
+    entry_point: str = "python -u run.py"
+
+    def __post_init__(self) -> None:
+        if not self.baseline_image.strip():
+            raise ValueError("submission.baseline_image must not be empty")
+        if self.use_custom_image and (
+            self.custom_image is None or not self.custom_image.strip()
+        ):
+            raise ValueError(
+                "submission.custom_image is required when "
+                "submission.use_custom_image is true"
+            )
+        if not self.entry_point.strip():
+            raise ValueError("submission.entry_point must not be empty")
+
+    @property
+    def image(self) -> str:
+        if self.use_custom_image:
+            assert self.custom_image is not None
+            return self.custom_image
+        return self.baseline_image
 
 
 @dataclass(frozen=True, slots=True)
@@ -1531,6 +1561,13 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 backend=str(
                     inference_transformer.get("backend", "pytorch")
                 ).lower(),
+                adaptive_pair_threshold=int(
+                    inference_transformer.get("adaptive_pair_threshold", 10_000)
+                ),
+                retry_on_oom=_bool(
+                    inference_transformer.get("retry_on_oom", True),
+                    "inference.transformer.retry_on_oom",
+                ),
                 num_workers=int(inference_transformer.get("num_workers", 0)),
                 prefetch_factor=int(
                     inference_transformer.get("prefetch_factor", 2)
@@ -1983,6 +2020,24 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                     "dist/twin2attr_submission.zip",
                 ),
                 "submission.output_path",
+            ),
+            use_custom_image=_bool(
+                submission.get("use_custom_image", False),
+                "submission.use_custom_image",
+            ),
+            baseline_image=str(
+                submission.get(
+                    "baseline_image",
+                    "odsai/ecup26-matching-baseline:1.0",
+                )
+            ),
+            custom_image=(
+                None
+                if submission.get("custom_image") is None
+                else str(submission["custom_image"])
+            ),
+            entry_point=str(
+                submission.get("entry_point", "python -u run.py")
             ),
         ),
     )

@@ -34,6 +34,7 @@ class SubmissionArchiveTests(unittest.TestCase):
                 ),
                 ner=replace(config.features.ner, enabled=False),
             ),
+            submission=replace(config.submission, use_custom_image=False),
         )
 
     @staticmethod
@@ -219,8 +220,14 @@ class SubmissionArchiveTests(unittest.TestCase):
             with ZipFile(result.path) as archive:
                 names = set(archive.namelist())
                 solution = json.loads(archive.read("solution.json"))
+                metadata = json.loads(archive.read("metadata.json"))
 
         self.assertEqual(result.predictor, "transformer")
+        self.assertEqual(
+            metadata["image"],
+            "odsai/ecup26-matching-baseline:1.0",
+        )
+        self.assertEqual(metadata["entry_point"], "python -u run.py")
         self.assertEqual(solution["predictor"], "transformer")
         self.assertEqual(solution["model_directory"], "models/transformer")
         self.assertEqual(
@@ -268,6 +275,31 @@ class SubmissionArchiveTests(unittest.TestCase):
             names,
         )
         self.assertFalse(any("__pycache__" in name for name in names))
+
+    def test_custom_image_generates_metadata_and_omits_bundled_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._project(root)
+            transformer = self._trained_transformer(root)
+            config = replace(
+                self._with_model_artifacts(self.config, transformer=transformer),
+                submission=replace(
+                    self.config.submission,
+                    output_path=root / "submission.zip",
+                    use_custom_image=True,
+                    custom_image="ghcr.io/example/runtime:pinned",
+                ),
+            )
+
+            result = build_submission_archive(config, project_root=root)
+            with ZipFile(result.path) as archive:
+                names = set(archive.namelist())
+                metadata = json.loads(archive.read("metadata.json"))
+
+        self.assertEqual(metadata["image"], "ghcr.io/example/runtime:pinned")
+        self.assertEqual(metadata["entry_point"], "python -u run.py")
+        self.assertFalse(any(name.startswith("vendor_wheels/") for name in names))
+        self.assertFalse(any(name.startswith("tensorrt_runtime/") for name in names))
 
     def test_packages_enabled_preprocessing_resources(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -509,6 +541,52 @@ class SubmissionArchiveTests(unittest.TestCase):
             self.assertIn("models/transformer/onnx/classifier.onnx", names)
             self.assertIn("models/transformer/onnx/external-weight", names)
 
+    def test_ort_tensorrt_provider_packages_both_gpu_runtimes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._project(root)
+            transformer = self._trained_transformer(root)
+            onnx_directory = transformer / "onnx"
+            onnx_directory.mkdir()
+            (onnx_directory / "classifier.onnx").write_bytes(b"onnx")
+            config = replace(
+                self._with_model_artifacts(self.config, transformer=transformer),
+                inference=replace(
+                    self.config.inference,
+                    transformer=replace(
+                        self.config.inference.transformer,
+                        backend="onnxruntime",
+                        onnxruntime=replace(
+                            self.config.inference.transformer.onnxruntime,
+                            provider="tensorrt",
+                            fallback_to_pytorch=False,
+                        ),
+                    ),
+                ),
+                submission=replace(
+                    self.config.submission,
+                    output_path=root / "submission.zip",
+                ),
+            )
+
+            result = build_submission_archive(config, project_root=root)
+            with ZipFile(result.path) as archive:
+                names = set(archive.namelist())
+
+        self.assertTrue(
+            any(name.startswith("vendor_wheels/onnxruntime_gpu-") for name in names)
+        )
+        self.assertTrue(
+            any(
+                name.startswith("vendor_wheels/tensorrt_cu12_bindings-")
+                for name in names
+            )
+        )
+        self.assertIn(
+            "tensorrt_runtime/tensorrt-runtime-10.9.0.34-linux-x86_64.tar.zst",
+            names,
+        )
+
     def test_native_tensorrt_packages_bindings_and_onnx_without_weights(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -560,6 +638,52 @@ class SubmissionArchiveTests(unittest.TestCase):
         self.assertFalse(
             any(name.startswith("vendor_wheels/onnxruntime_gpu-") for name in names)
         )
+
+    def test_adaptive_backend_packages_both_gpu_runtimes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._project(root)
+            transformer = self._trained_transformer(root)
+            onnx_directory = transformer / "onnx"
+            onnx_directory.mkdir()
+            (onnx_directory / "classifier.onnx").write_bytes(b"onnx")
+            config = replace(
+                self._with_model_artifacts(self.config, transformer=transformer),
+                inference=replace(
+                    self.config.inference,
+                    transformer=replace(
+                        self.config.inference.transformer,
+                        backend="adaptive",
+                        adaptive_pair_threshold=10_000,
+                    ),
+                ),
+                submission=replace(
+                    self.config.submission,
+                    output_path=root / "submission.zip",
+                ),
+            )
+
+            result = build_submission_archive(config, project_root=root)
+            with ZipFile(result.path) as archive:
+                names = set(archive.namelist())
+                solution = json.loads(archive.read("solution.json"))
+
+        self.assertEqual(solution["backend"], "adaptive")
+        self.assertEqual(solution["adaptive_pair_threshold"], 10_000)
+        self.assertTrue(
+            any(name.startswith("vendor_wheels/onnxruntime_gpu-") for name in names)
+        )
+        self.assertTrue(
+            any(
+                name.startswith("vendor_wheels/tensorrt_cu12_bindings-")
+                for name in names
+            )
+        )
+        self.assertIn(
+            "tensorrt_runtime/tensorrt-runtime-10.9.0.34-linux-x86_64.tar.zst",
+            names,
+        )
+        self.assertNotIn("models/transformer/model.safetensors", names)
 
     def test_cascade_packages_both_models_and_catboost_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

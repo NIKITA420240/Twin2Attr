@@ -11,7 +11,7 @@ import tarfile
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 
 def _configure_huggingface_cache() -> None:
@@ -276,6 +276,8 @@ def ensure_catboost_available(solution_path: str | Path | None = None) -> None:
 
 def ensure_onnxruntime_available(
     solution_path: str | Path | None = None,
+    *,
+    backend_override: str | None = None,
 ) -> None:
     """Install the bundled GPU runtime for an ONNX submission."""
     import json
@@ -288,13 +290,31 @@ def ensure_onnxruntime_available(
     if not path.is_file():
         return
     solution = json.loads(path.read_text(encoding="utf-8"))
-    backend = solution.get("backend")
+    backend = backend_override or solution.get("backend")
     native_fallback = bool(
         solution.get("tensorrt", {}).get("fallback_to_onnxruntime", True)
     )
     if backend != "onnxruntime" and not (
         backend == "tensorrt" and native_fallback
     ):
+        return
+
+    provider = str(solution.get("onnxruntime", {}).get("provider", "cuda"))
+    required_provider = {
+        "cuda": "CUDAExecutionProvider",
+        "tensorrt": "TensorrtExecutionProvider",
+    }.get(provider)
+    try:
+        runtime = importlib.import_module("onnxruntime")
+    except ModuleNotFoundError as error:
+        if error.name != "onnxruntime":
+            raise
+    else:
+        if required_provider and required_provider not in runtime.get_available_providers():
+            raise RuntimeError(
+                f"installed ONNX Runtime does not expose {required_provider}; "
+                f"available providers: {runtime.get_available_providers()}"
+            )
         return
 
     wheels_dir = Path(__file__).resolve().parent / "vendor_wheels"
@@ -346,11 +366,6 @@ def ensure_onnxruntime_available(
     sys.path.insert(0, str(install_dir))
     importlib.invalidate_caches()
     runtime = importlib.import_module("onnxruntime")
-    provider = str(solution.get("onnxruntime", {}).get("provider", "cuda"))
-    required_provider = {
-        "cuda": "CUDAExecutionProvider",
-        "tensorrt": "TensorrtExecutionProvider",
-    }.get(provider)
     if required_provider and required_provider not in runtime.get_available_providers():
         raise RuntimeError(
             f"bundled ONNX Runtime does not expose {required_provider}; "
@@ -358,8 +373,23 @@ def ensure_onnxruntime_available(
         )
 
 
-def ensure_tensorrt_available(solution_path: str | Path | None = None) -> None:
-    """Install bundled native TensorRT bindings and libraries when selected."""
+def _requires_tensorrt_runtime(
+    solution: dict[str, Any],
+    backend_override: str | None = None,
+) -> bool:
+    backend = backend_override or solution.get("backend")
+    provider = str(solution.get("onnxruntime", {}).get("provider", "cuda"))
+    return backend == "tensorrt" or (
+        backend == "onnxruntime" and provider.lower() == "tensorrt"
+    )
+
+
+def ensure_tensorrt_available(
+    solution_path: str | Path | None = None,
+    *,
+    backend_override: str | None = None,
+) -> None:
+    """Install bundled TensorRT bindings and libraries when selected."""
     import json
 
     path = (
@@ -370,8 +400,14 @@ def ensure_tensorrt_available(solution_path: str | Path | None = None) -> None:
     if not path.is_file():
         return
     solution = json.loads(path.read_text(encoding="utf-8"))
-    if solution.get("backend") != "tensorrt":
+    if not _requires_tensorrt_runtime(solution, backend_override):
         return
+    try:
+        importlib.import_module("tensorrt")
+        return
+    except ModuleNotFoundError as error:
+        if error.name != "tensorrt":
+            raise
     wheels_dir = Path(__file__).resolve().parent / "vendor_wheels"
     tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
     bindings = sorted(
@@ -580,21 +616,70 @@ def _load_workflow_config(
 
 def _predict_solution_path(args: argparse.Namespace) -> Path | None:
     if args.solution:
-        return Path(args.solution)
+        path = Path(args.solution).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"Solution manifest does not exist: {path}")
+        return path
     config_path = Path(args.config).expanduser()
-    if not config_path.is_file():
+    if config_path.is_file():
+        path = _load_workflow_config(
+            str(config_path), ()
+        ).inference.solution_path.expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"Solution manifest does not exist: {path}")
+        return path
+    packaged_solution = Path(__file__).resolve().parent / "solution.json"
+    if packaged_solution.is_file():
+        return packaged_solution
+    raise FileNotFoundError(
+        "Solution manifest was not provided, the configured manifest is "
+        f"unavailable, and packaged manifest does not exist: {packaged_solution}"
+    )
+
+
+def _adaptive_backend_for_input(
+    solution_path: Path | None,
+    matches_path: str | Path,
+) -> str | None:
+    if solution_path is None or not solution_path.is_file():
         return None
-    return _load_workflow_config(str(config_path), ()).inference.solution_path
+    import json
+
+    solution = json.loads(solution_path.read_text(encoding="utf-8"))
+    import polars as pl
+    from match.backend_routing import resolve_effective_backend
+
+    pair_count = int(
+        pl.scan_parquet(matches_path).select(pl.len()).collect().item()
+    )
+    selected = resolve_effective_backend(solution, pair_count)
+    print(
+        "Resolved inference backend: "
+        f"backend={selected}; pairs={pair_count}; "
+        f"configured_backend={solution.get('backend', 'pytorch')}"
+    )
+    return selected
 
 
 def run_predict(args: argparse.Namespace) -> None:
     """Create a validated evaluator-compatible prediction CSV."""
     solution_path = _predict_solution_path(args)
     ensure_polars_available()
+    selected_backend = _adaptive_backend_for_input(
+        solution_path,
+        args.matches_path,
+    )
+    ensure_tensorrt_available(
+        solution_path,
+        backend_override=selected_backend,
+    )
+    ensure_onnxruntime_available(
+        solution_path,
+        backend_override=selected_backend,
+    )
+    print(f"Validated inference runtime: backend={selected_backend}")
     ensure_preprocessing_runtime_available(solution_path)
     ensure_catboost_available(solution_path)
-    ensure_onnxruntime_available(solution_path)
-    ensure_tensorrt_available(solution_path)
 
     from match.submission import create_submission
 
@@ -603,6 +688,7 @@ def run_predict(args: argparse.Namespace) -> None:
         matches_path=args.matches_path,
         output_path=args.output_path,
         solution_path=solution_path,
+        backend_override=selected_backend,
     )
     print(f"Submission saved to {args.output_path}; rows={result.height}")
 

@@ -135,6 +135,7 @@ def restore_original_order(
 @dataclass(frozen=True, slots=True)
 class TransformerBatchingSettings:
     batch_size: int = 64
+    retry_on_oom: bool = True
     num_workers: int = 0
     prefetch_factor: int = 2
     pin_memory: bool = True

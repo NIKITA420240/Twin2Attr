@@ -352,6 +352,9 @@ class TensorRTTransformerExecutor:
 
     def _warmup_kind(self, kind: str) -> None:
         state = self._state(kind)
+        # Keep startup cheap enough for the one-minute Check stage. The real
+        # evaluator batches still use the configured batch size and fail fast
+        # on OOM because automatic batch fallback is disabled in the manifest.
         batch_size = min(8, self.options.profile.opt_batch_size)
         sequence_length = self.options.profile.opt_sequence_length
         batch: dict[str, torch.Tensor] = {}
@@ -373,6 +376,8 @@ class TensorRTTransformerExecutor:
         self._execute(kind, batch, non_blocking=False)
 
     def warmup(self, *, classifier: bool, encoder: bool) -> None:
+        warmup_batch_size = min(8, self.options.profile.opt_batch_size)
+        warmup_sequence_length = self.options.profile.opt_sequence_length
         try:
             if classifier:
                 self._warmup_kind("classifier")
@@ -380,9 +385,27 @@ class TensorRTTransformerExecutor:
                 self._warmup_kind("encoder")
         except TensorRTInitializationError:
             raise
+        except TransformerExecutorOutOfMemoryError as error:
+            try:
+                free_bytes, total_bytes = torch.cuda.mem_get_info(self.device)
+                memory = (
+                    f", gpu_free_gib={free_bytes / 1024**3:.2f}, "
+                    f"gpu_total_gib={total_bytes / 1024**3:.2f}"
+                )
+            except RuntimeError:
+                memory = ""
+            raise TensorRTInitializationError(
+                "TensorRT OOM during warmup: "
+                f"batch_size={warmup_batch_size}, "
+                f"sequence_length={warmup_sequence_length}"
+                f"{memory}; automatic batch fallback is disabled"
+            ) from error
         except Exception as error:
             raise TensorRTInitializationError(
-                f"native TensorRT warmup failed: {error}"
+                "native TensorRT warmup failed: "
+                f"batch_size={warmup_batch_size}, "
+                f"sequence_length={warmup_sequence_length}: "
+                f"{error}"
             ) from error
 
     def clear_cache(self) -> None:

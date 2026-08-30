@@ -1,0 +1,48 @@
+name: Build evaluator runtime image
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - qwen-3
+    paths:
+      - Dockerfile.runtime
+      - .dockerignore
+      - .github/workflows/build-evaluator-image.yml
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/nikita420240/twin2attr-runtime
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.runtime
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:qwen3-trt10.9-ort1.23.2
+            ${{ env.IMAGE_NAME }}:qwen3-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

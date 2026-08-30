@@ -8,12 +8,29 @@ import polars as pl
 
 from match.models.factory import build_predictor
 from match.models.transformer.tensorrt_common import TensorRTInitializationError
-from match.submission import _predict
+from match.submission import _predict, _solution_with_effective_backend
 
 
 class PredictorLoadingTests(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path("/tmp/solution")
+
+    def test_adaptive_backend_uses_ort_for_small_inputs(self) -> None:
+        solution = {
+            "backend": "adaptive",
+            "adaptive_pair_threshold": 10_000,
+        }
+        resolved = _solution_with_effective_backend(solution, 1_000, None)
+        self.assertEqual(resolved["backend"], "onnxruntime")
+        self.assertEqual(solution["backend"], "adaptive")
+
+    def test_adaptive_backend_uses_tensorrt_for_large_inputs(self) -> None:
+        resolved = _solution_with_effective_backend(
+            {"backend": "adaptive", "adaptive_pair_threshold": 10_000},
+            115_000,
+            None,
+        )
+        self.assertEqual(resolved["backend"], "tensorrt")
 
     def test_loads_only_transformer_for_transformer_prediction(self) -> None:
         transformer = object()

@@ -69,6 +69,7 @@ def _batching_options(solution: Mapping[str, Any]) -> dict[str, Any]:
     length_bucketing, padding_length_buckets = _length_bucketing_options(solution)
     return {
         "batch_size": int(solution.get("batch_size", 64)),
+        "retry_on_oom": bool(solution.get("retry_on_oom", True)),
         "num_workers": int(solution.get("num_workers", 0)),
         "prefetch_factor": int(solution.get("prefetch_factor", 2)),
         "pin_memory": bool(solution.get("pin_memory", True)),
@@ -433,7 +434,8 @@ def build_transformer_predictor(
             solution, model_directory, batching, usage=usage
         )
     raise ValueError(
-        "solution field 'backend' must be 'pytorch', 'onnxruntime' or 'tensorrt'"
+        "solution field 'backend' must resolve to 'pytorch', 'onnxruntime' or "
+        "'tensorrt' before predictor construction"
     )
 
 

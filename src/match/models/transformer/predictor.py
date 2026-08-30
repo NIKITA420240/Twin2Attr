@@ -66,6 +66,7 @@ class TransformerPredictor:
     tokenizer: PreTrainedTokenizerBase
     executor: TransformerExecutor
     batch_size: int = 64
+    retry_on_oom: bool = True
     num_workers: int = 0
     prefetch_factor: int = 2
     pin_memory: bool = True
@@ -81,6 +82,7 @@ class TransformerPredictor:
             raise TypeError("executor must implement TransformerExecutor")
         self._batching = TransformerBatchingSettings(
             batch_size=self.batch_size,
+            retry_on_oom=self.retry_on_oom,
             num_workers=self.num_workers,
             prefetch_factor=self.prefetch_factor,
             pin_memory=self.pin_memory,
@@ -97,6 +99,7 @@ class TransformerPredictor:
         model_directory: str | Path,
         *,
         batch_size: int = 64,
+        retry_on_oom: bool = True,
         dtype: str = "float32",
         num_workers: int = 0,
         prefetch_factor: int = 2,
@@ -127,6 +130,7 @@ class TransformerPredictor:
             tokenizer=tokenizer,
             executor=executor,
             batch_size=batch_size,
+            retry_on_oom=retry_on_oom,
             num_workers=num_workers,
             prefetch_factor=prefetch_factor,
             pin_memory=pin_memory,
@@ -227,6 +231,12 @@ class TransformerPredictor:
                     )
                 return restore_original_order(values, order)
             except TransformerExecutorOutOfMemoryError:
+                if not self._batching.retry_on_oom:
+                    raise TransformerExecutorOutOfMemoryError(
+                        "Transformer executor ran out of memory with "
+                        f"batch_size={current_batch_size}; automatic batch "
+                        "fallback is disabled"
+                    )
                 if current_batch_size == 1:
                     raise
                 current_batch_size = max(1, current_batch_size // 2)

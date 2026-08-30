@@ -15,7 +15,7 @@ from match.models.artifacts import (
 )
 from match.paths import PROJECT_ROOT
 
-_REQUIRED_PROJECT_FILES = ("run.py", "metadata.json")
+_REQUIRED_PROJECT_FILES = ("run.py",)
 _VENDOR_WHEELS_SOURCE = PurePosixPath("build_submission/vendor_wheels")
 _VENDOR_WHEELS_TARGET = PurePosixPath("vendor_wheels")
 _PREPROCESSING_WHEEL_PATTERNS = (
@@ -329,6 +329,7 @@ def _collect_inputs(
     include_preprocessing_runtime: bool,
     include_onnxruntime: bool,
     include_tensorrt: bool,
+    include_runtime: bool = True,
     transformer_dir: Path | None = None,
     skip_transformer_weights: bool = False,
 ) -> tuple[_ArchiveInput, ...]:
@@ -356,25 +357,27 @@ def _collect_inputs(
                 )
             entries[entry.archive_path] = entry
     wheels_source = project_root / Path(_VENDOR_WHEELS_SOURCE)
-    _validate_polars_wheels(wheels_source)
-    wheel_patterns = ["polars-*.whl", "polars_runtime_32-*.whl"]
-    if include_preprocessing_runtime:
+    wheel_patterns: list[str] = []
+    if include_runtime:
+        _validate_polars_wheels(wheels_source)
+        wheel_patterns.extend(("polars-*.whl", "polars_runtime_32-*.whl"))
+    if include_runtime and include_preprocessing_runtime:
         _validate_preprocessing_wheels(wheels_source)
         wheel_patterns.extend(_PREPROCESSING_WHEEL_PATTERNS)
-    if include_catboost:
+    if include_runtime and include_catboost:
         _validate_catboost_wheels(wheels_source)
         wheel_patterns.append("catboost-*.whl")
-    if include_onnxruntime:
+    if include_runtime and include_onnxruntime:
         _validate_onnxruntime_wheels(wheels_source)
         wheel_patterns.extend(_ONNX_RUNTIME_WHEEL_PATTERNS)
-    if include_tensorrt:
+    if include_runtime and include_tensorrt:
         _validate_tensorrt_wheels(wheels_source)
         wheel_patterns.extend(_TENSORRT_WHEEL_PATTERNS)
     for pattern in wheel_patterns:
         for wheel in sorted(wheels_source.glob(pattern)):
             entry = _ArchiveInput(wheel, _VENDOR_WHEELS_TARGET / wheel.name)
             entries[entry.archive_path] = entry
-    if include_tensorrt:
+    if include_runtime and include_tensorrt:
         runtime_source = project_root / Path(_TENSORRT_RUNTIME_SOURCE)
         for payload in sorted(runtime_source.iterdir()):
             if not payload.is_file():
@@ -481,7 +484,11 @@ def build_submission_archive(
     artifacts = _selected_artifacts(config)
     resources = _required_resources(config, artifacts)
     backend = config.inference.transformer.backend
-    onnx_only = backend == "tensorrt" or (
+    uses_ort_tensorrt = (
+        backend == "onnxruntime"
+        and config.inference.transformer.onnxruntime.provider == "tensorrt"
+    )
+    onnx_only = backend in {"tensorrt", "adaptive"} or (
         backend == "onnxruntime"
         and not config.inference.transformer.onnxruntime.fallback_to_pytorch
     )
@@ -492,7 +499,7 @@ def build_submission_archive(
             artifacts.transformer_dir,
             require_pytorch_weights=not onnx_only,
         )
-        if backend in {"onnxruntime", "tensorrt"}:
+        if backend in {"onnxruntime", "tensorrt", "adaptive"}:
             _validate_onnx_artifacts(
                 artifacts.transformer_dir,
                 predictor=artifacts.predictor,
@@ -513,13 +520,16 @@ def build_submission_archive(
             or config.features.physical.enabled
         ),
         include_onnxruntime=(
-            backend == "onnxruntime"
+            backend in {"onnxruntime", "adaptive"}
             or (
                 backend == "tensorrt"
                 and config.inference.transformer.tensorrt.fallback_to_onnxruntime
             )
         ),
-        include_tensorrt=backend == "tensorrt",
+        include_tensorrt=(
+            backend in {"tensorrt", "adaptive"} or uses_ort_tensorrt
+        ),
+        include_runtime=not config.submission.use_custom_image,
         transformer_dir=artifacts.transformer_dir,
         skip_transformer_weights=onnx_only,
     )
@@ -527,11 +537,22 @@ def build_submission_archive(
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.tmp")
     temporary.unlink(missing_ok=True)
+    metadata = {
+        "image": config.submission.image,
+        "entry_point": config.submission.entry_point,
+    }
+    solution_json = json.dumps(solution, ensure_ascii=False, indent=2) + "\n"
+    metadata_json = json.dumps(metadata, ensure_ascii=False, indent=2) + "\n"
     try:
         with ZipFile(temporary, "w", allowZip64=True) as archive:
             archive.writestr(
                 "solution.json",
-                json.dumps(solution, ensure_ascii=False, indent=2) + "\n",
+                solution_json,
+                compress_type=ZIP_DEFLATED,
+            )
+            archive.writestr(
+                "metadata.json",
+                metadata_json,
                 compress_type=ZIP_DEFLATED,
             )
             for entry in inputs:
@@ -548,9 +569,10 @@ def build_submission_archive(
     return SubmissionArchive(
         path=target,
         predictor=artifacts.predictor,
-        file_count=len(inputs) + 1,
+        file_count=len(inputs) + 2,
         uncompressed_bytes=sum(entry.source.stat().st_size for entry in inputs)
-        + len(json.dumps(solution, ensure_ascii=False).encode("utf-8")),
+        + len(solution_json.encode("utf-8"))
+        + len(metadata_json.encode("utf-8")),
     )
 
 

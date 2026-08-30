@@ -15,6 +15,8 @@ from match.models import (
     TransformerPredictor,
 )
 from match.models.transformer.predictor import _CompiledForward
+from match.models.transformer.executor import TransformerExecutorOutOfMemoryError
+from match.models.transformer.batching import TransformerBatchingSettings
 from match.models.transformer.pytorch_executor import PyTorchTransformerExecutor
 
 
@@ -54,6 +56,84 @@ def _batch() -> PredictionBatch:
 
 
 class ModelInterfaceTests(unittest.TestCase):
+    def test_transformer_can_fail_fast_instead_of_reducing_oom_batch(self) -> None:
+        executor = _FakeExecutor()
+        predictor = TransformerPredictor(
+            object(),
+            executor,
+            batch_size=256,
+            retry_on_oom=False,
+        )
+
+        def fail(batch, *, non_blocking):
+            del batch, non_blocking
+            raise TransformerExecutorOutOfMemoryError
+
+        with (
+            patch.object(TransformerBatchingSettings, "collator", return_value=object()),
+            patch(
+                "match.models.transformer.predictor.inference_dataset",
+                return_value=([object()], None),
+            ),
+            patch(
+                "match.models.transformer.predictor.inference_loader",
+                return_value=([{}], False),
+            ),
+            self.assertRaisesRegex(
+                TransformerExecutorOutOfMemoryError,
+                "batch_size=256.*fallback is disabled",
+            ),
+        ):
+            predictor._execute_pairs(
+                [object()],
+                operation=fail,
+                output_width=1,
+            )
+
+    def test_transformer_retries_with_half_batch_after_oom(self) -> None:
+        executor = _FakeExecutor()
+        predictor = TransformerPredictor(
+            object(),
+            executor,
+            batch_size=256,
+            retry_on_oom=True,
+        )
+        attempted_batch_sizes = []
+        operation_calls = 0
+
+        def loader(dataset, collator, *, batch_size, **kwargs):
+            del dataset, collator, kwargs
+            attempted_batch_sizes.append(batch_size)
+            return ([{}], False)
+
+        def infer(batch, *, non_blocking):
+            nonlocal operation_calls
+            del batch, non_blocking
+            operation_calls += 1
+            if operation_calls == 1:
+                raise TransformerExecutorOutOfMemoryError
+            return np.array([[1.0]], dtype=np.float32)
+
+        with (
+            patch.object(TransformerBatchingSettings, "collator", return_value=object()),
+            patch(
+                "match.models.transformer.predictor.inference_dataset",
+                return_value=([object()], None),
+            ),
+            patch(
+                "match.models.transformer.predictor.inference_loader",
+                side_effect=loader,
+            ),
+        ):
+            result = predictor._execute_pairs(
+                [object()],
+                operation=infer,
+                output_width=1,
+            )
+
+        self.assertEqual(attempted_batch_sizes, [256, 128])
+        np.testing.assert_array_equal(result, np.array([[1.0]], dtype=np.float32))
+
     def test_transformer_compiles_classifier_and_backbone(self) -> None:
         model = SimpleNamespace(
             config=SimpleNamespace(hidden_size=16),

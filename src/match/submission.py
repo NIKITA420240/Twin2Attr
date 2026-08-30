@@ -11,6 +11,7 @@ import numpy as np
 import polars as pl
 
 from .augmentations import apply_manifest_augmentation
+from .backend_routing import CONCRETE_BACKENDS, resolve_effective_backend
 from .data.preprocessing import prepare_manifest_items
 from .data_postprocessing import apply_manifest_postprocessing
 from .models.contracts import PredictionBatch
@@ -19,6 +20,25 @@ from .paths import PROJECT_ROOT
 
 PAIR_COLUMNS = ("id1", "id2")
 ITEM_COLUMNS = ("id", "name", "attributes", "category")
+
+
+def _solution_with_effective_backend(
+    solution: Mapping[str, Any],
+    pair_count: int,
+    backend_override: str | None,
+) -> dict[str, Any]:
+    resolved = dict(solution)
+    expected = resolve_effective_backend(resolved, pair_count)
+    backend = expected if backend_override is None else backend_override.lower()
+    if backend not in CONCRETE_BACKENDS:
+        raise ValueError(f"invalid concrete backend override: {backend!r}")
+    if backend != expected:
+        raise ValueError(
+            "runtime backend mismatch: "
+            f"preflight selected {backend!r}, routing selected {expected!r}"
+        )
+    resolved["backend"] = backend
+    return resolved
 
 
 def _load_solution(solution_path: str | Path | None) -> tuple[dict[str, Any], Path]:
@@ -127,10 +147,16 @@ def create_submission(
     output_path: str | Path,
     *,
     solution_path: str | Path | None = None,
+    backend_override: str | None = None,
 ) -> pl.DataFrame:
     """Create a validated ``id1,id2,predict`` CSV in original pair order."""
     solution, solution_root = _load_solution(solution_path)
     items, matches = _read_inputs(items_path, matches_path)
+    solution = _solution_with_effective_backend(
+        solution,
+        matches.height,
+        backend_override,
+    )
     predictions = np.asarray(
         _predict(items, matches, solution, solution_root),
         dtype=np.float64,

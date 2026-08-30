@@ -105,7 +105,12 @@ def build_solution_manifest(
             "type": config.model_description.transformer.head.type,
         }
         solution["backend"] = config.inference.transformer.backend
+        if config.inference.transformer.backend == "adaptive":
+            solution["adaptive_pair_threshold"] = (
+                config.inference.transformer.adaptive_pair_threshold
+            )
         solution["batch_size"] = config.inference.transformer.batch_size
+        solution["retry_on_oom"] = config.inference.transformer.retry_on_oom
         solution["dtype"] = config.inference.transformer.dtype
         solution["num_workers"] = config.inference.transformer.num_workers
         solution["prefetch_factor"] = (
