@@ -1,0 +1,36 @@
+data:
+  items_path: data/items.parquet
+  matches_path: data/matches.parquet
+  validation_fraction: 0.20
+  leakage_scope: pair
+  candidate_splits: 128
+  normalize_attributes: true
+  pipeline_config: configs/benchmark_pipeline.yaml
+
+encoder:
+  config_dir: weights/cross-encoder-ms-marco-l12-v3
+  checkpoint_file: weights/cross-encoder-ms-marco-l12-v3/model.safetensors
+  max_length: 256
+  max_attribute_value_chars: 256
+  max_attribute_value_tokens: 16
+  extraction_batch_size: 96
+  batch_fields: true
+  field_chunk_size: 16384
+
+head:
+  projection_dim: 256
+  mlp_dim: 256
+  category_embedding_dim: 32
+  dropout: 0.15
+  consistency_weight: 0.05
+
+training:
+  seeds: [42, 43, 44]
+  batch_size: 2048
+  epochs: 30
+  learning_rate: 0.001
+  weight_decay: 0.0001
+
+output:
+  cache_dir: bench/cache
+  runs_dir: bench/runs
