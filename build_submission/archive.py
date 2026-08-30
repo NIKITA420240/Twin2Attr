@@ -206,15 +206,28 @@ def _validate_transformer_artifact(
         config.get("model_type") == "match_pooling_sequence_classifier"
         or config.get("match_head_type") == "pooling"
     )
-    is_qwen3_zero_shot_reranker = (
+    is_causal_zero_shot_reranker = (
         not require_pytorch_weights
-        and config.get("match_profile") == "qwen3_reranker"
+        and config.get("match_profile") in {"qwen3_reranker", "mxbai_reranker"}
         and config.get("match_head_type") == "native"
         and config.get("match_initialized_only") is True
         and config.get("match_num_logits") == 1
         and isinstance(config.get("match_no_token_id"), int)
         and isinstance(config.get("match_yes_token_id"), int)
         and config.get("match_no_token_id") != config.get("match_yes_token_id")
+    )
+    pytorch_quantization = config.get("match_pytorch_quantization")
+    is_qwen3_pytorch_int8 = (
+        require_pytorch_weights
+        and config.get("match_profile") == "qwen3_reranker"
+        and config.get("match_head_type") == "native"
+        and config.get("match_num_logits") == 1
+        and isinstance(config.get("match_no_token_id"), int)
+        and isinstance(config.get("match_yes_token_id"), int)
+        and isinstance(pytorch_quantization, dict)
+        and pytorch_quantization.get("format")
+        == "qwen3_weight_only_int8_per_row_v1"
+        and pytorch_quantization.get("weights_file") == "model.safetensors"
     )
     if (
         not isinstance(use_field_tokens, bool)
@@ -223,7 +236,8 @@ def _validate_transformer_artifact(
         or not (
             is_sequence_classifier
             or is_pooling_classifier
-            or is_qwen3_zero_shot_reranker
+            or is_causal_zero_shot_reranker
+            or is_qwen3_pytorch_int8
         )
     ):
         raise ValueError(
@@ -473,11 +487,71 @@ def _compression(path: Path) -> int:
     )
 
 
+def _load_image_weights_manifest(
+    manifest_path: str | Path,
+    *,
+    transformer_dir: Path,
+    project_root: Path,
+) -> tuple[dict[str, object], frozenset[PurePosixPath]]:
+    path = Path(manifest_path).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"image weights manifest does not exist: {path}")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as error:
+        raise ValueError(f"invalid image weights manifest: {path}") from error
+    if not isinstance(value, dict):
+        raise ValueError("image weights manifest must contain a JSON object")
+    image_directory = value.get("image_directory")
+    files = value.get("files")
+    if not isinstance(image_directory, str) or not image_directory.startswith("/"):
+        raise ValueError("image weights manifest requires an absolute image_directory")
+    if not isinstance(files, list) or not files:
+        raise ValueError("image weights manifest requires a non-empty files array")
+
+    archive_root = _archive_path(transformer_dir, project_root=project_root)
+    packaged_entries: list[dict[str, object]] = []
+    excluded: set[PurePosixPath] = set()
+    seen: set[str] = set()
+    for entry in files:
+        if not isinstance(entry, dict):
+            raise ValueError("image weight entries must be JSON objects")
+        name = entry.get("name")
+        size = entry.get("size")
+        relative = PurePosixPath(str(name))
+        if (
+            not isinstance(name, str)
+            or not name
+            or len(relative.parts) != 1
+            or relative.name != name
+            or name in seen
+        ):
+            raise ValueError(f"invalid or duplicate image weight name: {name!r}")
+        if isinstance(size, bool) or not isinstance(size, int) or size < 1:
+            raise ValueError(f"invalid image weight size for {name!r}: {size!r}")
+        source = transformer_dir / "onnx" / name
+        if not source.is_file() or source.stat().st_size != size:
+            raise ValueError(
+                f"image weight source does not match manifest: {source}"
+            )
+        seen.add(name)
+        packaged_entries.append({"name": name, "size": size})
+        excluded.add(archive_root / "onnx" / relative)
+    return (
+        {
+            "image_directory": image_directory,
+            "files": packaged_entries,
+        },
+        frozenset(excluded),
+    )
+
+
 def build_submission_archive(
     config: AppConfig,
     output_path: str | Path | None = None,
     *,
     project_root: Path = PROJECT_ROOT,
+    image_weights_manifest: str | Path | None = None,
 ) -> SubmissionArchive:
     """Validate and package the configured predictor and enabled features."""
     root = project_root.expanduser().resolve()
@@ -510,6 +584,18 @@ def build_submission_archive(
         artifacts,
         map_path=lambda path: str(_archive_path(path, project_root=root)),
     )
+    excluded_image_weights: frozenset[PurePosixPath] = frozenset()
+    if image_weights_manifest is not None:
+        if artifacts.transformer_dir is None:
+            raise ValueError("image weights require a Transformer artifact")
+        if not config.submission.use_custom_image:
+            raise ValueError("image weights require submission.use_custom_image=true")
+        external_weights, excluded_image_weights = _load_image_weights_manifest(
+            image_weights_manifest,
+            transformer_dir=artifacts.transformer_dir,
+            project_root=root,
+        )
+        solution["external_weights"] = external_weights
     inputs = _collect_inputs(
         resources,
         project_root=root,
@@ -533,6 +619,19 @@ def build_submission_archive(
         transformer_dir=artifacts.transformer_dir,
         skip_transformer_weights=onnx_only,
     )
+    if excluded_image_weights:
+        available = {entry.archive_path for entry in inputs}
+        missing = excluded_image_weights - available
+        if missing:
+            raise ValueError(
+                "image weight entries are absent from submission inputs: "
+                f"{sorted(map(str, missing))}"
+            )
+        inputs = tuple(
+            entry
+            for entry in inputs
+            if entry.archive_path not in excluded_image_weights
+        )
     target = Path(output_path or config.submission.output_path).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.tmp")

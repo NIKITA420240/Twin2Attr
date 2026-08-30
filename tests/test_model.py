@@ -225,6 +225,44 @@ class SequenceClassifierModelTests(unittest.TestCase):
         self.assertEqual(tokenizer.last_padding, "max_length")
         self.assertEqual(tokenizer.last_max_length, expected_length)
 
+    def test_collator_packs_exact_padded_lengths_under_token_budget(self) -> None:
+        tokenizer = TransformersV5BertTokenizer()
+        pairs = [
+            _pair(1, "short", 2, "tiny", 0),
+            _pair(3, "another short", 4, "small", 1),
+            _pair(5, "long product name with several words", 6, "other", 0),
+            _pair(7, "tiny", 8, "short", 1),
+        ]
+        collator = PairEncodingCollator(
+            tokenizer,
+            32,
+            use_field_tokens=False,
+            include_labels=False,
+            padding_length_buckets=(8, 16, 32),
+        )
+
+        batches = collator.collate_token_budget(pairs, max_tokens=32)
+
+        self.assertEqual(sum(batch["input_ids"].shape[0] for batch in batches), 4)
+        self.assertTrue(
+            all(batch["input_ids"].numel() <= 32 for batch in batches)
+        )
+        self.assertGreater(len(batches), 1)
+
+    def test_collator_rejects_budget_smaller_than_one_max_length_row(self) -> None:
+        collator = PairEncodingCollator(
+            TransformersV5BertTokenizer(),
+            32,
+            use_field_tokens=False,
+            include_labels=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "at least max_length"):
+            collator.collate_token_budget(
+                [_pair(1, "left", 2, "right", 0)],
+                max_tokens=31,
+            )
+
     def test_batched_field_tokenization_matches_scalar_encoding(self) -> None:
         tokenizer = TransformersV5BertTokenizer()
         pairs = [

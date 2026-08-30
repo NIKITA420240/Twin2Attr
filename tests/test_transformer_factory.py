@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +10,21 @@ from match.models.transformer.factory import _load_components
 
 
 class TransformerFactoryContractTests(unittest.TestCase):
+    def test_factory_import_does_not_require_transformers_empty_weights(self) -> None:
+        script = """
+import transformers.modeling_utils as modeling_utils
+if hasattr(modeling_utils, "init_empty_weights"):
+    del modeling_utils.init_empty_weights
+import match.models.transformer.factory
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_prompted_artifact_loads_tokenizer_with_remote_code(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             model_directory = Path(directory)

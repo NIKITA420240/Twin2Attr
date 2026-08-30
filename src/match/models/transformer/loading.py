@@ -14,8 +14,12 @@ from transformers import (
 )
 
 from .head import PoolingSequenceClassifier, PoolingSequenceClassifierConfig
+from .int8_artifact import (
+    is_qwen3_pytorch_int8_config,
+    load_qwen3_pytorch_int8_model,
+)
 from .nemotron import NemotronAttentionConfig, NemotronAttentionSequenceClassifier
-from .profile import TransformerArtifactContract
+from .profile import TransformerArtifactContract, is_qwen3_reranker_profile
 from .precision import torch_inference_dtype
 
 
@@ -52,13 +56,21 @@ def load_trained_classifier(
         (directory / "config.json").read_text(encoding="utf-8")
     )
     contract = TransformerArtifactContract.from_config(config_values)
-    tokenizer = AutoTokenizer.from_pretrained(
-        directory,
-        use_fast=True,
-        trust_remote_code=contract.requires_trust_remote_code,
-    )
+    tokenizer_kwargs = {
+        "use_fast": True,
+        "trust_remote_code": contract.requires_trust_remote_code,
+    }
+    if is_qwen3_reranker_profile(contract.profile):
+        tokenizer_kwargs["fix_mistral_regex"] = True
+    tokenizer = AutoTokenizer.from_pretrained(directory, **tokenizer_kwargs)
     model_type = config_values.get("model_type")
-    if model_type == NemotronAttentionConfig.model_type:
+    if is_qwen3_pytorch_int8_config(config_values):
+        model = load_qwen3_pytorch_int8_model(
+            directory,
+            device=target_device,
+            dtype=target_dtype,
+        )
+    elif model_type == NemotronAttentionConfig.model_type:
         model = NemotronAttentionSequenceClassifier.from_artifact(directory)
     elif model_type == PoolingSequenceClassifierConfig.model_type:
         model = PoolingSequenceClassifier.from_pretrained(directory)
@@ -72,7 +84,8 @@ def load_trained_classifier(
         raise RuntimeError(
             "restored Transformer model does not match its persisted artifact contract"
         )
-    model.to(device=target_device, dtype=target_dtype).eval()
+    if not is_qwen3_pytorch_int8_config(config_values):
+        model.to(device=target_device, dtype=target_dtype).eval()
     return tokenizer, model
 
 

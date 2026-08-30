@@ -66,6 +66,7 @@ class TransformerPredictor:
     tokenizer: PreTrainedTokenizerBase
     executor: TransformerExecutor
     batch_size: int = 64
+    max_tokens_per_batch: int | None = None
     retry_on_oom: bool = True
     num_workers: int = 0
     prefetch_factor: int = 2
@@ -82,6 +83,7 @@ class TransformerPredictor:
             raise TypeError("executor must implement TransformerExecutor")
         self._batching = TransformerBatchingSettings(
             batch_size=self.batch_size,
+            max_tokens_per_batch=self.max_tokens_per_batch,
             retry_on_oom=self.retry_on_oom,
             num_workers=self.num_workers,
             prefetch_factor=self.prefetch_factor,
@@ -99,6 +101,7 @@ class TransformerPredictor:
         model_directory: str | Path,
         *,
         batch_size: int = 64,
+        max_tokens_per_batch: int | None = None,
         retry_on_oom: bool = True,
         dtype: str = "float32",
         num_workers: int = 0,
@@ -130,6 +133,7 @@ class TransformerPredictor:
             tokenizer=tokenizer,
             executor=executor,
             batch_size=batch_size,
+            max_tokens_per_batch=max_tokens_per_batch,
             retry_on_oom=retry_on_oom,
             num_workers=num_workers,
             prefetch_factor=prefetch_factor,
@@ -208,21 +212,25 @@ class TransformerPredictor:
                     dataset,
                     collator,
                     batch_size=current_batch_size,
+                    max_tokens_per_batch=self._batching.max_tokens_per_batch,
                     device=self.executor.device,
                     num_workers=self._batching.num_workers,
                     prefetch_factor=self._batching.prefetch_factor,
                     pin_memory=self._batching.pin_memory,
                 )
-                chunks = [
-                    operation(
-                        batch,
-                        non_blocking=(
-                            self._batching.non_blocking_transfer
-                            and use_pinned_memory
-                        ),
+                chunks = []
+                for collated in loader:
+                    batches = collated if isinstance(collated, list) else [collated]
+                    chunks.extend(
+                        operation(
+                            batch,
+                            non_blocking=(
+                                self._batching.non_blocking_transfer
+                                and use_pinned_memory
+                            ),
+                        )
+                        for batch in batches
                     )
-                    for batch in loader
-                ]
                 values = np.concatenate(chunks).astype(np.float32, copy=False)
                 if values.ndim != 2 or values.shape[1] != output_width:
                     raise RuntimeError(

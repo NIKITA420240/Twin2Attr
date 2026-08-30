@@ -19,7 +19,11 @@ from .onnx_runtime import (
     OrtTensorRTProviderOptions,
 )
 from .predictor import TransformerPredictor
-from .profile import TransformerRuntimeContract, is_qwen3_reranker_profile
+from .profile import (
+    TransformerRuntimeContract,
+    is_mxbai_reranker_profile,
+    is_qwen3_reranker_profile,
+)
 from .tensorrt_common import (
     TensorRTInitializationError,
     TensorRTProfile,
@@ -67,7 +71,7 @@ def _batching_options(solution: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(batch_fields, Mapping):
         raise ValueError("solution field 'tokenizer.batch_fields' must be an object")
     length_bucketing, padding_length_buckets = _length_bucketing_options(solution)
-    return {
+    options = {
         "batch_size": int(solution.get("batch_size", 64)),
         "retry_on_oom": bool(solution.get("retry_on_oom", True)),
         "num_workers": int(solution.get("num_workers", 0)),
@@ -79,6 +83,9 @@ def _batching_options(solution: Mapping[str, Any]) -> dict[str, Any]:
         "batch_fields": bool(batch_fields.get("enabled", False)),
         "field_chunk_size": int(batch_fields.get("chunk_size", 16_384)),
     }
+    if solution.get("max_tokens_per_batch") is not None:
+        options["max_tokens_per_batch"] = int(solution["max_tokens_per_batch"])
+    return options
 
 
 def _artifact_path(model_directory: Path, value: Any) -> Path | None:
@@ -134,7 +141,7 @@ def _ort_tensorrt_options(
     if value is None:
         return OrtTensorRTProviderOptions(
             fp16_enabled=str(artifacts.get("precision", "float32"))
-            in {"float16", "float8"}
+            in {"float16", "float8", "int8"}
         )
     tensorrt = _mapping(value, "onnxruntime.tensorrt")
     engine_cache = _mapping(
@@ -162,7 +169,7 @@ def _ort_tensorrt_options(
             name="onnxruntime.tensorrt.profiles",
         ),
         fp16_enabled=str(artifacts.get("precision", "float32"))
-        in {"float16", "float8"},
+        in {"float16", "float8", "int8"},
     )
 
 
@@ -262,7 +269,9 @@ def _load_components(model_directory: Path) -> tuple[Any, dict[str, Any]]:
         "use_fast": True,
         "trust_remote_code": runtime_contract.output.requires_trust_remote_code,
     }
-    if is_qwen3_reranker_profile(runtime_contract.profile):
+    if is_qwen3_reranker_profile(
+        runtime_contract.profile
+    ) or is_mxbai_reranker_profile(runtime_contract.profile):
         tokenizer_kwargs["fix_mistral_regex"] = True
     tokenizer = AutoTokenizer.from_pretrained(model_directory, **tokenizer_kwargs)
     return tokenizer, model_config
@@ -352,7 +361,7 @@ def _native_tensorrt_options(
             name="tensorrt.profiles",
         ),
         fp16_enabled=str(artifacts.get("precision", "float32"))
-        in {"float16", "float8"},
+        in {"float16", "float8", "int8"},
     )
 
 

@@ -22,6 +22,7 @@ from match.qwen3_pair_encoding import (
     QWEN3_RERANKER_INSTRUCTION,
     QWEN3_RERANKER_PREFIX,
     QWEN3_RERANKER_SUFFIX,
+    encode_qwen3_pairs,
 )
 
 
@@ -40,6 +41,7 @@ class _WhitespaceTokenizer:
     def __init__(self) -> None:
         self._ids: dict[str, int] = {}
         self._tokens: dict[int, str] = {}
+        self.batch_encode_calls = 0
 
     def encode(self, text, *, add_special_tokens=False):
         del add_special_tokens
@@ -55,6 +57,26 @@ class _WhitespaceTokenizer:
     def decode(self, values, **kwargs):
         del kwargs
         return " ".join(self._tokens[value] for value in values)
+
+    def __call__(
+        self,
+        texts,
+        *,
+        add_special_tokens=False,
+        padding=False,
+        truncation=False,
+    ):
+        del padding, truncation
+        self.batch_encode_calls += 1
+        return {
+            "input_ids": [
+                self.encode(text, add_special_tokens=add_special_tokens)
+                for text in texts
+            ]
+        }
+
+    def batch_decode(self, values, **kwargs):
+        return [self.decode(value, **kwargs) for value in values]
 
     def num_special_tokens_to_add(self, *, pair=False):
         del pair
@@ -185,6 +207,67 @@ class Qwen3ProfileTests(unittest.TestCase):
         self.assertEqual(tokenizer.padding_side, "left")
         self.assertLessEqual(len(input_ids), 40)
         self.assertEqual(input_ids[-len(suffix_ids) :], suffix_ids)
+
+    def test_batched_qwen_tokenization_matches_scalar_ids(self) -> None:
+        tokenizer = _WhitespaceTokenizer()
+        pairs = [
+            _pair(),
+            PreparedPair(
+                PreparedCard(
+                    3,
+                    "Long product",
+                    "Furniture",
+                    (("description", "one two three four five six"),),
+                ),
+                PreparedCard(
+                    4,
+                    "Short product",
+                    "Furniture",
+                    (("description", "one two"),),
+                ),
+                0,
+                "Furniture",
+            ),
+        ]
+        scalar = encode_qwen3_pairs(
+            tokenizer,
+            pairs,
+            max_length=40,
+            use_field_tokens=False,
+            max_attribute_value_chars=256,
+            max_attribute_value_tokens=3,
+        )
+
+        batched = encode_qwen3_pairs(
+            tokenizer,
+            pairs,
+            max_length=40,
+            use_field_tokens=False,
+            max_attribute_value_chars=256,
+            max_attribute_value_tokens=3,
+            batch_fields=True,
+            field_chunk_size=2,
+        )
+
+        self.assertEqual(batched, scalar)
+        # Two value chunks plus one body chunk for two pairs.
+        self.assertEqual(tokenizer.batch_encode_calls, 3)
+
+    def test_qwen_collator_uses_batched_tokenization_setting(self) -> None:
+        tokenizer = _WhitespaceTokenizer()
+        collator = PairEncodingCollator(
+            tokenizer,
+            40,
+            use_field_tokens=False,
+            max_attribute_value_tokens=3,
+            batch_fields=True,
+            field_chunk_size=2,
+            profile=QWEN3_RERANKER_PROFILE,
+        )
+
+        collator([_pair(), _pair()])
+
+        self.assertGreater(tokenizer.batch_encode_calls, 0)
 
     def test_contract_requires_one_logit(self) -> None:
         contract = TransformerArtifactContract.for_training(

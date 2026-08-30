@@ -18,9 +18,11 @@ from torch import nn
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from .fp8 import Fp8QuantizationResult, quantize_module_weights_to_fp8
+from .int8 import Int8QuantizationResult, quantize_module_weights_to_int8
 from .loading import load_trained_classifier
 from .profile import (
     TransformerRuntimeContract,
+    is_mxbai_reranker_profile,
     is_qwen3_reranker_profile,
 )
 from .qwen3 import Qwen3YesNoReranker, qwen3_score_token_ids
@@ -265,20 +267,24 @@ def _export_graph(
             _copy_onnx_bundle(fp32_path, destination)
 
 
-def _load_qwen3_export_model(
+def _load_causal_reranker_export_model(
     model_dir: Path,
     *,
     precision: str,
-) -> tuple[Any, nn.Module, Fp8QuantizationResult | None]:
+) -> tuple[
+    Any,
+    nn.Module,
+    Fp8QuantizationResult | Int8QuantizationResult | None,
+]:
     artifact_config = AutoConfig.from_pretrained(model_dir, local_files_only=True)
     source_value = getattr(artifact_config, "match_source_model_path", None)
     if not source_value:
-        raise ValueError("Qwen3 artifact does not record match_source_model_path")
+        raise ValueError("causal reranker artifact does not record match_source_model_path")
     source = Path(str(source_value)).expanduser()
     if not source.is_absolute():
         source = source.resolve()
     if not source.is_dir():
-        raise FileNotFoundError(f"Qwen3 source model directory is missing: {source}")
+        raise FileNotFoundError(f"causal reranker source model directory is missing: {source}")
 
     tokenizer = AutoTokenizer.from_pretrained(
         model_dir,
@@ -286,7 +292,13 @@ def _load_qwen3_export_model(
         fix_mistral_regex=True,
     )
     tokenizer.padding_side = "left"
-    no_token_id, yes_token_id = qwen3_score_token_ids(tokenizer)
+    if is_mxbai_reranker_profile(
+        TransformerRuntimeContract.from_config(artifact_config).profile
+    ):
+        no_token_id = int(getattr(artifact_config, "match_no_token_id"))
+        yes_token_id = int(getattr(artifact_config, "match_yes_token_id"))
+    else:
+        no_token_id, yes_token_id = qwen3_score_token_ids(tokenizer)
     model_dtype = torch.float32 if precision == "float32" else torch.float16
     causal_lm = AutoModelForCausalLM.from_pretrained(
         source,
@@ -308,6 +320,9 @@ def _load_qwen3_export_model(
     if precision == "float8":
         quantization = quantize_module_weights_to_fp8(model.backbone)
         gc.collect()
+    elif precision == "int8":
+        quantization = quantize_module_weights_to_int8(model.backbone)
+        gc.collect()
     return tokenizer, model, quantization
 
 
@@ -322,8 +337,8 @@ def export_transformer_to_onnx(
     export_encoder: bool = True,
 ) -> OnnxExportResult:
     """Export classifier logits and/or pooled embeddings next to a trained model."""
-    if precision not in {"float32", "float16", "float8"}:
-        raise ValueError("ONNX precision must be float32, float16, or float8")
+    if precision not in {"float32", "float16", "float8", "int8"}:
+        raise ValueError("ONNX precision must be float32, float16, float8, or int8")
     if opset < 14:
         raise ValueError("ONNX opset must be at least 14")
     if precision == "float8" and opset < 19:
@@ -337,16 +352,20 @@ def export_transformer_to_onnx(
         (model_dir / "config.json").read_text(encoding="utf-8")
     )
     configured_contract = TransformerRuntimeContract.from_config(config_values)
-    qwen3 = is_qwen3_reranker_profile(configured_contract.profile)
-    quantization: Fp8QuantizationResult | None = None
-    if qwen3:
-        tokenizer, model, quantization = _load_qwen3_export_model(
+    causal_reranker = is_qwen3_reranker_profile(
+        configured_contract.profile
+    ) or is_mxbai_reranker_profile(configured_contract.profile)
+    quantization: Fp8QuantizationResult | Int8QuantizationResult | None = None
+    if causal_reranker:
+        tokenizer, model, quantization = _load_causal_reranker_export_model(
             model_dir,
             precision=precision,
         )
     else:
-        if precision == "float8":
-            raise ValueError("float8 export is currently supported only for Qwen3")
+        if precision in {"float8", "int8"}:
+            raise ValueError(
+                f"{precision} export is currently supported only for causal rerankers"
+            )
         tokenizer, model = load_trained_classifier(
             model_dir,
             device="cpu",
@@ -372,8 +391,8 @@ def export_transformer_to_onnx(
         "precision": precision,
         "dynamic_batch": dynamic_batch,
         "dynamic_sequence_length": dynamic_sequence_length,
-        "convert_float16": not qwen3,
-        "sample_batch_size": 1 if qwen3 else 2,
+        "convert_float16": not causal_reranker,
+        "sample_batch_size": 1 if causal_reranker else 2,
     }
     classifier_path = output_dir / CLASSIFIER_ONNX_NAME if export_classifier else None
     encoder_path = output_dir / ENCODER_ONNX_NAME if export_encoder else None
@@ -422,7 +441,14 @@ def export_transformer_to_onnx(
         "probability_transform": contract.probability_transform,
         "encoder_pooling": contract.encoder_pooling,
         "fp8_quantization": (
-            None if quantization is None else asdict(quantization)
+            asdict(quantization)
+            if isinstance(quantization, Fp8QuantizationResult)
+            else None
+        ),
+        "int8_quantization": (
+            asdict(quantization)
+            if isinstance(quantization, Int8QuantizationResult)
+            else None
         ),
     }
     (output_dir / ONNX_METADATA_NAME).write_text(
@@ -439,7 +465,7 @@ def main() -> None:
     parser.add_argument("--opset", type=int, default=18)
     parser.add_argument(
         "--precision",
-        choices=("float32", "float16", "float8"),
+        choices=("float32", "float16", "float8", "int8"),
         default="float16",
     )
     parser.add_argument("--classifier-only", action="store_true")

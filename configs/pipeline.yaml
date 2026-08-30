@@ -66,9 +66,12 @@ inference:
   data_postprocessing_model: null
   solution_path: ${training.solution_path}
   transformer:
-    # Run every evaluator stage through ONNX Runtime with TensorRT EP.
-    backend: onnxruntime
-    batch_size: 256
+    # Use fast-starting ORT CUDA for Check and native TensorRT for large tests.
+    backend: adaptive
+    adaptive_pair_threshold: 10000
+    batch_size: 512
+    # Cap batch_size * padded_sequence_length at the TensorRT 512x64 optimum.
+    max_tokens_per_batch: 32768
     # Keep the verified fixed batch and fail fast on a genuine inference OOM.
     retry_on_oom: false
     dtype: bfloat16
@@ -80,13 +83,13 @@ inference:
     # Group similarly sized pairs and limit the tensor shapes seen by the GPU.
     length_bucketing:
       enabled: true
-      padding_length_buckets: [32, 64, 96, 128]
+      padding_length_buckets: [32, 48, 64, 80, 96]
     torch_compile:
       enabled: false
       mode: reduce-overhead
       dynamic: true
     onnxruntime:
-      provider: tensorrt
+      provider: cuda
       device_id: 0
       io_binding: true
       graph_optimization: all
@@ -100,12 +103,12 @@ inference:
           enabled: true
         profiles:
           min_batch_size: 1
-          opt_batch_size: 256
-          max_batch_size: 256
+          opt_batch_size: 512
+          max_batch_size: 512
           sequence_lengths:
             - 32
+            - 64
             - 96
-            - 128
     # Native TensorRT backend. The engine is built from ONNX on the target GPU
     # and reused from this fingerprinted cache on subsequent evaluator stages.
     tensorrt:
@@ -121,12 +124,12 @@ inference:
         path: onnx/native_trt_cache/timing.cache
       profiles:
         min_batch_size: 1
-        opt_batch_size: 256
-        max_batch_size: 256
+        opt_batch_size: 512
+        max_batch_size: 512
         sequence_lengths:
           - 32
+          - 64
           - 96
-          - 128
 
 analysis:
   analysis_model: attribute_importance
@@ -192,12 +195,17 @@ model_description:
       # null disables per-attribute value truncation.
       max_attribute_value_tokens: 16
       # null lets the training data determine the limit.
-      max_length: 128
+      max_length: 96
       quantile: 0.95
       sample_size: 10000
       hard_cap: 512
     max_epochs: 15
     hpo_trials: 1
+    distributed:
+      enabled: true
+      expected_world_size: 2
+      backend: nccl
+      find_unused_parameters: false
     # Used directly when hpo_trials=1; otherwise these are initial values.
     # Base LR for Transformer encoder layers and the value tuned by HPO.
     learning_rate: 3.0e-5
@@ -215,13 +223,15 @@ model_description:
     hpo_weight_decay_max: 0.1
     train_batch_size: 64
     eval_batch_size: 64
-    gradient_accumulation_steps: 4
+    # 64 per GPU * 2 H100 * 2 accumulation = global batch 256.
+    gradient_accumulation_steps: 2
     warmup_ratio: 0.06
     # Supported values: linear, cosine.
     lr_scheduler_type: cosine
     max_grad_norm: 1.0
     early_stopping_patience: 2
-    auto_find_batch_size: true
+    # DDP ranks must use an identical fixed batch or fail together.
+    auto_find_batch_size: false
     head:
       # default keeps the Hugging Face CLS head; pooling builds the branches below.
       type: native
@@ -330,9 +340,9 @@ logging:
 submission:
   output_path: dist/twin2attr_submission.zip
   # One switch controls both metadata.json and bundled runtime dependencies.
-  use_custom_image: false
+  use_custom_image: true
   baseline_image: odsai/ecup26-matching-baseline:1.0
-  custom_image: ghcr.io/nikita420240/twin2attr-runtime:qwen3-trt10.9-ort1.23.2
+  custom_image: c0ffee103/twin2attr-runtime:qwen3-trt10.9-ort1.23.2
   entry_point: python -u run.py
 
 hydra:

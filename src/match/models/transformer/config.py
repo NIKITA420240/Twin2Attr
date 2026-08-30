@@ -56,6 +56,10 @@ class SequenceClassifierConfig:
     onnx_dynamic_sequence_length: bool = True
     onnx_export_classifier: bool = True
     onnx_export_encoder: bool = True
+    distributed_enabled: bool = False
+    distributed_expected_world_size: int = 1
+    ddp_backend: str = "nccl"
+    ddp_find_unused_parameters: bool = False
 
     def __post_init__(self) -> None:
         if not self.model_path.strip():
@@ -136,14 +140,33 @@ class SequenceClassifierConfig:
             raise ValueError("lr_scheduler_type must be 'linear' or 'cosine'")
         if self.onnx_opset < 14:
             raise ValueError("onnx_opset must be at least 14")
-        if self.onnx_precision not in {"float32", "float16", "float8"}:
-            raise ValueError("onnx_precision must be float32, float16, or float8")
+        if self.onnx_precision not in {"float32", "float16", "float8", "int8"}:
+            raise ValueError(
+                "onnx_precision must be float32, float16, float8, or int8"
+            )
         if self.onnx_precision == "float8" and self.onnx_opset < 19:
             raise ValueError("float8 ONNX export requires opset 19 or newer")
         if self.onnx_export_enabled and not (
             self.onnx_export_classifier or self.onnx_export_encoder
         ):
             raise ValueError("enabled ONNX export requires at least one graph")
+        if self.distributed_expected_world_size < 1:
+            raise ValueError("distributed_expected_world_size must be positive")
+        if self.distributed_enabled:
+            if self.distributed_expected_world_size < 2:
+                raise ValueError(
+                    "distributed training requires at least two processes"
+                )
+            if self.auto_find_batch_size:
+                raise ValueError(
+                    "auto_find_batch_size must be false for distributed training"
+                )
+            if self.hpo_trials > 1:
+                raise ValueError(
+                    "distributed training does not support hpo_trials > 1"
+                )
+        if self.ddp_backend not in {"nccl", "gloo"}:
+            raise ValueError("ddp_backend must be 'nccl' or 'gloo'")
 
     @property
     def resolved_embeddings_learning_rate(self) -> float:
@@ -178,6 +201,8 @@ class ResolvedTrainingConfig:
     gradient_clip_norm: float
     early_stopping_patience: int
     auto_find_batch_size: bool
+    world_size: int
+    global_train_batch_size: int
 
 
 @dataclass(frozen=True)

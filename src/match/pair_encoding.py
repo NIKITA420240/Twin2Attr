@@ -13,10 +13,18 @@ from torch.utils.data import Dataset
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from .models.transformer.profile import (
+    MXBAI_RERANKER_PROFILE,
     PROMPTED_BINARY_RERANKER_PROFILE,
     QWEN3_RERANKER_PROFILE,
     SEQUENCE_CLASSIFIER_PROFILE,
     normalize_profile,
+)
+from .mxbai_pair_encoding import (
+    MXBAI_RERANKER_DOCUMENT_SEPARATOR,
+    MXBAI_RERANKER_PREFIX,
+    MXBAI_RERANKER_SUFFIX,
+    encode_mxbai_pairs as _encode_mxbai_pairs,
+    serialize_mxbai_pair,
 )
 from .qwen3_pair_encoding import (
     QWEN3_RERANKER_PREFIX,
@@ -56,6 +64,7 @@ __all__ = [
     "serialize_pair",
     "serialize_prompted_pair",
     "serialize_qwen3_pair",
+    "serialize_mxbai_pair",
 ]
 
 
@@ -643,6 +652,8 @@ class _Qwen3PairBatchEncoder:
     use_field_tokens: bool
     max_attribute_value_chars: int | None
     max_attribute_value_tokens: int | None
+    batch_fields: bool
+    field_chunk_size: int
     special_token_count: int
 
     def encode(
@@ -656,6 +667,35 @@ class _Qwen3PairBatchEncoder:
             use_field_tokens=self.use_field_tokens,
             max_attribute_value_chars=self.max_attribute_value_chars,
             max_attribute_value_tokens=self.max_attribute_value_tokens,
+            batch_fields=self.batch_fields,
+            field_chunk_size=self.field_chunk_size,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _MxbaiPairBatchEncoder:
+    tokenizer: PreTrainedTokenizerBase
+    max_length: int
+    use_field_tokens: bool
+    max_attribute_value_chars: int | None
+    max_attribute_value_tokens: int | None
+    batch_fields: bool
+    field_chunk_size: int
+    special_token_count: int
+
+    def encode(
+        self,
+        pairs: Sequence[PreparedPair],
+    ) -> list[dict[str, list[int]]]:
+        return _encode_mxbai_pairs(
+            self.tokenizer,
+            pairs,
+            max_length=self.max_length,
+            use_field_tokens=self.use_field_tokens,
+            max_attribute_value_chars=self.max_attribute_value_chars,
+            max_attribute_value_tokens=self.max_attribute_value_tokens,
+            batch_fields=self.batch_fields,
+            field_chunk_size=self.field_chunk_size,
         )
 
 
@@ -709,7 +749,12 @@ def _pair_batch_encoder(
     max_attribute_value_tokens: int | None,
     batch_fields: bool,
     field_chunk_size: int,
-) -> _PromptedPairBatchEncoder | _Qwen3PairBatchEncoder | _LegacyPairBatchEncoder:
+) -> (
+    _PromptedPairBatchEncoder
+    | _Qwen3PairBatchEncoder
+    | _MxbaiPairBatchEncoder
+    | _LegacyPairBatchEncoder
+):
     if profile == PROMPTED_BINARY_RERANKER_PROFILE:
         return _PromptedPairBatchEncoder(
             tokenizer=tokenizer,
@@ -732,6 +777,28 @@ def _pair_batch_encoder(
             use_field_tokens=use_field_tokens,
             max_attribute_value_chars=max_attribute_value_chars,
             max_attribute_value_tokens=max_attribute_value_tokens,
+            batch_fields=batch_fields,
+            field_chunk_size=field_chunk_size,
+            special_token_count=prompt_overhead,
+        )
+    if profile == MXBAI_RERANKER_PROFILE:
+        tokenizer.padding_side = "left"
+        prompt_overhead = len(
+            tokenizer.encode(
+                MXBAI_RERANKER_PREFIX
+                + MXBAI_RERANKER_DOCUMENT_SEPARATOR
+                + MXBAI_RERANKER_SUFFIX,
+                add_special_tokens=False,
+            )
+        )
+        return _MxbaiPairBatchEncoder(
+            tokenizer=tokenizer,
+            max_length=max_length,
+            use_field_tokens=use_field_tokens,
+            max_attribute_value_chars=max_attribute_value_chars,
+            max_attribute_value_tokens=max_attribute_value_tokens,
+            batch_fields=batch_fields,
+            field_chunk_size=field_chunk_size,
             special_token_count=prompt_overhead,
         )
     return _LegacyPairBatchEncoder(
@@ -817,10 +884,10 @@ class PairEncodingCollator:
         if max_length <= self.special_token_count:
             raise ValueError("max_length must leave room for pair content after special tokens")
 
-    def __call__(self, pairs: list[PreparedPair]) -> dict[str, torch.Tensor]:
-        if not pairs:
-            raise ValueError("cannot collate an empty batch")
-        encoded_pairs = self._encoder.encode(pairs)
+    def _padding_options(
+        self,
+        encoded_pairs: Sequence[dict[str, list[int]]],
+    ) -> tuple[bool | str, int | None]:
         padding: bool | str = True
         padding_max_length: int | None = None
         if self.padding_length_buckets is not None:
@@ -831,8 +898,21 @@ class PairEncodingCollator:
                 if bucket >= longest
             )
             padding = "max_length"
+        return padding, padding_max_length
+
+    def _padded_length(self, longest: int) -> int:
+        if self.padding_length_buckets is None:
+            return longest
+        return next(bucket for bucket in self.padding_length_buckets if bucket >= longest)
+
+    def _pad_encoded(
+        self,
+        encoded_pairs: Sequence[dict[str, list[int]]],
+        pairs: Sequence[PreparedPair],
+    ) -> dict[str, torch.Tensor]:
+        padding, padding_max_length = self._padding_options(encoded_pairs)
         batch = self.tokenizer.pad(
-            encoded_pairs,
+            list(encoded_pairs),
             padding=padding,
             max_length=padding_max_length,
             return_tensors="pt",
@@ -850,6 +930,43 @@ class PairEncodingCollator:
                     dtype=torch.float32,
                 )
         return batch
+
+    def __call__(self, pairs: list[PreparedPair]) -> dict[str, torch.Tensor]:
+        if not pairs:
+            raise ValueError("cannot collate an empty batch")
+        return self._pad_encoded(self._encoder.encode(pairs), pairs)
+
+    def collate_token_budget(
+        self,
+        pairs: list[PreparedPair],
+        *,
+        max_tokens: int,
+    ) -> list[dict[str, torch.Tensor]]:
+        """Encode once, then pack exact padded shapes under a token budget."""
+        if not pairs:
+            raise ValueError("cannot collate an empty batch")
+        if max_tokens < self.max_length:
+            raise ValueError(
+                "max_tokens must be at least max_length so one row always fits"
+            )
+        encoded_pairs = self._encoder.encode(pairs)
+        batches: list[dict[str, torch.Tensor]] = []
+        start = 0
+        longest = 0
+        for stop, encoded in enumerate(encoded_pairs, start=1):
+            candidate_longest = max(longest, len(encoded["input_ids"]))
+            effective_length = self._padded_length(candidate_longest)
+            if stop - start > 1 and (stop - start) * effective_length > max_tokens:
+                end = stop - 1
+                batches.append(
+                    self._pad_encoded(encoded_pairs[start:end], pairs[start:end])
+                )
+                start = end
+                longest = len(encoded["input_ids"])
+            else:
+                longest = candidate_longest
+        batches.append(self._pad_encoded(encoded_pairs[start:], pairs[start:]))
+        return batches
 
 
 def infer_pair_max_length(

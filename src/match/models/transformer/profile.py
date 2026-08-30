@@ -14,11 +14,13 @@ from ...pair_serialization import DEFAULT_MAX_ATTRIBUTE_VALUE_TOKENS
 SEQUENCE_CLASSIFIER_PROFILE = "sequence_classifier"
 PROMPTED_BINARY_RERANKER_PROFILE = "prompted_binary_reranker"
 QWEN3_RERANKER_PROFILE = "qwen3_reranker"
+MXBAI_RERANKER_PROFILE = "mxbai_reranker"
 TRANSFORMER_PROFILES = frozenset(
     {
         SEQUENCE_CLASSIFIER_PROFILE,
         PROMPTED_BINARY_RERANKER_PROFILE,
         QWEN3_RERANKER_PROFILE,
+        MXBAI_RERANKER_PROFILE,
     }
 )
 
@@ -26,6 +28,7 @@ PROFILE_HEAD_TYPES = {
     SEQUENCE_CLASSIFIER_PROFILE: frozenset({"default", "pooling"}),
     PROMPTED_BINARY_RERANKER_PROFILE: frozenset({"native", "attention_pooling"}),
     QWEN3_RERANKER_PROFILE: frozenset({"native"}),
+    MXBAI_RERANKER_PROFILE: frozenset({"native"}),
 }
 
 
@@ -52,6 +55,7 @@ def is_prompted_profile(profile: str) -> bool:
     return normalize_profile(profile) in {
         PROMPTED_BINARY_RERANKER_PROFILE,
         QWEN3_RERANKER_PROFILE,
+        MXBAI_RERANKER_PROFILE,
     }
 
 
@@ -61,6 +65,10 @@ def is_nemotron_profile(profile: str) -> bool:
 
 def is_qwen3_reranker_profile(profile: str) -> bool:
     return normalize_profile(profile) == QWEN3_RERANKER_PROFILE
+
+
+def is_mxbai_reranker_profile(profile: str) -> bool:
+    return normalize_profile(profile) == MXBAI_RERANKER_PROFILE
 
 
 def requires_trust_remote_code(profile: str) -> bool:
@@ -283,6 +291,7 @@ __all__ = [
     "PROFILE_HEAD_TYPES",
     "PROMPTED_BINARY_RERANKER_PROFILE",
     "QWEN3_RERANKER_PROFILE",
+    "MXBAI_RERANKER_PROFILE",
     "SEQUENCE_CLASSIFIER_PROFILE",
     "TRANSFORMER_PROFILES",
     "TransformerArtifactContract",
@@ -290,6 +299,7 @@ __all__ = [
     "is_nemotron_profile",
     "is_prompted_profile",
     "is_qwen3_reranker_profile",
+    "is_mxbai_reranker_profile",
     "normalize_profile",
     "positive_probabilities",
     "requires_trust_remote_code",

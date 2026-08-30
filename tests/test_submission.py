@@ -48,6 +48,7 @@ class PredictorLoadingTests(unittest.TestCase):
                     "predictor": "transformer",
                     "model_directory": "models/transformer",
                     "batch_size": 16,
+                    "max_tokens_per_batch": 1024,
                     "dtype": "bfloat16",
                     "length_bucketing": {
                         "enabled": True,
@@ -72,6 +73,8 @@ class PredictorLoadingTests(unittest.TestCase):
         load_transformer.assert_called_once_with(
             self.root / "models" / "transformer",
             batch_size=16,
+            max_tokens_per_batch=1024,
+            retry_on_oom=True,
             dtype="bfloat16",
             num_workers=0,
             prefetch_factor=2,

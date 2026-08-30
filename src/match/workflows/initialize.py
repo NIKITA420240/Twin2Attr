@@ -15,11 +15,13 @@ from ..models.transformer.head import PoolingHeadConfig
 from ..models.transformer.profile import (
     TransformerArtifactContract,
     TransformerRuntimeContract,
+    is_mxbai_reranker_profile,
     is_qwen3_reranker_profile,
     is_prompted_profile,
     requires_trust_remote_code,
 )
 from ..models.transformer.qwen3 import qwen3_score_token_ids
+from ..models.transformer.mxbai import mxbai_score_token_ids
 from ._common import workflow_logging
 
 
@@ -62,15 +64,30 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
     )
 
     with workflow_logging(config, workflow_name="initialize"):
-        if is_qwen3_reranker_profile(parameters.profile):
-            logger.info("Creating lightweight Qwen3 zero-shot reranker artifact")
+        if is_qwen3_reranker_profile(parameters.profile) or is_mxbai_reranker_profile(
+            parameters.profile
+        ):
+            model_family = (
+                "Mixedbread"
+                if is_mxbai_reranker_profile(parameters.profile)
+                else "Qwen3"
+            )
+            logger.info(
+                "Creating lightweight {} zero-shot reranker artifact", model_family
+            )
             tokenizer = AutoTokenizer.from_pretrained(
                 parameters.pretrained_model_path,
                 trust_remote_code=False,
                 fix_mistral_regex=True,
             )
             tokenizer.padding_side = "left"
-            no_token_id, yes_token_id = qwen3_score_token_ids(tokenizer)
+            if is_mxbai_reranker_profile(parameters.profile):
+                no_token_id, yes_token_id = mxbai_score_token_ids(
+                    parameters.pretrained_model_path,
+                    tokenizer,
+                )
+            else:
+                no_token_id, yes_token_id = qwen3_score_token_ids(tokenizer)
             model_config = AutoConfig.from_pretrained(
                 parameters.pretrained_model_path,
                 trust_remote_code=False,
@@ -100,7 +117,7 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
             tokenizer.save_pretrained(output_path)
             metadata = {
                 "trained": False,
-                "warning": "Pretrained Qwen3 yes/no scoring preserved.",
+                "warning": f"Pretrained {model_family} binary scoring preserved.",
                 "source_model": parameters.pretrained_model_path,
                 "profile": parameters.profile,
                 "head_type": parameters.head.type,
@@ -121,7 +138,9 @@ def initialize(config: AppConfig) -> TrainingArtifacts:
             )
             save_app_config(config, config.training.resolved_config_path)
             solution_path = save_solution_manifest(config, artifacts)
-            logger.info("Initialized Qwen3 artifact saved to {!s}", output_path)
+            logger.info(
+                "Initialized {} artifact saved to {!s}", model_family, output_path
+            )
             return replace(
                 artifacts,
                 resolved_config_path=config.training.resolved_config_path,

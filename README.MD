@@ -147,8 +147,11 @@ export EXPERIMENT_NAME=mmarco-l12-human-last3-special-tokens
 отдельных parquet-файлов.
 
 ```bash
-# Обучение
-uv run python run.py train
+# Однопроцессное обучение с сохранением global batch 256.
+# Текущий конфиг по умолчанию ожидает torchrun на двух H100.
+uv run python run.py train \
+  model_description.transformer.distributed.enabled=false \
+  model_description.transformer.gradient_accumulation_steps=4
 
 # Только безопасно оценить max_length, ничего не обучая и не сохраняя
 uv run python run.py inspect
@@ -156,6 +159,36 @@ uv run python run.py inspect
 # Посчитать важность атрибутов по attention pooling обученного Transformer
 uv run python run.py analyze
 ```
+
+### Обучение на двух H100
+
+Для одной машины с двумя H100 используется PyTorch DDP через `torchrun`.
+Настройки `model_description.transformer.distributed` проверяют, что launcher
+создал ровно два процесса. Каждый процесс обучает свою часть batch, а модель,
+tokenizer, ONNX, resolved-конфиг и запись эксперимента сохраняет только rank 0.
+
+```bash
+export EXPERIMENT_NAME=qwen3-2xh100
+export CUDA_VISIBLE_DEVICES=0,1
+bash scripts/train_2xh100.sh
+```
+
+Эквивалентная команда без скрипта:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 uv run torchrun \
+  --standalone \
+  --nnodes=1 \
+  --nproc_per_node=2 \
+  run.py train
+```
+
+Эффективный train batch вычисляется как
+`train_batch_size * WORLD_SIZE * gradient_accumulation_steps`. Текущая
+конфигурация использует `64 * 2 * 2 = 256`. Автоматический подбор batch в DDP
+отключён: при OOM все rank завершаются с ошибкой, после чего batch нужно явно
+уменьшить одинаково для обеих H100. Для distributed-режима поддерживается один
+HPO trial; параллельный Optuna запускается отдельно от DDP.
 
 Режим `analyze` не обучает и не изменяет модель. Он загружает Transformer из
 `model_description.transformer.artifact_dir`, один раз инференсит выборку и

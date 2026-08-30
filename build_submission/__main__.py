@@ -30,6 +30,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override submission.output_path from the config",
     )
     parser.add_argument(
+        "--image-weights-manifest",
+        default=None,
+        help=(
+            "Optional JSON manifest for ONNX external weights supplied by the "
+            "custom Docker image"
+        ),
+    )
+    parser.add_argument(
         "overrides",
         nargs=argparse.REMAINDER,
         help="OmegaConf overrides, for example inference.model=fusion",
@@ -46,7 +54,11 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     config = load_app_config_file(args.config, args.overrides)
     try:
-        result = build_submission_archive(config, args.output)
+        result = build_submission_archive(
+            config,
+            args.output,
+            image_weights_manifest=args.image_weights_manifest,
+        )
     except (FileNotFoundError, ValueError) as error:
         raise SystemExit(f"Cannot build submission archive: {error}") from error
     size_mib = result.path.stat().st_size / (1024 * 1024)

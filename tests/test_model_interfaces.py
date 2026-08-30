@@ -56,6 +56,42 @@ def _batch() -> PredictionBatch:
 
 
 class ModelInterfaceTests(unittest.TestCase):
+    def test_transformer_executes_every_token_budget_sub_batch(self) -> None:
+        executor = _FakeExecutor()
+        predictor = TransformerPredictor(
+            object(),
+            executor,
+            batch_size=512,
+            max_tokens_per_batch=32_768,
+        )
+        collated = [
+            {"input_ids": torch.zeros((3, 32), dtype=torch.int64)},
+            {"input_ids": torch.zeros((2, 96), dtype=torch.int64)},
+        ]
+
+        def infer(batch, *, non_blocking):
+            del non_blocking
+            return np.ones((batch["input_ids"].shape[0], 1), dtype=np.float32)
+
+        with (
+            patch.object(TransformerBatchingSettings, "collator", return_value=object()),
+            patch(
+                "match.models.transformer.predictor.inference_dataset",
+                return_value=([object()] * 5, None),
+            ),
+            patch(
+                "match.models.transformer.predictor.inference_loader",
+                return_value=([collated], False),
+            ),
+        ):
+            result = predictor._execute_pairs(
+                [object()] * 5,
+                operation=infer,
+                output_width=1,
+            )
+
+        self.assertEqual(result.shape, (5, 1))
+
     def test_transformer_can_fail_fast_instead_of_reducing_oom_batch(self) -> None:
         executor = _FakeExecutor()
         predictor = TransformerPredictor(

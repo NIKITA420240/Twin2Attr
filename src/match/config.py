@@ -417,6 +417,7 @@ class LengthBucketingSettings:
 class TransformerInferenceSettings:
     batch_size: int
     dtype: str
+    max_tokens_per_batch: int | None = None
     backend: str = "pytorch"
     adaptive_pair_threshold: int = 10_000
     retry_on_oom: bool = True
@@ -432,6 +433,10 @@ class TransformerInferenceSettings:
     def __post_init__(self) -> None:
         if self.batch_size < 1:
             raise ValueError("inference.transformer.batch_size must be positive")
+        if self.max_tokens_per_batch is not None and self.max_tokens_per_batch < 1:
+            raise ValueError(
+                "inference.transformer.max_tokens_per_batch must be positive or null"
+            )
         if self.num_workers < 0:
             raise ValueError(
                 "inference.transformer.num_workers must not be negative"
@@ -580,10 +585,10 @@ class OnnxExportSettings:
                 "model_description.transformer.export.onnx.opset must be at "
                 "least 14"
             )
-        if self.precision not in {"float32", "float16", "float8"}:
+        if self.precision not in {"float32", "float16", "float8", "int8"}:
             raise ValueError(
                 "model_description.transformer.export.onnx.precision must be "
-                "float32, float16, or float8"
+                "float32, float16, float8, or int8"
             )
         if self.precision == "float8" and self.opset < 19:
             raise ValueError("float8 ONNX export requires opset 19 or newer")
@@ -596,6 +601,30 @@ class OnnxExportSettings:
 @dataclass(frozen=True, slots=True)
 class TransformerExportSettings:
     onnx: OnnxExportSettings = OnnxExportSettings()
+
+
+@dataclass(frozen=True, slots=True)
+class TransformerDistributedSettings:
+    enabled: bool = False
+    expected_world_size: int = 1
+    backend: str = "nccl"
+    find_unused_parameters: bool = False
+
+    def __post_init__(self) -> None:
+        if self.expected_world_size < 1:
+            raise ValueError(
+                "model_description.transformer.distributed."
+                "expected_world_size must be positive"
+            )
+        if self.enabled and self.expected_world_size < 2:
+            raise ValueError(
+                "enabled distributed training requires expected_world_size >= 2"
+            )
+        if self.backend not in {"nccl", "gloo"}:
+            raise ValueError(
+                "model_description.transformer.distributed.backend must be "
+                "nccl or gloo"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -677,6 +706,9 @@ class TransformerParameters:
     head_learning_rate: float | None = None
     layerwise_lr_decay: float = 1.0
     head: TransformerHeadParameters = TransformerHeadParameters()
+    distributed: TransformerDistributedSettings = (
+        TransformerDistributedSettings()
+    )
 
     def __post_init__(self) -> None:
         normalized_profile = normalize_profile(self.profile)
@@ -729,6 +761,17 @@ class TransformerParameters:
             raise ValueError("transformer.warmup_ratio must be in [0, 1)")
         if self.max_grad_norm <= 0.0:
             raise ValueError("transformer.max_grad_norm must be positive")
+        if self.distributed.enabled:
+            if self.auto_find_batch_size:
+                raise ValueError(
+                    "transformer.auto_find_batch_size must be false for "
+                    "distributed training"
+                )
+            if self.hpo_trials > 1:
+                raise ValueError(
+                    "distributed Transformer training does not support "
+                    "hpo_trials > 1"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1446,6 +1489,11 @@ def load_app_config(config: ConfigSource) -> AppConfig:
         raise ValueError(
             "config section 'transformer.export.onnx' must be a mapping"
         )
+    transformer_distributed_value = transformer.get("distributed", {})
+    if not isinstance(transformer_distributed_value, Mapping):
+        raise ValueError(
+            "config section 'transformer.distributed' must be a mapping"
+        )
     encoding = _section(transformer, "pair_encoding")
     transformer_head_value = transformer.get("head", {})
     if not isinstance(transformer_head_value, Mapping):
@@ -1558,6 +1606,14 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             transformer=TransformerInferenceSettings(
                 batch_size=int(_required(inference_transformer, "batch_size")),
                 dtype=str(_required(inference_transformer, "dtype")).lower(),
+                max_tokens_per_batch=(
+                    None
+                    if inference_transformer.get("max_tokens_per_batch") is None
+                    else _int(
+                        inference_transformer["max_tokens_per_batch"],
+                        "inference.transformer.max_tokens_per_batch",
+                    )
+                ),
                 backend=str(
                     inference_transformer.get("backend", "pytorch")
                 ).lower(),
@@ -1838,6 +1894,29 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                 auto_find_batch_size=_bool(
                     _required(transformer, "auto_find_batch_size"),
                     "model_description.transformer.auto_find_batch_size",
+                ),
+                distributed=TransformerDistributedSettings(
+                    enabled=_bool(
+                        transformer_distributed_value.get("enabled", False),
+                        "model_description.transformer.distributed.enabled",
+                    ),
+                    expected_world_size=int(
+                        transformer_distributed_value.get(
+                            "expected_world_size",
+                            1,
+                        )
+                    ),
+                    backend=str(
+                        transformer_distributed_value.get("backend", "nccl")
+                    ).lower(),
+                    find_unused_parameters=_bool(
+                        transformer_distributed_value.get(
+                            "find_unused_parameters",
+                            False,
+                        ),
+                        "model_description.transformer.distributed."
+                        "find_unused_parameters",
+                    ),
                 ),
                 head=TransformerHeadParameters(
                     type=str(
@@ -2152,6 +2231,7 @@ __all__ = [
     "TrainingSettings",
     "TorchCompileSettings",
     "TransformerExportSettings",
+    "TransformerDistributedSettings",
     "TransformerHeadParameters",
     "TransformerInferenceSettings",
     "TransformerParameters",

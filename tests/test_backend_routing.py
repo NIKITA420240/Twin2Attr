@@ -13,6 +13,35 @@ from match.submission import _solution_with_effective_backend
 
 
 class BackendRoutingTests(unittest.TestCase):
+    def test_materializes_external_weights_from_image_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "image"
+            image.mkdir()
+            source = image / "external.weight"
+            source.write_bytes(b"weights")
+            model = root / "model" / "onnx"
+            model.mkdir(parents=True)
+            solution_path = root / "solution.json"
+            solution_path.write_text(
+                json.dumps(
+                    {
+                        "model_directory": "model",
+                        "external_weights": {
+                            "image_directory": str(image.resolve()),
+                            "files": [
+                                {"name": "external.weight", "size": 7},
+                            ],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            run.materialize_external_weights(solution_path)
+
+            self.assertEqual((model / "external.weight").read_bytes(), b"weights")
+
     def test_ort_tensorrt_provider_prepares_tensorrt_runtime(self) -> None:
         self.assertTrue(
             run._requires_tensorrt_runtime(

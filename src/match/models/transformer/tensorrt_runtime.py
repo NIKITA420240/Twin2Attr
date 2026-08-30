@@ -73,9 +73,19 @@ def _torch_dtype(trt: Any, dtype: Any) -> torch.dtype:
 
 
 @dataclass(slots=True)
+class _ExecutionBuffers:
+    device: dict[str, torch.Tensor]
+    host_outputs: dict[str, torch.Tensor]
+
+
+@dataclass(slots=True)
 class _EngineState:
     engine: Any
     context: Any
+    buffers: dict[tuple[tuple[str, tuple[int, ...]], ...], _ExecutionBuffers] = (
+        field(default_factory=dict)
+    )
+    active_buffer_key: tuple[tuple[str, tuple[int, ...]], ...] | None = None
 
 
 @dataclass(slots=True)
@@ -253,46 +263,82 @@ class TensorRTTransformerExecutor:
         state = self._state(kind)
         engine, context = state.engine, state.context
         stream = torch.cuda.current_stream(self.device)
-        buffers: dict[str, torch.Tensor] = {}
         try:
+            input_specs: list[tuple[str, tuple[int, ...]]] = []
             for index in range(engine.num_io_tensors):
                 name = engine.get_tensor_name(index)
                 if engine.get_tensor_mode(name) != self._trt.TensorIOMode.INPUT:
                     continue
                 if name not in batch:
                     raise RuntimeError(f"TensorRT batch is missing input {name!r}")
-                tensor = batch[name].to(
-                    device=self.device,
-                    dtype=_torch_dtype(self._trt, engine.get_tensor_dtype(name)),
-                    non_blocking=non_blocking,
-                ).contiguous()
-                if not context.set_input_shape(name, tuple(tensor.shape)):
-                    raise RuntimeError(
-                        "TensorRT rejected input shape "
-                        f"{tuple(tensor.shape)} for {name}"
+                input_specs.append((name, tuple(batch[name].shape)))
+            buffer_key = tuple(input_specs)
+            execution_buffers = state.buffers.get(buffer_key)
+            created_buffers = execution_buffers is None
+            if execution_buffers is None:
+                device_buffers: dict[str, torch.Tensor] = {}
+                for name, shape in input_specs:
+                    if not context.set_input_shape(name, shape):
+                        raise RuntimeError(
+                            "TensorRT rejected input shape " f"{shape} for {name}"
+                        )
+                    device_buffers[name] = torch.empty(
+                        shape,
+                        dtype=_torch_dtype(
+                            self._trt,
+                            engine.get_tensor_dtype(name),
+                        ),
+                        device=self.device,
                     )
-                buffers[name] = tensor
-            for index in range(engine.num_io_tensors):
-                name = engine.get_tensor_name(index)
-                if engine.get_tensor_mode(name) != self._trt.TensorIOMode.OUTPUT:
-                    continue
-                shape = tuple(context.get_tensor_shape(name))
-                if any(dimension < 0 for dimension in shape):
-                    raise RuntimeError(
-                        f"TensorRT could not resolve output shape for {name}: {shape}"
+                host_outputs: dict[str, torch.Tensor] = {}
+                for index in range(engine.num_io_tensors):
+                    name = engine.get_tensor_name(index)
+                    if engine.get_tensor_mode(name) != self._trt.TensorIOMode.OUTPUT:
+                        continue
+                    shape = tuple(context.get_tensor_shape(name))
+                    if any(dimension < 0 for dimension in shape):
+                        raise RuntimeError(
+                            "TensorRT could not resolve output shape for "
+                            f"{name}: {shape}"
+                        )
+                    dtype = _torch_dtype(self._trt, engine.get_tensor_dtype(name))
+                    device_buffers[name] = torch.empty(
+                        shape,
+                        dtype=dtype,
+                        device=self.device,
                     )
-                buffers[name] = torch.empty(
-                    shape,
-                    dtype=_torch_dtype(self._trt, engine.get_tensor_dtype(name)),
-                    device=self.device,
+                    host_outputs[name] = torch.empty(
+                        shape,
+                        dtype=dtype,
+                        device="cpu",
+                        pin_memory=self.device.type == "cuda",
+                    )
+                execution_buffers = _ExecutionBuffers(
+                    device=device_buffers,
+                    host_outputs=host_outputs,
                 )
-            for name, tensor in buffers.items():
-                if not context.set_tensor_address(name, tensor.data_ptr()):
-                    raise RuntimeError(f"TensorRT rejected buffer for {name!r}")
+                state.buffers[buffer_key] = execution_buffers
+            if state.active_buffer_key != buffer_key:
+                if not created_buffers:
+                    for name, shape in input_specs:
+                        if not context.set_input_shape(name, shape):
+                            raise RuntimeError(
+                                "TensorRT rejected input shape "
+                                f"{shape} for {name}"
+                            )
+                for name, tensor in execution_buffers.device.items():
+                    if not context.set_tensor_address(name, tensor.data_ptr()):
+                        raise RuntimeError(f"TensorRT rejected buffer for {name!r}")
+                state.active_buffer_key = buffer_key
+            for name, _ in input_specs:
+                execution_buffers.device[name].copy_(
+                    batch[name],
+                    non_blocking=non_blocking,
+                )
             if not context.execute_async_v3(stream.cuda_stream):
                 raise RuntimeError("TensorRT execution failed")
             outputs = [
-                buffers[engine.get_tensor_name(index)]
+                engine.get_tensor_name(index)
                 for index in range(engine.num_io_tensors)
                 if engine.get_tensor_mode(engine.get_tensor_name(index))
                 == self._trt.TensorIOMode.OUTPUT
@@ -301,7 +347,16 @@ class TensorRTTransformerExecutor:
                 raise RuntimeError(
                     f"expected one TensorRT output, found {len(outputs)}"
                 )
-            return outputs[0].float().cpu().numpy()
+            output_name = outputs[0]
+            execution_buffers.host_outputs[output_name].copy_(
+                execution_buffers.device[output_name],
+                non_blocking=True,
+            )
+            stream.synchronize()
+            return execution_buffers.host_outputs[output_name].numpy().astype(
+                np.float32,
+                copy=True,
+            )
         except Exception as error:
             if _is_oom(error):
                 raise TransformerExecutorOutOfMemoryError from error
@@ -409,6 +464,9 @@ class TensorRTTransformerExecutor:
             ) from error
 
     def clear_cache(self) -> None:
+        for state in self._states.values():
+            state.buffers.clear()
+            state.active_buffer_key = None
         torch.cuda.empty_cache()
 
 

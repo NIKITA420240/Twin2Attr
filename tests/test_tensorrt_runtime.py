@@ -12,6 +12,7 @@ from match.models.transformer.tensorrt_runtime import (
     TensorRTEngineOptions,
     TensorRTProfile,
     TensorRTTransformerExecutor,
+    _EngineState,
     _torch_dtype,
 )
 from match.models.transformer.tensorrt_builder import TensorRTEngineBuilder
@@ -22,6 +23,7 @@ from match.models.transformer.tensorrt_common import TensorRTInitializationError
 class _FakeTensorRT:
     class TensorIOMode:
         INPUT = "input"
+        OUTPUT = "output"
 
     @staticmethod
     def nptype(value):
@@ -104,6 +106,58 @@ class NativeTensorRTRuntimeTests(unittest.TestCase):
     def test_maps_tensorrt_dtypes_to_torch(self) -> None:
         self.assertEqual(_torch_dtype(_FakeTensorRT, np.float16), torch.float16)
         self.assertEqual(_torch_dtype(_FakeTensorRT, np.int32), torch.int32)
+
+    def test_reuses_buffers_and_bindings_for_repeated_shape(self) -> None:
+        executor = object.__new__(TensorRTTransformerExecutor)
+        object.__setattr__(executor, "_trt", _FakeTensorRT)
+        object.__setattr__(executor, "_device", torch.device("cpu"))
+        names = ("input_ids", "attention_mask", "logits")
+        engine = Mock()
+        engine.num_io_tensors = len(names)
+        engine.get_tensor_name.side_effect = lambda index: names[index]
+        engine.get_tensor_mode.side_effect = lambda name: (
+            _FakeTensorRT.TensorIOMode.OUTPUT
+            if name == "logits"
+            else _FakeTensorRT.TensorIOMode.INPUT
+        )
+        engine.get_tensor_dtype.side_effect = lambda name: (
+            np.float32 if name == "logits" else np.int32
+        )
+        context = Mock()
+        context.set_input_shape.return_value = True
+        context.get_tensor_shape.return_value = (2, 1)
+        context.set_tensor_address.return_value = True
+        context.execute_async_v3.return_value = True
+        state = _EngineState(engine, context)
+        object.__setattr__(executor, "_states", {"classifier": state})
+        stream = SimpleNamespace(cuda_stream=7, synchronize=Mock())
+        batch = {
+            "input_ids": torch.ones((2, 32), dtype=torch.int64),
+            "attention_mask": torch.ones((2, 32), dtype=torch.int64),
+        }
+
+        with patch.object(torch.cuda, "current_stream", return_value=stream):
+            first = executor._execute("classifier", batch, non_blocking=False)
+            buffer_ids = {
+                name: id(tensor)
+                for name, tensor in next(iter(state.buffers.values())).device.items()
+            }
+            second = executor._execute("classifier", batch, non_blocking=False)
+
+        self.assertEqual(first.shape, (2, 1))
+        self.assertEqual(second.shape, (2, 1))
+        self.assertEqual(len(state.buffers), 1)
+        self.assertEqual(
+            buffer_ids,
+            {
+                name: id(tensor)
+                for name, tensor in next(iter(state.buffers.values())).device.items()
+            },
+        )
+        self.assertEqual(context.set_input_shape.call_count, 2)
+        self.assertEqual(context.set_tensor_address.call_count, 3)
+        self.assertEqual(context.execute_async_v3.call_count, 2)
+        self.assertEqual(stream.synchronize.call_count, 2)
 
     def test_engine_and_timing_cache_have_separate_lifecycle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

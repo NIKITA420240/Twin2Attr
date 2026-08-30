@@ -110,6 +110,10 @@ def build_solution_manifest(
                 config.inference.transformer.adaptive_pair_threshold
             )
         solution["batch_size"] = config.inference.transformer.batch_size
+        if config.inference.transformer.max_tokens_per_batch is not None:
+            solution["max_tokens_per_batch"] = (
+                config.inference.transformer.max_tokens_per_batch
+            )
         solution["retry_on_oom"] = config.inference.transformer.retry_on_oom
         solution["dtype"] = config.inference.transformer.dtype
         solution["num_workers"] = config.inference.transformer.num_workers

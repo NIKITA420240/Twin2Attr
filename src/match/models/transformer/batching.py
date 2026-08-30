@@ -80,6 +80,15 @@ class _OrderedPreparedPairDataset(Dataset):
         return self._pairs[int(self._order[index])]
 
 
+@dataclass(frozen=True, slots=True)
+class _TokenBudgetCollator:
+    collator: PairEncodingCollator
+    max_tokens: int
+
+    def __call__(self, pairs: list[PreparedPair]) -> list[dict[str, torch.Tensor]]:
+        return self.collator.collate_token_budget(pairs, max_tokens=self.max_tokens)
+
+
 def inference_dataset(
     pairs: Sequence[PreparedPair],
     *,
@@ -106,13 +115,18 @@ def inference_loader(
     num_workers: int,
     prefetch_factor: int,
     pin_memory: bool,
+    max_tokens_per_batch: int | None = None,
 ) -> tuple[DataLoader, bool]:
     use_pinned_memory = pin_memory and device.type == "cuda"
     kwargs = {
         "dataset": dataset,
         "batch_size": batch_size,
         "shuffle": False,
-        "collate_fn": collator,
+        "collate_fn": (
+            collator
+            if max_tokens_per_batch is None
+            else _TokenBudgetCollator(collator, max_tokens_per_batch)
+        ),
         "num_workers": num_workers,
         "pin_memory": use_pinned_memory,
     }
@@ -135,6 +149,7 @@ def restore_original_order(
 @dataclass(frozen=True, slots=True)
 class TransformerBatchingSettings:
     batch_size: int = 64
+    max_tokens_per_batch: int | None = None
     retry_on_oom: bool = True
     num_workers: int = 0
     prefetch_factor: int = 2
@@ -148,6 +163,8 @@ class TransformerBatchingSettings:
     def __post_init__(self) -> None:
         if self.batch_size < 1:
             raise ValueError("batch_size must be positive")
+        if self.max_tokens_per_batch is not None and self.max_tokens_per_batch < 1:
+            raise ValueError("max_tokens_per_batch must be positive or None")
         if self.num_workers < 0:
             raise ValueError("num_workers must not be negative")
         if self.prefetch_factor < 1:
@@ -165,7 +182,7 @@ class TransformerBatchingSettings:
         max_attribute_value_tokens: int | None,
         profile: str = SEQUENCE_CLASSIFIER_PROFILE,
     ) -> PairEncodingCollator:
-        return PairEncodingCollator(
+        collator = PairEncodingCollator(
             tokenizer,
             max_length,
             use_field_tokens=use_field_tokens,
@@ -179,6 +196,15 @@ class TransformerBatchingSettings:
             field_chunk_size=self.field_chunk_size,
             profile=profile,
         )
+        if (
+            self.max_tokens_per_batch is not None
+            and self.max_tokens_per_batch < collator.max_length
+        ):
+            raise ValueError(
+                "max_tokens_per_batch must be at least the resolved max_length "
+                f"({collator.max_length})"
+            )
+        return collator
 
 
 __all__ = [

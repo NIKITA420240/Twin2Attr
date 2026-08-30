@@ -9,6 +9,7 @@ from loguru import logger
 from transformers import AutoTokenizer
 
 from ..config import AppConfig
+from ..distributed import current_process
 from ..models.transformer.profile import requires_trust_remote_code
 from ..pair_encoding import add_pair_special_tokens, infer_pair_max_length
 from ..prepare_data import PreparedPair
@@ -53,7 +54,8 @@ def resolve_max_length(
 def workflow_logging(config: AppConfig, *, workflow_name: str) -> Iterator[None]:
     """Configure the optional file sink for one workflow invocation."""
     log_sink: int | None = None
-    if config.logging.file:
+    process = current_process()
+    if config.logging.file and process.is_main_process:
         log_path = config.logging.file
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_sink = logger.add(
@@ -63,14 +65,16 @@ def workflow_logging(config: AppConfig, *, workflow_name: str) -> Iterator[None]
             enqueue=True,
         )
     try:
-        logger.info(
-            "Starting Twin2Attr workflow: name={}, normalization={}, "
-            "training_model={}, ner={}",
-            workflow_name,
-            normalization_enabled(config),
-            config.training.model,
-            config.features.ner.enabled,
-        )
+        if process.is_main_process:
+            logger.info(
+                "Starting Twin2Attr workflow: name={}, normalization={}, "
+                "training_model={}, ner={}, world_size={}",
+                workflow_name,
+                normalization_enabled(config),
+                config.training.model,
+                config.features.ner.enabled,
+                process.world_size,
+            )
         yield
     finally:
         if log_sink is not None:

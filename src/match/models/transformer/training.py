@@ -18,6 +18,7 @@ from transformers import AutoTokenizer, EarlyStoppingCallback, TrainingArguments
 from ...augmentations import AttributeWordDropoutAugmenter
 from ...config import AppConfig
 from ...data import TrainingData
+from ...distributed import current_process
 from ...pair_encoding import (
     PairEncodingCollator,
     PreparedPairDataset,
@@ -71,6 +72,7 @@ def _training_arguments(
         "save_total_limit": 1,
         "remove_unused_columns": False,
         "report_to": "none",
+        "log_on_each_node": False,
         "seed": config.seed,
         "data_seed": config.seed,
         "fp16": torch.cuda.is_available() and not torch.cuda.is_bf16_supported(),
@@ -83,6 +85,11 @@ def _training_arguments(
         kwargs["warmup_steps"] = 0
     if "eval_strategy" not in parameters:
         kwargs["evaluation_strategy"] = kwargs.pop("eval_strategy")
+    if config.distributed_enabled:
+        kwargs["ddp_backend"] = config.ddp_backend
+        kwargs["ddp_find_unused_parameters"] = (
+            config.ddp_find_unused_parameters
+        )
     return TrainingArguments(**kwargs)
 
 
@@ -128,6 +135,19 @@ def train_sequence_classifier(
     output_dir: str | Path,
     train_pair_transform: Callable[[PreparedPair], PreparedPair] | None = None,
 ) -> TrainingResult:
+    process = current_process()
+    if config.distributed_enabled:
+        if process.world_size != config.distributed_expected_world_size:
+            raise RuntimeError(
+                "distributed world-size mismatch: configured "
+                f"expected_world_size={config.distributed_expected_world_size}, "
+                f"launcher supplied WORLD_SIZE={process.world_size}"
+            )
+    elif process.distributed:
+        raise RuntimeError(
+            "torchrun started multiple processes, but distributed training is "
+            "disabled"
+        )
     train_labels = _labels_from_pairs(train_pairs, split_name="train")
     validation_labels = _labels_from_pairs(
         validation_pairs,
@@ -139,20 +159,32 @@ def train_sequence_classifier(
         )
     validation_categories = [pair.category for pair in validation_pairs]
 
-    logger.info("Training sequence classifier")
-    logger.info("Training pairs: {}", len(train_pairs))
-    logger.info("Validation pairs: {}", len(validation_pairs))
+    if process.is_main_process:
+        logger.info(
+            "Training sequence classifier: world_size={}, global_batch_size={}",
+            process.world_size,
+            config.train_batch_size
+            * process.world_size
+            * config.gradient_accumulation_steps,
+        )
+        logger.info("Training pairs: {}", len(train_pairs))
+        logger.info("Validation pairs: {}", len(validation_pairs))
     train_counts = np.bincount(np.asarray(train_labels, dtype=np.int64), minlength=2)
-    logger.info(
-        "Training labels: different={}, match={}",
-        int(train_counts[0]),
-        int(train_counts[1]),
-    )
+    if process.is_main_process:
+        logger.info(
+            "Training labels: different={}, match={}",
+            int(train_counts[0]),
+            int(train_counts[1]),
+        )
     class_weights = compute_class_weights(
         train_labels,
         [pair.sample_weight for pair in train_pairs],
     )
-    logger.info("Class weights [different, match]: {}", class_weights.tolist())
+    if process.is_main_process:
+        logger.info(
+            "Class weights [different, match]: {}",
+            class_weights.tolist(),
+        )
 
     output_path = Path(output_dir).resolve()
     output_path.mkdir(parents=True, exist_ok=True)
@@ -180,7 +212,8 @@ def train_sequence_classifier(
             max_attribute_value_tokens=config.max_attribute_value_tokens,
             profile=config.profile,
         )
-    logger.info("Max input length: {}", max_length)
+    if process.is_main_process:
+        logger.info("Max input length: {}", max_length)
 
     train_dataset = PreparedPairDataset(
         train_pairs,
@@ -287,21 +320,6 @@ def train_sequence_classifier(
         max_attribute_value_chars=config.max_attribute_value_chars,
         max_attribute_value_tokens=config.max_attribute_value_tokens,
     ).apply_encoding_to(trainer.model.config)
-    trainer.save_model(str(output_path))
-    tokenizer.save_pretrained(output_path)
-    if config.onnx_export_enabled:
-        from .onnx_export import export_transformer_to_onnx
-
-        export_transformer_to_onnx(
-            output_path,
-            opset=config.onnx_opset,
-            precision=config.onnx_precision,
-            dynamic_batch=config.onnx_dynamic_batch,
-            dynamic_sequence_length=config.onnx_dynamic_sequence_length,
-            export_classifier=config.onnx_export_classifier,
-            export_encoder=config.onnx_export_encoder,
-        )
-
     actual_batch_size = int(
         getattr(
             trainer,
@@ -337,6 +355,12 @@ def train_sequence_classifier(
         gradient_clip_norm=config.max_grad_norm,
         early_stopping_patience=config.early_stopping_patience,
         auto_find_batch_size=config.auto_find_batch_size,
+        world_size=process.world_size,
+        global_train_batch_size=(
+            actual_batch_size
+            * process.world_size
+            * training_arguments.gradient_accumulation_steps
+        ),
     )
     metadata = {
         "profile": config.profile,
@@ -350,11 +374,28 @@ def train_sequence_classifier(
         "best_hyperparameters": best_hyperparameters,
         "resolved_config": asdict(resolved_config),
     }
-    (output_path / "training_metadata.json").write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    logger.info("Model and metadata saved to {!s}", output_path)
+    trainer.accelerator.wait_for_everyone()
+    if trainer.is_world_process_zero():
+        trainer.save_model(str(output_path))
+        tokenizer.save_pretrained(output_path)
+        if config.onnx_export_enabled:
+            from .onnx_export import export_transformer_to_onnx
+
+            export_transformer_to_onnx(
+                output_path,
+                opset=config.onnx_opset,
+                precision=config.onnx_precision,
+                dynamic_batch=config.onnx_dynamic_batch,
+                dynamic_sequence_length=config.onnx_dynamic_sequence_length,
+                export_classifier=config.onnx_export_classifier,
+                export_encoder=config.onnx_export_encoder,
+            )
+        (output_path / "training_metadata.json").write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logger.info("Model and metadata saved to {!s}", output_path)
+    trainer.accelerator.wait_for_everyone()
     return TrainingResult(
         model_dir=output_path,
         validation_macro_pr_auc=float(metrics["eval_macro_pr_auc"]),
@@ -417,6 +458,14 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
         onnx_dynamic_sequence_length=onnx_export.dynamic_sequence_length,
         onnx_export_classifier=onnx_export.export_classifier,
         onnx_export_encoder=onnx_export.export_encoder,
+        distributed_enabled=parameters.distributed.enabled,
+        distributed_expected_world_size=(
+            parameters.distributed.expected_world_size
+        ),
+        ddp_backend=parameters.distributed.backend,
+        ddp_find_unused_parameters=(
+            parameters.distributed.find_unused_parameters
+        ),
     )
 
 

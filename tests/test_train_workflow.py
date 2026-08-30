@@ -84,6 +84,69 @@ class TrainWorkflowConfigTests(unittest.TestCase):
         )
         save_manifest.assert_called_once_with(self.config, artifacts)
 
+    def test_non_main_rank_does_not_write_shared_artifacts(self) -> None:
+        artifacts = TrainingArtifacts(
+            predictor="transformer",
+            transformer_dir=self.config.model_description.transformer.artifact_dir,
+        )
+        trainer = Mock()
+        trainer.train.return_value = artifacts
+        data_model = Mock()
+        data_model.load_training_splits.return_value = SimpleNamespace(
+            items=object(),
+            train_matches=object(),
+            validation_matches=object(),
+        )
+
+        with (
+            patch(
+                "match.workflows.train.workflow_logging",
+                return_value=nullcontext(),
+            ),
+            patch(
+                "match.workflows.train.current_process",
+                return_value=SimpleNamespace(is_main_process=False),
+            ) as current_process,
+            patch("match.workflows.train.wait_for_everyone") as barrier,
+            patch(
+                "match.workflows.train.build_data_model",
+                return_value=data_model,
+            ),
+            patch(
+                "match.workflows.train.prepare_configured_items",
+                return_value=SimpleNamespace(
+                    frame=object(),
+                    attributes_column="attributes",
+                ),
+            ),
+            patch(
+                "match.workflows.train.prepare_training_data",
+                return_value=object(),
+            ),
+            patch(
+                "match.workflows.train.build_trainer",
+                return_value=trainer,
+            ),
+            patch("match.workflows.train.save_app_config") as save_config,
+            patch(
+                "match.workflows.train.save_solution_manifest"
+            ) as save_manifest,
+            patch("match.workflows.train.save_experiment_record") as save_record,
+        ):
+            result = train(
+                self.config,
+                experiment_name="ddp-test",
+                experiment_registry_path=self.config.training.solution_path.parent
+                / "experiments.csv",
+            )
+
+        self.assertEqual(result.solution_path, self.config.training.solution_path)
+        save_config.assert_not_called()
+        save_manifest.assert_not_called()
+        save_record.assert_not_called()
+        current_process.assert_called_once_with()
+        barrier.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

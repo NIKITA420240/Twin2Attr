@@ -661,9 +661,77 @@ def _adaptive_backend_for_input(
     return selected
 
 
+def materialize_external_weights(solution_path: Path | None) -> None:
+    """Link ONNX external weights supplied by the custom runtime image."""
+    if solution_path is None or not solution_path.is_file():
+        return
+    import json
+    import shutil
+
+    solution = json.loads(solution_path.read_text(encoding="utf-8"))
+    value = solution.get("external_weights")
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise ValueError("solution external_weights must be an object")
+    image_directory = value.get("image_directory")
+    files = value.get("files")
+    model_directory = solution.get("model_directory")
+    if (
+        not isinstance(image_directory, str)
+        or not Path(image_directory).is_absolute()
+        or not isinstance(files, list)
+        or not isinstance(model_directory, str)
+    ):
+        raise ValueError("solution external_weights configuration is invalid")
+    source_root = Path(image_directory)
+    model_root = Path(model_directory)
+    if not model_root.is_absolute():
+        model_root = solution_path.parent / model_root
+    target_root = model_root / "onnx"
+    target_root.mkdir(parents=True, exist_ok=True)
+    linked = 0
+    for entry in files:
+        if not isinstance(entry, dict):
+            raise ValueError("solution external weight entries must be objects")
+        name = entry.get("name")
+        size = entry.get("size")
+        relative = Path(str(name))
+        if (
+            not isinstance(name, str)
+            or not name
+            or relative.name != name
+            or len(relative.parts) != 1
+            or isinstance(size, bool)
+            or not isinstance(size, int)
+            or size < 1
+        ):
+            raise ValueError(f"invalid external weight entry: {entry!r}")
+        source = source_root / name
+        target = target_root / name
+        if not source.is_file() or source.stat().st_size != size:
+            raise FileNotFoundError(
+                f"Docker image external weight is missing or invalid: {source}"
+            )
+        if target.exists() or target.is_symlink():
+            if target.is_file() and target.stat().st_size == size:
+                continue
+            raise ValueError(f"invalid packaged external weight: {target}")
+        try:
+            target.symlink_to(source)
+        except OSError:
+            shutil.copyfile(source, target)
+        linked += 1
+    print(
+        "Materialized external ONNX weights: "
+        f"linked={linked}; image_directory={source_root}"
+    )
+
+
 def run_predict(args: argparse.Namespace) -> None:
     """Create a validated evaluator-compatible prediction CSV."""
     solution_path = _predict_solution_path(args)
+    materialize_external_weights(solution_path)
     ensure_polars_available()
     selected_backend = _adaptive_backend_for_input(
         solution_path,
@@ -705,6 +773,15 @@ def run_train(args: argparse.Namespace) -> None:
         args.config,
         args.overrides,
     )
+    from match.distributed import validate_distributed_launch
+
+    distributed = config.model_description.transformer.distributed
+    process = validate_distributed_launch(distributed)
+    if distributed.enabled and config.training.model != "transformer":
+        raise ValueError(
+            "distributed training currently supports training.model=transformer "
+            "only"
+        )
     config, experiment_dir, registry_path = configure_experiment(
         config,
         experiment_name,
@@ -714,10 +791,11 @@ def run_train(args: argparse.Namespace) -> None:
         experiment_name=experiment_name,
         experiment_registry_path=registry_path,
     )
-    print(
-        f"Experiment {experiment_name!r} saved to {experiment_dir}; "
-        f"predictor={artifacts.predictor}"
-    )
+    if process.is_main_process:
+        print(
+            f"Experiment {experiment_name!r} saved to {experiment_dir}; "
+            f"predictor={artifacts.predictor}; world_size={process.world_size}"
+        )
 
 
 def run_initialize(args: argparse.Namespace) -> None:

@@ -10,6 +10,7 @@ from ..config import AppConfig, save_app_config
 from ..data import prepare_configured_items, prepare_training_data
 from ..data_models import build_data_model
 from ..data_postprocessing import apply_pair_postprocessing
+from ..distributed import current_process, wait_for_everyone
 from ..experiments import save_experiment_record
 from ..models.artifacts import TrainingArtifacts, save_solution_manifest
 from ..models.factory import build_trainer
@@ -23,6 +24,7 @@ def train(
     experiment_registry_path: Path | None = None,
 ) -> TrainingArtifacts:
     """Prepare data, train the selected model and persist its manifest."""
+    process = current_process()
     with workflow_logging(config, workflow_name="train"):
         if (
             config.training.augmentation_model == "attribute_word_dropout"
@@ -69,14 +71,16 @@ def train(
             )
         trainer = build_trainer(config)
         artifacts = trainer.train(data)
-        save_app_config(config, config.training.resolved_config_path)
-        solution_path = save_solution_manifest(config, artifacts)
+        solution_path = config.training.solution_path
+        if process.is_main_process:
+            save_app_config(config, config.training.resolved_config_path)
+            solution_path = save_solution_manifest(config, artifacts)
         result = replace(
             artifacts,
             resolved_config_path=config.training.resolved_config_path,
             solution_path=solution_path,
         )
-        if experiment_name is not None:
+        if experiment_name is not None and process.is_main_process:
             if experiment_registry_path is None:
                 raise ValueError(
                     "experiment_registry_path is required with experiment_name"
@@ -88,6 +92,7 @@ def train(
                 experiment_name=experiment_name,
                 registry_path=experiment_registry_path,
             )
+        wait_for_everyone(process)
         return result
 
 

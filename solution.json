@@ -7,8 +7,9 @@
   "transformer_head": {
     "type": "native"
   },
-  "backend": "onnxruntime",
-  "batch_size": 256,
+  "backend": "adaptive",
+  "adaptive_pair_threshold": 10000,
+  "batch_size": 512,
   "retry_on_oom": false,
   "dtype": "bfloat16",
   "num_workers": 8,
@@ -25,9 +26,10 @@
     "enabled": true,
     "padding_length_buckets": [
       32,
+      48,
       64,
-      96,
-      128
+      80,
+      96
     ]
   },
   "torch_compile": {
@@ -36,7 +38,7 @@
     "dynamic": true
   },
   "onnxruntime": {
-    "provider": "tensorrt",
+    "provider": "cuda",
     "device_id": 0,
     "io_binding": true,
     "graph_optimization": "all",
@@ -55,12 +57,12 @@
       },
       "profiles": {
         "min_batch_size": 1,
-        "opt_batch_size": 256,
-        "max_batch_size": 256,
+        "opt_batch_size": 512,
+        "max_batch_size": 512,
         "sequence_lengths": [
           32,
-          96,
-          128
+          64,
+          96
         ]
       }
     }
@@ -80,12 +82,12 @@
     },
     "profiles": {
       "min_batch_size": 1,
-      "opt_batch_size": 256,
-      "max_batch_size": 256,
+      "opt_batch_size": 512,
+      "max_batch_size": 512,
       "sequence_lengths": [
         32,
-        96,
-        128
+        64,
+        96
       ]
     }
   },

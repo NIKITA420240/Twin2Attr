@@ -266,6 +266,16 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(parameters.train_batch_size, 16)
         self.assertEqual(parameters.gradient_accumulation_steps, 4)
 
+    def test_loads_two_gpu_distributed_training_settings(self) -> None:
+        parameters = self.config.model_description.transformer
+
+        self.assertTrue(parameters.distributed.enabled)
+        self.assertEqual(parameters.distributed.expected_world_size, 2)
+        self.assertEqual(parameters.distributed.backend, "nccl")
+        self.assertFalse(parameters.distributed.find_unused_parameters)
+        self.assertFalse(parameters.auto_find_batch_size)
+        self.assertEqual(parameters.gradient_accumulation_steps, 2)
+
     def test_loads_composable_transformer_head(self) -> None:
         head = self.config.model_description.transformer.head
 
@@ -386,8 +396,18 @@ class AppConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "precision"):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
-                ["model_description.transformer.export.onnx.precision=int8"],
+                ["model_description.transformer.export.onnx.precision=int4"],
             )
+
+    def test_accepts_int8_onnx_export_precision(self) -> None:
+        config = load_app_config_file(
+            PROJECT_ROOT / "configs" / "pipeline.yaml",
+            ["model_description.transformer.export.onnx.precision=int8"],
+        )
+        self.assertEqual(
+            config.model_description.transformer.export.onnx.precision,
+            "int8",
+        )
 
     def test_rejects_negative_transformer_inference_workers(self) -> None:
         with self.assertRaisesRegex(ValueError, "num_workers"):
