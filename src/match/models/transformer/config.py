@@ -65,6 +65,9 @@ class SequenceClassifierConfig:
     dataloader_pin_memory: bool = True
     non_blocking_transfer: bool = True
     performance_logging: bool = True
+    token_cache_enabled: bool = False
+    token_cache_directory: Path = Path(".cache/tokenized_pairs")
+    token_cache_build_chunk_size: int = 4_096
     torch_compile: bool = False
     torch_compile_mode: str = "reduce-overhead"
     onnx_export_enabled: bool = False
@@ -127,6 +130,8 @@ class SequenceClassifierConfig:
             raise ValueError("dataloader_num_workers must not be negative")
         if self.dataloader_prefetch_factor < 1:
             raise ValueError("dataloader_prefetch_factor must be positive")
+        if self.token_cache_build_chunk_size < 1:
+            raise ValueError("token_cache_build_chunk_size must be positive")
         if self.dataloader_num_workers == 0 and self.dataloader_persistent_workers:
             raise ValueError(
                 "dataloader_persistent_workers requires dataloader_num_workers > 0"
@@ -262,6 +267,9 @@ class ResolvedTrainingConfig:
     dataloader_pin_memory: bool
     non_blocking_transfer: bool
     performance_logging: bool
+    token_cache_enabled: bool
+    token_cache_directory: str
+    token_cache_build_chunk_size: int
     torch_compile: bool
     torch_compile_mode: str
 

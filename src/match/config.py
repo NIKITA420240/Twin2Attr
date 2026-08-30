@@ -401,6 +401,20 @@ class TrainingPerformanceLoggingSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class TrainingTokenCacheSettings:
+    enabled: bool = False
+    directory: Path = Path(".cache/tokenized_pairs")
+    build_chunk_size: int = 4_096
+
+    def __post_init__(self) -> None:
+        if self.build_chunk_size < 1:
+            raise ValueError(
+                "transformer.training_runtime.token_cache.build_chunk_size "
+                "must be positive"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class TransformerTrainingRuntimeSettings:
     length_bucketing: TrainingLengthBucketingSettings = (
         TrainingLengthBucketingSettings()
@@ -409,6 +423,7 @@ class TransformerTrainingRuntimeSettings:
     performance_logging: TrainingPerformanceLoggingSettings = (
         TrainingPerformanceLoggingSettings()
     )
+    token_cache: TrainingTokenCacheSettings = TrainingTokenCacheSettings()
     torch_compile: TorchCompileSettings = TorchCompileSettings()
 
 
@@ -2059,6 +2074,12 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             "config section 'transformer.training_runtime.performance_logging' "
             "must be a mapping"
         )
+    training_token_cache_value = training_runtime_value.get("token_cache", {})
+    if not isinstance(training_token_cache_value, Mapping):
+        raise ValueError(
+            "config section 'transformer.training_runtime.token_cache' "
+            "must be a mapping"
+        )
     training_torch_compile_value = training_runtime_value.get("torch_compile", {})
     if not isinstance(training_torch_compile_value, Mapping):
         raise ValueError(
@@ -2616,6 +2637,25 @@ def load_app_config(config: ConfigSource) -> AppConfig:
                             "model_description.transformer.training_runtime."
                             "performance_logging.enabled",
                         )
+                    ),
+                    token_cache=TrainingTokenCacheSettings(
+                        enabled=_bool(
+                            training_token_cache_value.get("enabled", False),
+                            "model_description.transformer.training_runtime."
+                            "token_cache.enabled",
+                        ),
+                        directory=_path(
+                            training_token_cache_value.get(
+                                "directory", ".cache/tokenized_pairs"
+                            ),
+                            "model_description.transformer.training_runtime."
+                            "token_cache.directory",
+                        ),
+                        build_chunk_size=int(
+                            training_token_cache_value.get(
+                                "build_chunk_size", 4_096
+                            )
+                        ),
                     ),
                     torch_compile=TorchCompileSettings(
                         enabled=_bool(

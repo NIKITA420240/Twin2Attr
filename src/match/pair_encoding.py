@@ -37,6 +37,7 @@ __all__ = [
     "KEY_TOKEN",
     "VAL_TOKEN",
     "PairEncodingCollator",
+    "PreencodedPreparedPair",
     "PairEncodingWithAttributes",
     "PreparedPairDataset",
     "add_pair_special_tokens",
@@ -69,6 +70,14 @@ class PreparedPairDataset(Dataset):
     def __getitem__(self, index: int) -> PreparedPair:
         pair = self._pairs[index]
         return pair if self._transform is None else self._transform(pair)
+
+
+@dataclass(frozen=True, slots=True)
+class PreencodedPreparedPair:
+    """A prepared pair with reusable, unpadded tokenizer output."""
+
+    pair: PreparedPair
+    inputs: dict[str, list[int]]
 
 
 def add_pair_special_tokens(
@@ -826,10 +835,38 @@ class PairEncodingCollator:
         if max_length <= self.special_token_count:
             raise ValueError("max_length must leave room for pair content after special tokens")
 
-    def __call__(self, pairs: list[PreparedPair]) -> dict[str, torch.Tensor]:
-        if not pairs:
+    def encode_pairs(
+        self,
+        pairs: Sequence[PreparedPair],
+    ) -> list[dict[str, list[int]]]:
+        """Encode pairs without padding so the result can be cached."""
+        return self._encoder.encode(pairs)
+
+    def __call__(
+        self,
+        examples: list[PreparedPair | PreencodedPreparedPair],
+    ) -> dict[str, torch.Tensor]:
+        if not examples:
             raise ValueError("cannot collate an empty batch")
-        encoded_pairs = self._encoder.encode(pairs)
+        cached = isinstance(examples[0], PreencodedPreparedPair)
+        if not all(
+            isinstance(example, PreencodedPreparedPair) == cached
+            for example in examples
+        ):
+            raise ValueError("a batch cannot mix cached and uncached pairs")
+        if cached:
+            cached_examples = [
+                example
+                for example in examples
+                if isinstance(example, PreencodedPreparedPair)
+            ]
+            pairs = [example.pair for example in cached_examples]
+            encoded_pairs = [example.inputs for example in cached_examples]
+        else:
+            pairs = [
+                example for example in examples if isinstance(example, PreparedPair)
+            ]
+            encoded_pairs = self.encode_pairs(pairs)
         padding: bool | str = True
         padding_max_length: int | None = None
         if self.padding_length_buckets is not None:

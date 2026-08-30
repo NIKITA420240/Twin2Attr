@@ -1,7 +1,7 @@
 # transformer | maxpooling | fusion | boosting | stacking
 training:
   model: transformer
-  data_model: mix_dataset_hard_negative
+  data_model: mix_dataset_neural_review
   augmentation_model: null
   data_postprocessing_model: null
   resolved_config_path: models/twin2attr/pipeline_config.yaml
@@ -513,6 +513,10 @@ model_description:
         # Emit one compact summary per completed train epoch and persist the
         # same records in training_metadata.json.
         enabled: true
+      token_cache:
+        enabled: false
+        directory: .cache/tokenized_pairs
+        build_chunk_size: 4096
       torch_compile:
         enabled: false
         mode: reduce-overhead

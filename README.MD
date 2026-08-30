@@ -764,6 +764,30 @@ model_description:
 бы на одной полной эпохе. Чтобы откатить sampler для A/B, задайте
 `length_bucketing.enabled=false`.
 
+Token cache строится независимо для каждого `data_source`: например, mixed
+dataset создаёт отдельные shards для `human`, `llm` и `hard_negative`. Каждый
+shard получает hash точного набора пар, карточек, tokenizer и параметров pair
+encoding. Если при следующем эксперименте изменился только один источник,
+неизменившиеся shards переиспользуются, а заново токенизируется только новая
+часть. Компактная индексная карта объединяет shards в исходном порядке train.
+
+Следующие эпохи и повторные запуски читают `input_ids` через memory mapping, а
+padding до bucket выполняется как обычно при сборке batch. Изменение текста
+карточек, состава или порядка пар внутри source, tokenizer, `max_length` или
+ограничений атрибутов создаёт новый fingerprint-каталог только для этого source.
+Метки и sample weights берутся из текущего dataset и не замораживаются в кэше.
+
+Validation кэшируется всегда. Train кэшируется для неизменяемых входов, включая
+`augmentation_model=null` и заранее материализованный `attribute_shuffle`.
+Динамический `attribute_word_dropout` автоматически обходит train-кэш, чтобы
+шум продолжал обновляться при каждом чтении примера; validation при этом всё
+равно использует кэш. По умолчанию механизм выключен; включить его можно так:
+
+```bash
+uv run python run.py train \
+  model_description.transformer.training_runtime.token_cache.enabled=true
+```
+
 Параметры финального Transformer-инференса вынесены в секцию `inference`:
 `inference.transformer.batch_size` задаёт размер батча, а
 `inference.transformer.dtype` — точность вычислений (`float32`, `float16` или
