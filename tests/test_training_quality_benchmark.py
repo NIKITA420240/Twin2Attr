@@ -27,6 +27,12 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
             / "benchmark_tests"
             / "codex_annotation_quality.yaml"
         )
+        self.hard_negative_tests_path = (
+            PROJECT_ROOT
+            / "configs"
+            / "benchmark_tests"
+            / "hard_negative_quality.yaml"
+        )
         self.vote_sampling_tests_path = (
             PROJECT_ROOT
             / "configs"
@@ -45,6 +51,47 @@ class TrainingQualityBenchmarkTests(unittest.TestCase):
             / "benchmark_tests"
             / "neural_relabel_quality.yaml"
         )
+
+    def test_hard_negative_suite_is_additive_three_epoch_ablation(self) -> None:
+        suite = load_benchmark_suite(
+            self.hard_negative_tests_path,
+            allowed_test_types={"training_quality"},
+        )
+        configured = {
+            key: apply_benchmark_test(self.config, test)
+            for key, test in suite.tests.items()
+        }
+
+        self.assertEqual(suite.reference_test, "human_llm")
+        self.assertEqual(
+            list(suite.tests),
+            ["human_llm", "human_llm_hard_negative"],
+        )
+        self.assertEqual(
+            configured["human_llm"].training.data_model,
+            "mix_dataset",
+        )
+        experiment = configured["human_llm_hard_negative"]
+        self.assertEqual(
+            experiment.training.data_model,
+            "mix_dataset_hard_negative",
+        )
+        self.assertEqual(
+            {
+                config.model_description.transformer.max_epochs
+                for config in configured.values()
+            },
+            {3},
+        )
+        hard_source = next(
+            source
+            for source in experiment.data_model_description
+            .mix_dataset_hard_negative.sources
+            if source.name == "hard_negative"
+        )
+        self.assertEqual(hard_source.max_rows, 130_000)
+        self.assertEqual(hard_source.weight, 0.5)
+        self.assertEqual(suite.seeds, (42,))
 
     def test_neural_relabel_suite_has_three_equal_budget_arms(self) -> None:
         suite = load_benchmark_suite(

@@ -24,6 +24,8 @@ def build_data_model(
         )
     if selected_name == "mix_dataset":
         return MixedDatasetModel(descriptions.mix_dataset)
+    if selected_name == "mix_dataset_hard_negative":
+        return MixedDatasetModel(descriptions.mix_dataset_hard_negative)
     if selected_name == "mix_dataset_codex":
         return MixedDatasetModel(descriptions.mix_dataset_codex)
     if selected_name == "mix_dataset_neural_review":

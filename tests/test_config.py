@@ -30,6 +30,23 @@ class AppConfigTests(unittest.TestCase):
         }
         self.assertEqual(sources["human"].weight_model.type, "constant")
         self.assertFalse(sources["human"].weight_model.enabled)
+        hard_sources = {
+            source.name: source
+            for source in self.config.data_model_description
+            .mix_dataset_hard_negative.sources
+        }
+        hard_negative = hard_sources["hard_negative"]
+        self.assertEqual(hard_negative.weight, 0.5)
+        self.assertEqual(hard_negative.max_rows, 130_000)
+        self.assertEqual(
+            hard_negative.items,
+            PROJECT_ROOT / "data" / "hard_negative_items.parquet",
+        )
+        self.assertEqual(
+            hard_negative.matches,
+            PROJECT_ROOT / "data" / "hard_negative_matches.parquet",
+        )
+        self.assertFalse(hard_negative.weight_model.enabled)
         llm_weight_model = sources["llm"].weight_model
         self.assertEqual(llm_weight_model.type, "transitivity")
         self.assertTrue(llm_weight_model.enabled)
@@ -39,7 +56,7 @@ class AppConfigTests(unittest.TestCase):
         self.assertTrue(llm_weight_model.confidence_weighted_violations)
         self.assertEqual(sources["llm"].splitter.target_mode, "soft")
         confidence_weighting = sources["llm"].confidence_weighting
-        self.assertTrue(confidence_weighting.enabled)
+        self.assertFalse(confidence_weighting.enabled)
         self.assertEqual(
             confidence_weighting.method,
             "distance_from_midpoint",
@@ -47,7 +64,10 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(confidence_weighting.min_weight_multiplier, 0.2)
         self.assertEqual(confidence_weighting.power, 1.0)
         self.assertEqual(self.config.training.model, "transformer")
-        self.assertEqual(self.config.training.data_model, "mix_dataset")
+        self.assertEqual(
+            self.config.training.data_model,
+            "mix_dataset_hard_negative",
+        )
         self.assertIsNone(self.config.training.augmentation_model)
         self.assertIsNone(self.config.training.data_postprocessing_model)
         self.assertEqual(self.config.inference.model, "transformer")
@@ -285,14 +305,29 @@ class AppConfigTests(unittest.TestCase):
 
         self.assertEqual(mixed.validation_source, "human")
         self.assertEqual(mixed.validation_fraction, 0.2)
-        self.assertEqual([source.name for source in mixed.sources], ["human", "llm"])
-        llm = mixed.sources[1]
+        self.assertEqual(
+            [source.name for source in mixed.sources],
+            ["human", "llm"],
+        )
+        llm = next(source for source in mixed.sources if source.name == "llm")
         self.assertEqual(llm.weight, 1.0)
         self.assertEqual(llm.max_rows, 750_000)
         self.assertEqual(llm.splitter.total_votes, 9)
         self.assertEqual(llm.splitter.negative_threshold, 2)
         self.assertEqual(llm.splitter.positive_threshold, 7)
         self.assertEqual(llm.confidence_power, 2.0)
+
+        hard_mixed = (
+            self.config.data_model_description.mix_dataset_hard_negative
+        )
+        self.assertEqual(
+            [source.name for source in hard_mixed.sources],
+            ["human", "hard_negative", "llm"],
+        )
+        self.assertEqual(
+            hard_mixed.overlap_resolution.source_priority,
+            ("human", "hard_negative", "llm"),
+        )
 
     def test_loads_codex_mixed_dataset(self) -> None:
         mixed = self.config.data_model_description.mix_dataset_codex
@@ -314,6 +349,9 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(codex.weight, 1.0)
         self.assertIsNone(codex.max_rows)
         self.assertEqual(codex.splitter.score_type, "label")
+        llm = sources["llm"]
+        self.assertEqual(llm.splitter.target_mode, "soft")
+        self.assertFalse(llm.confidence_weighting.enabled)
 
     def test_loads_neural_review_mixed_dataset(self) -> None:
         mixed = self.config.data_model_description.mix_dataset_neural_review

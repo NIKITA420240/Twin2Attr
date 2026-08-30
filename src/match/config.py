@@ -144,6 +144,7 @@ class DatasetSourceSettings:
     )
     confidence_power: float = 2.0
     target_column: str = "target"
+    items: Path | None = None
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -249,6 +250,7 @@ class MixedDatasetSettings:
 class DataModelDescriptionSettings:
     base_dataset: BaseDatasetSettings
     mix_dataset: MixedDatasetSettings
+    mix_dataset_hard_negative: MixedDatasetSettings
     mix_dataset_codex: MixedDatasetSettings
     mix_dataset_neural_review: MixedDatasetSettings
 
@@ -304,12 +306,14 @@ class TrainingSettings:
         if self.data_model not in {
             "base_dataset",
             "mix_dataset",
+            "mix_dataset_hard_negative",
             "mix_dataset_codex",
             "mix_dataset_neural_review",
         }:
             raise ValueError(
                 "training.data_model must be one of: base_dataset, mix_dataset, "
-                "mix_dataset_codex, mix_dataset_neural_review"
+                "mix_dataset_hard_negative, mix_dataset_codex, "
+                "mix_dataset_neural_review"
             )
         if self.model == "stacking" and self.data_model != "base_dataset":
             raise ValueError("stacking training currently requires base_dataset")
@@ -684,12 +688,14 @@ class AnalysisSettings:
         if self.data_model not in {
             "base_dataset",
             "mix_dataset",
+            "mix_dataset_hard_negative",
             "mix_dataset_codex",
             "mix_dataset_neural_review",
         }:
             raise ValueError(
                 "analysis.data_model must be one of: base_dataset, mix_dataset, "
-                "mix_dataset_codex, mix_dataset_neural_review"
+                "mix_dataset_hard_negative, mix_dataset_codex, "
+                "mix_dataset_neural_review"
             )
 
 
@@ -1743,6 +1749,11 @@ def _dataset_source(
         ),
         confidence_power=float(values.get("confidence_power", 2.0)),
         target_column=str(values.get("target_column", "target")),
+        items=(
+            None
+            if values.get("items") is None
+            else _path(values["items"], f"{prefix}.items")
+        ),
     )
 
 
@@ -1879,6 +1890,10 @@ def load_app_config(config: ConfigSource) -> AppConfig:
     data_model_description = _section(resolved, "data_model_description")
     base_dataset = _section(data_model_description, "base_dataset")
     mix_dataset = _section(data_model_description, "mix_dataset")
+    mix_dataset_hard_negative = _section(
+        data_model_description,
+        "mix_dataset_hard_negative",
+    )
     mix_dataset_codex = _section(data_model_description, "mix_dataset_codex")
     mix_dataset_neural_review = _section(
         data_model_description,
@@ -2140,6 +2155,11 @@ def load_app_config(config: ConfigSource) -> AppConfig:
             mix_dataset=_mixed_dataset_settings(
                 mix_dataset,
                 dataset_name="mix_dataset",
+                runtime_seed=int(_required(runtime, "seed")),
+            ),
+            mix_dataset_hard_negative=_mixed_dataset_settings(
+                mix_dataset_hard_negative,
+                dataset_name="mix_dataset_hard_negative",
                 runtime_seed=int(_required(runtime, "seed")),
             ),
             mix_dataset_codex=_mixed_dataset_settings(

@@ -48,6 +48,14 @@ benchmark:
       tests_path: configs/benchmark_tests/codex_annotation_quality.yaml
       selected_tests: null
 
+    # Two three-epoch fits: human + LLM baseline versus the same pool with
+    # 130,000 additive synthetic hard negatives at weight 0.5.
+    hard_negative_quality:
+      type: training_quality
+      enabled: true
+      tests_path: configs/benchmark_tests/hard_negative_quality.yaml
+      selected_tests: null
+
     # Three paired fits: current confident-only data, fixed old labels and
     # fixed neural labels. All pseudo-label weights are constant.
     neural_relabel_quality:
@@ -67,6 +75,6 @@ benchmark:
     # soft-label/confidence-weighting variants.
     soft_label_confidence_quality:
       type: training_quality
-      enabled: true
+      enabled: false
       tests_path: configs/benchmark_tests/soft_label_confidence_quality.yaml
       selected_tests: null

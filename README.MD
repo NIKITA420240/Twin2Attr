@@ -547,7 +547,7 @@ splitter:
   uncertain_action: drop
 
 confidence_weighting:
-  enabled: true
+  enabled: false
   method: distance_from_midpoint
   min_weight_multiplier: 0.2
   power: 1.0

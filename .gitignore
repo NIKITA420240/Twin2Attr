@@ -1,6 +1,8 @@
 /data/*
 !/data/synonyms.parquet
 !/data/unique_attributes.parquet
+!/data/hard_negative_matches.parquet
+!/data/hard_negative_items.parquet
 /models/*
 !/models/ner/
 !/models/ner/**

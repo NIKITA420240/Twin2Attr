@@ -35,6 +35,99 @@ def _splitter(score_type: str, *, votes: bool = False) -> DatasetSplitterSetting
 
 
 class DataModelTests(unittest.TestCase):
+    def test_mixed_dataset_loads_source_specific_card_json_items(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            items_path = root / "items.parquet"
+            human_path = root / "human.parquet"
+            hard_items_path = root / "hard_items.parquet"
+            hard_matches_path = root / "hard_matches.parquet"
+
+            pl.DataFrame(
+                {
+                    "id": list(range(1, 9)),
+                    "name": [f"human {index}" for index in range(1, 9)],
+                    "category": ["a"] * 8,
+                    "attributes": ["{}"] * 8,
+                }
+            ).write_parquet(items_path)
+            pl.DataFrame(
+                {
+                    "id1": [1, 3, 5, 7],
+                    "id2": [2, 4, 6, 8],
+                    "target": [0, 1, 0, 1],
+                }
+            ).write_parquet(human_path)
+            pl.DataFrame(
+                {
+                    "id": [101, 102, 103, 104],
+                    "source_id": [11, 11, 12, 12],
+                    "category": ["a"] * 4,
+                    "card_json": [
+                        '{"Название":"Hard A","Код модели":"M1",'
+                        '"категория":"a","объем":"500"}',
+                        '{"Название":"Hard A","Код модели":"M1",'
+                        '"категория":"a","объем":"750"}',
+                        '{"Название":"Hard B","Код модели":"M2",'
+                        '"категория":"a","количество":"1"}',
+                        '{"Название":"Hard B","Код модели":"M2",'
+                        '"категория":"a","количество":"10"}',
+                    ],
+                }
+            ).write_parquet(hard_items_path)
+            pl.DataFrame(
+                {
+                    "id1": [101, 103],
+                    "id2": [102, 104],
+                    "target": [0, 0],
+                }
+            ).write_parquet(hard_matches_path)
+
+            settings = MixedDatasetSettings(
+                items=items_path,
+                sources=(
+                    DatasetSourceSettings(
+                        name="human",
+                        matches=human_path,
+                        weight=3.0,
+                        max_rows=None,
+                        sampling_strategy="random",
+                        splitter=_splitter("label"),
+                    ),
+                    DatasetSourceSettings(
+                        name="hard_negative",
+                        matches=hard_matches_path,
+                        weight=0.5,
+                        max_rows=1,
+                        sampling_strategy="random",
+                        splitter=_splitter("label"),
+                        items=hard_items_path,
+                    ),
+                ),
+                validation_source="human",
+                validation_fraction=0.5,
+                leakage_scope="none",
+                candidate_splits=8,
+                seed=7,
+            )
+
+            result = MixedDatasetModel(settings).load_training_splits()
+
+        hard_rows = result.train_matches.filter(
+            pl.col("data_source") == "hard_negative"
+        )
+        self.assertEqual(hard_rows.height, 1)
+        self.assertEqual(hard_rows.get_column("sample_weight").to_list(), [0.5])
+        hard_ids = set(hard_rows.select("id1", "id2").row(0))
+        hard_items = result.items.filter(pl.col("id").is_in(hard_ids))
+        self.assertEqual(hard_items.height, 2)
+        self.assertTrue(
+            all(name.startswith("Hard ") for name in hard_items["name"])
+        )
+        self.assertTrue(
+            all("Код модели" not in value for value in hard_items["attributes"])
+        )
+
     def test_probability_source_uses_configured_target_column(self) -> None:
         items = pl.DataFrame(
             {"id": list(range(1, 9)), "category": ["a"] * 8}
