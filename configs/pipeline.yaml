@@ -500,9 +500,13 @@ model_description:
         # Shuffle globally, then sort only inside megabatches of this many
         # microbatches to retain stochastic training.
         mega_batch_multiplier: 50
-        # Keep null for minimal dynamic padding. Define discrete lengths only
-        # when benchmarking torch.compile with stable tensor shapes.
-        padding_length_buckets: null
+        # Keep the compiled training graph on a small, reusable set of tensor
+        # shapes. The final bucket must equal pair_encoding.max_length.
+        padding_length_buckets:
+          - 32
+          - 64
+          - 96
+          - 128
       dataloader:
         num_workers: 4
         prefetch_factor: 2
@@ -513,8 +517,12 @@ model_description:
         # Emit one compact summary per completed train epoch and persist the
         # same records in training_metadata.json.
         enabled: true
+      token_cache:
+        enabled: true
+        directory: .cache/tokenized_pairs
+        build_chunk_size: 4096
       torch_compile:
-        enabled: false
+        enabled: true
         mode: reduce-overhead
     head:
       # default keeps the Hugging Face CLS head; pooling builds the branches below.

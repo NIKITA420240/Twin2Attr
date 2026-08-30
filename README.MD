@@ -715,8 +715,11 @@ sampler и неблокирующую передачу батчей на GPU. Sa
 В `model_description.transformer.training_runtime` автоматически включены:
 
 - `length_bucketing.enabled=true` и `mega_batch_multiplier=50`;
+- padding в один из четырёх стабильных bucket: `32`, `64`, `96`, `128`;
 - четыре worker'а DataLoader, prefetch, persistent workers и pinned memory;
 - `non_blocking_transfer=true`;
+- дисковый кэш unpadded token IDs в `.cache/tokenized_pairs`;
+- `torch_compile` в режиме `reduce-overhead`;
 - эпоховое performance-логирование.
 
 Обычно менять их не нужно. Для машины с другой CPU-производительностью можно
@@ -727,8 +730,8 @@ uv run python run.py train \
   model_description.transformer.training_runtime.dataloader.num_workers=8
 ```
 
-Две опции намеренно выключены по умолчанию, поскольку требуют замера на
-конкретной модели и H100:
+Для текущего Nemotron с `max_length=128` compilation и дискретные формы включены
+в основной конфигурации:
 
 ```yaml
 model_description:
@@ -736,7 +739,7 @@ model_description:
     training_runtime:
       length_bucketing:
         # Ограничивает число форм тензоров; последний bucket равен max_length.
-        padding_length_buckets: [128, 192, 256]
+        padding_length_buckets: [32, 64, 96, 128]
       torch_compile:
         enabled: true
         mode: reduce-overhead
@@ -746,8 +749,35 @@ model_description:
 округляет длину batch до ближайшей указанной длины, снижая число перекомпиляций
 ценой дополнительного padding. Перед постоянным включением сравните
 `real_tokens/s`, `padded_tokens/s`, peak CUDA memory и PR-AUC в metadata хотя
-бы на одной полной эпохе. Чтобы откатить sampler для A/B, задайте
+бы на одной полной эпохе. Для A/B с eager baseline передайте
+`model_description.transformer.training_runtime.torch_compile.enabled=false` и
+`model_description.transformer.training_runtime.length_bucketing.padding_length_buckets=null`.
+Чтобы дополнительно отключить подбор примеров похожей длины, задайте
 `length_bucketing.enabled=false`.
+
+Token cache строится независимо для каждого `data_source`: например, mixed
+dataset создаёт отдельные shards для `human`, `llm` и `hard_negative`. Каждый
+shard получает hash точного набора пар, карточек, tokenizer и параметров pair
+encoding. Если при следующем эксперименте изменился только один источник,
+неизменившиеся shards переиспользуются, а заново токенизируется только новая
+часть. Компактная индексная карта объединяет shards в исходном порядке train.
+
+Следующие эпохи и повторные запуски читают `input_ids` через memory mapping, а
+padding до bucket выполняется как обычно при сборке batch. Изменение текста
+карточек, состава или порядка пар внутри source, tokenizer, `max_length` или
+ограничений атрибутов создаёт новый fingerprint-каталог только для этого source.
+Метки и sample weights берутся из текущего dataset и не замораживаются в кэше.
+
+Validation кэшируется всегда. Train кэшируется для неизменяемых входов, включая
+`augmentation_model=null` и заранее материализованный `attribute_shuffle`.
+Динамический `attribute_word_dropout` автоматически обходит train-кэш, чтобы
+шум продолжал обновляться при каждом чтении примера; validation при этом всё
+равно использует кэш. Полностью отключить механизм можно так:
+
+```bash
+uv run python run.py train \
+  model_description.transformer.training_runtime.token_cache.enabled=false
+```
 
 Параметры финального Transformer-инференса вынесены в секцию `inference`:
 `inference.transformer.batch_size` задаёт размер батча, а

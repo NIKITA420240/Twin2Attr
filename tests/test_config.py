@@ -116,8 +116,9 @@ class AppConfigTests(unittest.TestCase):
             training_runtime.length_bucketing.mega_batch_multiplier,
             50,
         )
-        self.assertIsNone(
-            training_runtime.length_bucketing.padding_length_buckets
+        self.assertEqual(
+            training_runtime.length_bucketing.padding_length_buckets,
+            (32, 64, 96, 128),
         )
         self.assertEqual(training_runtime.dataloader.num_workers, 4)
         self.assertEqual(training_runtime.dataloader.prefetch_factor, 2)
@@ -125,7 +126,13 @@ class AppConfigTests(unittest.TestCase):
         self.assertTrue(training_runtime.dataloader.pin_memory)
         self.assertTrue(training_runtime.dataloader.non_blocking_transfer)
         self.assertTrue(training_runtime.performance_logging.enabled)
-        self.assertFalse(training_runtime.torch_compile.enabled)
+        self.assertTrue(training_runtime.token_cache.enabled)
+        self.assertEqual(
+            training_runtime.token_cache.directory,
+            PROJECT_ROOT / ".cache" / "tokenized_pairs",
+        )
+        self.assertEqual(training_runtime.token_cache.build_chunk_size, 4_096)
+        self.assertTrue(training_runtime.torch_compile.enabled)
         fast_dev = self.config.model_description.transformer.validation.fast_dev
         self.assertTrue(fast_dev.enabled)
         self.assertEqual(fast_dev.max_rows, 20_000)
@@ -557,6 +564,16 @@ class AppConfigTests(unittest.TestCase):
             load_app_config_file(
                 PROJECT_ROOT / "configs" / "pipeline.yaml",
                 ["inference.transformer.torch_compile.mode=fastest"],
+            )
+
+    def test_rejects_invalid_training_token_cache_chunk_size(self) -> None:
+        with self.assertRaisesRegex(ValueError, "token_cache.build_chunk_size"):
+            load_app_config_file(
+                PROJECT_ROOT / "configs" / "pipeline.yaml",
+                [
+                    "model_description.transformer.training_runtime."
+                    "token_cache.build_chunk_size=0"
+                ],
             )
 
     def test_rejects_incomplete_feature_execution_order(self) -> None:

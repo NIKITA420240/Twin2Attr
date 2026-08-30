@@ -44,6 +44,7 @@ from .train_runtime import (
     EpochPerformanceTracker,
     stratified_sample_indices,
 )
+from .token_cache import load_or_build_sharded_token_cache
 
 
 def _training_arguments(
@@ -141,6 +142,60 @@ def _labels_from_pairs(
     return labels
 
 
+def _prepare_pair_datasets(
+    train_pairs: Sequence[PreparedPair],
+    validation_pairs: Sequence[PreparedPair],
+    tokenizer: Any,
+    collator: PairEncodingCollator,
+    config: SequenceClassifierConfig,
+    *,
+    train_pair_transform: Callable[[PreparedPair], PreparedPair] | None,
+    train_cache_shards: Sequence[object] | None = None,
+    validation_cache_shards: Sequence[object] | None = None,
+) -> tuple[Any, Any]:
+    train_dataset: Any = PreparedPairDataset(
+        train_pairs,
+        transform=train_pair_transform,
+    )
+    validation_dataset: Any = PreparedPairDataset(validation_pairs)
+    if not config.token_cache_enabled:
+        return train_dataset, validation_dataset
+
+    validation_dataset = load_or_build_sharded_token_cache(
+        validation_pairs,
+        (
+            validation_cache_shards
+            if validation_cache_shards is not None
+            else ("validation",) * len(validation_pairs)
+        ),
+        tokenizer,
+        collator,
+        config.token_cache_directory,
+        split_name="validation",
+        chunk_size=config.token_cache_build_chunk_size,
+    )
+    if train_pair_transform is None:
+        train_dataset = load_or_build_sharded_token_cache(
+            train_pairs,
+            (
+                train_cache_shards
+                if train_cache_shards is not None
+                else ("train",) * len(train_pairs)
+            ),
+            tokenizer,
+            collator,
+            config.token_cache_directory,
+            split_name="train",
+            chunk_size=config.token_cache_build_chunk_size,
+        )
+    else:
+        logger.info(
+            "Transformer train token cache bypassed because dynamic "
+            "augmentation is enabled"
+        )
+    return train_dataset, validation_dataset
+
+
 def train_sequence_classifier(
     train_pairs: Sequence[PreparedPair],
     validation_pairs: Sequence[PreparedPair],
@@ -148,6 +203,8 @@ def train_sequence_classifier(
     *,
     output_dir: str | Path,
     train_pair_transform: Callable[[PreparedPair], PreparedPair] | None = None,
+    train_cache_shards: Sequence[object] | None = None,
+    validation_cache_shards: Sequence[object] | None = None,
 ) -> TrainingResult:
     train_labels = _labels_from_pairs(train_pairs, split_name="train")
     validation_labels = _labels_from_pairs(
@@ -230,11 +287,6 @@ def train_sequence_classifier(
         config.torch_compile,
     )
 
-    train_dataset = PreparedPairDataset(
-        train_pairs,
-        transform=train_pair_transform,
-    )
-    validation_dataset = PreparedPairDataset(validation_pairs)
     collator = PairEncodingCollator(
         tokenizer,
         max_length,
@@ -245,6 +297,16 @@ def train_sequence_classifier(
         field_chunk_size=config.field_chunk_size,
         padding_length_buckets=config.train_padding_length_buckets,
         profile=config.profile,
+    )
+    train_dataset, validation_dataset = _prepare_pair_datasets(
+        train_pairs,
+        validation_pairs,
+        tokenizer,
+        collator,
+        config,
+        train_pair_transform=train_pair_transform,
+        train_cache_shards=train_cache_shards,
+        validation_cache_shards=validation_cache_shards,
     )
     initialize_model = model_factory(
         config.model_path,
@@ -284,7 +346,23 @@ def train_sequence_classifier(
             seed=config.seed,
         )
         fast_dev_pairs = [validation_pairs[index] for index in fast_dev_indices]
-        fast_dev_dataset = PreparedPairDataset(fast_dev_pairs)
+        fast_dev_dataset = (
+            load_or_build_sharded_token_cache(
+                fast_dev_pairs,
+                (
+                    [validation_cache_shards[index] for index in fast_dev_indices]
+                    if validation_cache_shards is not None
+                    else ("validation",) * len(fast_dev_pairs)
+                ),
+                tokenizer,
+                collator,
+                config.token_cache_directory,
+                split_name="fast-dev",
+                chunk_size=config.token_cache_build_chunk_size,
+            )
+            if config.token_cache_enabled
+            else PreparedPairDataset(fast_dev_pairs)
+        )
         fast_dev_metric = partial(
             compute_macro_pr_auc,
             categories=[pair.category for pair in fast_dev_pairs],
@@ -452,6 +530,9 @@ def train_sequence_classifier(
         dataloader_pin_memory=config.dataloader_pin_memory,
         non_blocking_transfer=config.non_blocking_transfer,
         performance_logging=config.performance_logging,
+        token_cache_enabled=config.token_cache_enabled,
+        token_cache_directory=str(config.token_cache_directory),
+        token_cache_build_chunk_size=config.token_cache_build_chunk_size,
         torch_compile=config.torch_compile,
         torch_compile_mode=config.torch_compile_mode,
     )
@@ -538,6 +619,9 @@ def _sequence_config(config: AppConfig) -> SequenceClassifierConfig:
         dataloader_pin_memory=runtime.dataloader.pin_memory,
         non_blocking_transfer=runtime.dataloader.non_blocking_transfer,
         performance_logging=runtime.performance_logging.enabled,
+        token_cache_enabled=runtime.token_cache.enabled,
+        token_cache_directory=runtime.token_cache.directory,
+        token_cache_build_chunk_size=runtime.token_cache.build_chunk_size,
         torch_compile=runtime.torch_compile.enabled,
         torch_compile_mode=runtime.torch_compile.mode,
         seed=config.runtime.seed,
@@ -596,6 +680,16 @@ class TransformerTrainer:
             _sequence_config(self.config),
             output_dir=self.config.model_description.transformer.artifact_dir,
             train_pair_transform=train_pair_transform,
+            train_cache_shards=(
+                data.train_matches.get_column("data_source").to_list()
+                if "data_source" in data.train_matches.columns
+                else None
+            ),
+            validation_cache_shards=(
+                data.validation_matches.get_column("data_source").to_list()
+                if "data_source" in data.validation_matches.columns
+                else None
+            ),
         )
         return TrainingArtifacts(
             predictor="transformer",
